@@ -104,7 +104,7 @@ version of "every user gets their own machine".
 | --- | --- |
 | `services/sandbox/docker-execution-env.ts` | Implements pi's `ExecutionEnv`. `Shell.exec` runs via `docker exec`; `FileSystem` operates on the bind-mounted host directory. |
 | `services/sandbox/sandbox.service.ts` | `acquire(userId)` / `release(userId)`. Ensures the workspace directory, starts or reuses a container, stops it when idle. |
-| `services/sandbox/container.ts` | Thin `dockerode` wrapper: create, start, exec, stop, remove, health check. |
+| `services/sandbox/docker.ts` | Thin Docker **CLI** wrapper (`child_process.spawn`): run, exec, stop, remove, isRunning, ensureImage. |
 | `repositories/sandbox.repository.ts` | Persist the user ↔ container ↔ workspace mapping. |
 | `models/schema.ts` | New `sandboxes` table. |
 | `config/env.ts` | `SANDBOX_BACKEND`, `SANDBOX_IMAGE`, `SANDBOX_ROOT`, `SANDBOX_IDLE_MS`. |
@@ -116,6 +116,12 @@ version of "every user gets their own machine".
 directory; only shell commands cross into Docker. Far less code across 17
 filesystem methods, and the workspace is visible in Finder — which is the entire
 file-in/file-out loop for a spike, with no upload UI to build.
+
+The workspace is mounted at the **identical absolute path** inside the container
+(`/Users/<you>/mixmatch-workspaces/<user>` → the same path in the container), so
+host and container share one path namespace and no translation is ever needed.
+This is what allows `DockerExecutionEnv` to delegate all 17 `FileSystem` methods
+to the existing `NodeExecutionEnv` and override only `exec`.
 
 **Named volume + tar I/O** (rejected for now): properly isolated and closer to
 how a hosted backend will behave, but every filesystem method becomes a
@@ -196,6 +202,26 @@ Defaulting to `node` means this change is inert until explicitly switched on.
 Sandbox failures ride the existing run-status path, so a failed run is stored as
 `error` and shows correctly in the sidebar.
 
+## Verified before planning
+
+These were probed against the real daemon (Docker Desktop 28.0.1) so the plan
+rests on measurements, not assumptions:
+
+| Check | Result |
+| --- | --- |
+| Container reads host-written files, and vice versa | works |
+| Nested directories created in-container visible on host | works |
+| `pwd` inside container | identical to the host path — one namespace |
+| Ownership of container-written files on host | `farhan:staff`, host can rewrite |
+| Workspace survives `docker rm -f` | survives |
+| `dockerode` exec under Bun | **broken** — HTTP 101 upgrade mishandled by `docker-modem` |
+| `docker exec` via `child_process.spawn` | clean separate stdout/stderr, true exit code |
+
+The `dockerode` finding is why the implementation uses the **Docker CLI via
+`spawn`** rather than an SDK. Since exec must go through the CLI regardless,
+container lifecycle uses it too — one mechanism instead of two, and no
+Bun-compatibility surface.
+
 ## Testing
 
 **Step 1 — standalone script, before any app wiring.** This is the actual
@@ -242,7 +268,7 @@ none of it matters if the criteria above cannot be met.
 | Risk | Notes |
 | --- | --- |
 | Docker becomes a hard dev dependency | Mitigated by `SANDBOX_BACKEND=node` remaining the default |
-| File ownership mismatch | Container writes as root; host files end up root-owned. May need `--user` mapping. **Expected to bite on Linux; unclear on Docker Desktop for Mac.** |
+| File ownership mismatch | **Measured, not a problem on Docker Desktop for Mac:** files written by root in the container land as `farhan:staff` on the host, and the host can rewrite them. Docker Desktop's filesystem layer maps ownership to the host user. This *would* bite on native Linux, where a `--user` mapping becomes necessary. |
 | Cold start latency | First message after idle pays container start. Needs a visible "starting" state in the UI or it reads as broken |
 | Image contents | `node:22-bookworm-slim` has no `git`, `python`, or build tools. What the agent can actually do is bounded by the image — likely needs a custom one |
 | Disk growth | Workspaces are never deleted. Fine for a spike, needs a policy before real users |
