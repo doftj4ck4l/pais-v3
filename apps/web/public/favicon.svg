@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" fill="#000" />
+  <!-- π, drawn from the same geometry the console uses for its rail nodes. -->
+  <rect x="6" y="8.5" width="20" height="3.5" fill="#fff" />
+  <rect x="10" y="12" width="3.5" height="11.5" fill="#fff" />
+  <rect x="19" y="12" width="3.5" height="11.5" fill="#fff" />
+</svg>

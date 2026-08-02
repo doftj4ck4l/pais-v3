@@ -1,0 +1,141 @@
+import type { AgentEvent } from "../types/agent";
+import type { ChatMessage } from "../types/chat";
+
+/**
+ * One entry in a stored transcript. Mirrors the shape the console renders, so a
+ * reloaded conversation looks exactly like the live one did.
+ */
+export type TranscriptItem =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string }
+  | { kind: "thinking"; text: string }
+  | { kind: "iteration"; n: number }
+  | { kind: "tool"; name: string; args: unknown; result?: string };
+
+export type RecordedTrace = { step: string; fields: Record<string, unknown> };
+
+/**
+ * Folds the agent's event stream into a transcript worth saving.
+ *
+ * The stream is deltas — hundreds of `text` frames per answer — so text is
+ * accumulated into a single item here rather than written per frame. Nothing
+ * touches the database until the run finishes.
+ */
+export class TranscriptRecorder {
+  private items: TranscriptItem[] = [];
+  private traces: RecordedTrace[] = [];
+  /**
+   * The agent loop reports failures as an `error` event rather than throwing,
+   * so the only way to know a run failed is to watch the stream for one.
+   */
+  private failure: string | null = null;
+  /** Index of the item currently receiving deltas, per channel. */
+  private open: { thinking: number | null; text: number | null } = {
+    thinking: null,
+    text: null,
+  };
+
+  constructor(history: ChatMessage[] = []) {
+    for (const message of history) {
+      if (message.role === "user" && message.content) {
+        this.items.push({ kind: "user", text: message.content });
+      }
+    }
+  }
+
+  /** The task this run is named after — the first thing the user asked. */
+  title(fallback = "Untitled run"): string {
+    const first = this.items.find((i) => i.kind === "user");
+    if (!first || first.kind !== "user") return fallback;
+    return first.text.slice(0, 200) || fallback;
+  }
+
+  record(event: AgentEvent): void {
+    switch (event.type) {
+      case "iteration":
+        this.open = { thinking: null, text: null };
+        this.items.push({ kind: "iteration", n: event.iteration });
+        break;
+
+      case "reasoning":
+        this.appendDelta("thinking", event.delta);
+        break;
+
+      case "text":
+        this.appendDelta("text", event.delta);
+        break;
+
+      case "tool_call":
+        this.open = { thinking: null, text: null };
+        this.items.push({ kind: "tool", name: event.name, args: event.args });
+        break;
+
+      case "tool_result": {
+        // Match the earliest call of this tool that is still awaiting a result.
+        const idx = this.items.findIndex(
+          (i) => i.kind === "tool" && i.name === event.name && i.result === undefined,
+        );
+        const pending = idx >= 0 ? this.items[idx] : undefined;
+        if (pending && pending.kind === "tool") pending.result = event.content;
+        break;
+      }
+
+      case "trace":
+        this.traces.push({ step: event.step, fields: event.fields });
+        break;
+
+      case "error":
+        this.failure = event.message;
+        break;
+    }
+  }
+
+  /** The error this run reported, if any. */
+  error(): string | null {
+    return this.failure;
+  }
+
+  /**
+   * Did the agent actually do anything? A run can finish without the runtime
+   * reporting a failure and still have produced nothing — an unreachable
+   * gateway or an unknown model name both surface that way. Such a run is not
+   * a success, so the caller needs to be able to tell.
+   */
+  producedOutput(): boolean {
+    return this.items.some(
+      (i) => i.kind === "tool" || (i.kind === "assistant" && i.text.trim() !== ""),
+    );
+  }
+
+  private appendDelta(channel: "thinking" | "text", delta: string): void {
+    const kind = channel === "thinking" ? "thinking" : "assistant";
+    const idx = this.open[channel];
+    const current = idx != null ? this.items[idx] : undefined;
+
+    if (current && current.kind === kind) {
+      current.text += delta;
+      return;
+    }
+    this.items.push({ kind, text: delta } as TranscriptItem);
+    this.open[channel] = this.items.length - 1;
+  }
+
+  /** Rows ready for the messages table. Empty assistant turns are dropped. */
+  toMessageRows(): { kind: string; seq: number; text: string }[] {
+    return this.items
+      .filter((i) => i.kind !== "assistant" || i.text.trim() !== "")
+      .map((item, seq) => ({ kind: item.kind, seq, text: serialize(item) }));
+  }
+
+  toTraceRows(): RecordedTrace[] {
+    return this.traces;
+  }
+}
+
+function serialize(item: TranscriptItem): string {
+  if (item.kind === "iteration") return String(item.n);
+  if (item.kind === "tool") {
+    return JSON.stringify({ name: item.name, args: item.args, result: item.result });
+  }
+  return item.text;
+}
