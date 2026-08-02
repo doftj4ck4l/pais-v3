@@ -4,6 +4,9 @@ import { sandboxRepository } from "./sandbox.repository";
 
 const USER = `test_${Date.now()}`;
 
+/** Let the clock advance so a just-written row counts as measurably idle. */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 beforeAll(() => ensureSchema());
 
 test("upsert then get returns the row", async () => {
@@ -43,6 +46,7 @@ test("listIdle finds rows untouched for longer than the window", async () => {
     workspacePath: "/tmp/ws",
     image: "img",
   });
+  await tick();
   const stale = await sandboxRepository.listIdle(0);
   expect(stale.some((r) => r.userId === USER)).toBe(true);
 
@@ -52,6 +56,7 @@ test("listIdle finds rows untouched for longer than the window", async () => {
 
 test("listIdle ignores rows with no container", async () => {
   await sandboxRepository.clearContainer(USER);
+  await tick();
   const stale = await sandboxRepository.listIdle(0);
   expect(stale.some((r) => r.userId === USER)).toBe(false);
 });

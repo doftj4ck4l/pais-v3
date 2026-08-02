@@ -8,6 +8,9 @@ import { sandboxService } from "./sandbox.service";
 
 const USER = `sbx_${Date.now()}`;
 
+/** Let the clock advance so a just-used sandbox counts as measurably idle. */
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
 beforeAll(() => ensureSchema());
 afterAll(async () => {
   await sandboxService.destroy(USER);
@@ -40,6 +43,7 @@ test("the workspace survives destroying the container", async () => {
 test("reapIdle removes containers past the idle window", async () => {
   await sandboxService.acquire(USER);
   await sandboxService.release(USER);
+  await tick();
 
   const reaped = await sandboxService.reapIdle(0);
   expect(reaped).toBeGreaterThan(0);
