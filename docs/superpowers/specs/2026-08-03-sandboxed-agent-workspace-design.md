@@ -87,11 +87,11 @@ web → POST /api/chat → chat.controller → pi.service
                                                  ├─ NodeExecutionEnv    (existing, dev only)
                                                  └─ DockerExecutionEnv  (new)
                                                       ├─ Shell.exec  → docker exec
-                                                      └─ FileSystem  → bind-mounted workspace
+                                                      └─ FileSystem  → delegated to NodeExecutionEnv
 ```
 
 A **container is disposable; a workspace is not.** Each user gets a host
-directory bind-mounted into their container at `/workspace`. A container is
+directory bind-mounted into their container at the *same absolute path*. A container is
 started on demand, reused by later runs while it is still warm, and destroyed
 once idle. The directory outlives all of them.
 
@@ -149,7 +149,7 @@ seam now.
 1. Run starts. `sandbox.service.acquire(userId)` returns a ready container.
    - Workspace directory created if absent (`SANDBOX_ROOT/<userId>`).
    - Existing running container reused; otherwise a new one is started from
-     `SANDBOX_IMAGE` with the workspace bind-mounted at `/workspace`.
+     `SANDBOX_IMAGE` with the workspace bind-mounted at its own host path.
 2. The agent runs. All `bash`/`read`/`write`/`edit` calls resolve inside the
    container or against the mounted directory.
 3. Run ends. `release(userId)` marks the sandbox idle. A container idle beyond
