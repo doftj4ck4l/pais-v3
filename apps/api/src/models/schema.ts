@@ -111,3 +111,27 @@ export type MemoryNoteRow = {
   tags: string | null;
   source: string | null;
 };
+
+// One sandbox per user: a workspace that persists, and a container that does not.
+export const sandboxes = sqliteTable(
+  "sandboxes",
+  {
+    userId: text("user_id").primaryKey(),
+    // Null when the container has been reaped. Normal, not an error state.
+    containerId: text("container_id"),
+    workspacePath: text("workspace_path").notNull(),
+    image: text("image").notNull(),
+    createdAt: integer("created_at").notNull(),
+    lastUsedAt: integer("last_used_at").notNull(),
+  },
+  (t) => [index("idx_sandboxes_last_used").on(t.lastUsedAt)],
+);
+
+export type SandboxRow = {
+  userId: string;
+  containerId: string | null;
+  workspacePath: string;
+  image: string;
+  createdAt: number;
+  lastUsedAt: number;
+};

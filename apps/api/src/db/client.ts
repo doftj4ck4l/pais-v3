@@ -2,15 +2,16 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "node:path";
 import fs from "node:fs";
-import { memoryNotes, users, conversations, messages, traces } from "../models/schema";
+import { memoryNotes, users, conversations, messages, traces, sandboxes } from "../models/schema";
 
 /** Where the SQLite database file lives (ignored by git). */
 export const DB_PATH = path.resolve(process.cwd(), "data", "app.db");
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-export { memoryNotes, users, conversations, messages, traces };
+export { memoryNotes, users, conversations, messages, traces, sandboxes };
 export type {
+  SandboxRow,
   MemoryNoteRow,
   ConversationRow,
   MessageRow,
@@ -67,5 +68,14 @@ export function ensureSchema() {
       source   TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_memory_user_ts ON memory_notes (user_id, ts);
+    CREATE TABLE IF NOT EXISTS sandboxes (
+      user_id        TEXT PRIMARY KEY,
+      container_id   TEXT,
+      workspace_path TEXT NOT NULL,
+      image          TEXT NOT NULL,
+      created_at     INTEGER NOT NULL,
+      last_used_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sandboxes_last_used ON sandboxes (last_used_at);
   `);
 }
