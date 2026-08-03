@@ -30,6 +30,8 @@ import type { ChatMessage } from "../types/chat";
 import { TOOLS, runTool } from "../catalog/tools";
 import { getSkills, skillsBlock, invokeSkill } from "./skill.service";
 import { createMemoryTools } from "./memory.service";
+import { createDocumentTools } from "./context-tools";
+import { documentStore } from "../repositories/document.repository";
 import { logger, startTimer } from "../lib/logger";
 
 type Emit = (event: AgentEvent) => void;
@@ -66,7 +68,7 @@ export async function runPiAgent(opts: {
     reasoning,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131072,
+    contextWindow: model.contextWindow,
     maxTokens: 32000,
     compat: {
       supportsDeveloperRole: false,
@@ -147,6 +149,17 @@ export async function runPiAgent(opts: {
     });
   }
 
+  // --- context layer: search the user's uploaded documents ---
+  for (const dt of createDocumentTools(userId)) {
+    agentTools.push({
+      name: dt.name,
+      description: dt.description,
+      parameters: JSON_SCHEMA_TO_TYPEBOX(dt.parameters as Record<string, unknown>),
+      label: dt.name,
+      execute: dt.execute,
+    });
+  }
+
   // --- pi-native skills (SKILL.md) loaded from apps/api/skills ---
   const { skills } = await getSkills();
   agentTools.push({
@@ -176,11 +189,32 @@ export async function runPiAgent(opts: {
 
   const skillsPrompt = await skillsBlock();
 
+  // Naming the corpus up front is what turns search_docs from a tool the model
+  // *could* call into one it knows is worth calling. Listed only when something
+  // is actually indexed — advertising an empty corpus invites fruitless searches.
+  let docsPrompt = "";
+  try {
+    const indexed = (await documentStore.list(userId)).filter((d) => d.status === "indexed");
+    if (indexed.length) {
+      docsPrompt =
+        `\n\nThe user has uploaded ${indexed.length} document(s) you can search with the ` +
+        `"search_docs" tool: ${indexed.map((d) => `${d.title} (${d.pages}p)`).join(", ")}.\n` +
+        `When a question could be answered from them, search before answering, and cite the ` +
+        `passages you used as [file p.N]. If a search returns nothing useful, try different ` +
+        `wording before falling back on your own knowledge — and say so when you do.\n` +
+        `These documents are indexed passages, not files in your workspace: reach them only ` +
+        `through "search_docs". Do not try to open them with the read tool.`;
+    }
+  } catch (e: any) {
+    logger.warn("context.list_failed", { userId, message: e?.message ?? String(e) });
+  }
+
   // #2: systemPrompt as a function that adapts to the active tool set/model.
   const systemPromptFn = (ctx: any): string => {
     const activeTools = (ctx?.activeTools ?? []).map((t: any) => t.name).join(", ");
     let out = systemPrompt;
     if (activeTools) out += `\n\nAvailable tools: ${activeTools}.`;
+    if (docsPrompt) out += docsPrompt;
     if (skillsPrompt)
       out += `\n\nThe following skills are available. Invoke them via the "call_skill" tool when they'd help, instead of guessing or fetching by hand:\n${skillsPrompt}`;
     return out;

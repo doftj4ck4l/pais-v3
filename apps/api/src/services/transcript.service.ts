@@ -35,7 +35,15 @@ export class TranscriptRecorder {
     text: null,
   };
 
-  constructor(history: ChatMessage[] = []) {
+  /**
+   * `seqOffset` is where this run's rows start in the stored transcript. A first
+   * run starts at 0; a follow-up starts after everything already written, so
+   * appended rows extend the conversation instead of colliding with it.
+   */
+  constructor(
+    history: ChatMessage[] = [],
+    private readonly seqOffset = 0,
+  ) {
     for (const message of history) {
       if (message.role === "user" && message.content) {
         this.items.push({ kind: "user", text: message.content });
@@ -124,7 +132,7 @@ export class TranscriptRecorder {
   toMessageRows(): { kind: string; seq: number; text: string }[] {
     return this.items
       .filter((i) => i.kind !== "assistant" || i.text.trim() !== "")
-      .map((item, seq) => ({ kind: item.kind, seq, text: serialize(item) }));
+      .map((item, i) => ({ kind: item.kind, seq: this.seqOffset + i, text: serialize(item) }));
   }
 
   toTraceRows(): RecordedTrace[] {

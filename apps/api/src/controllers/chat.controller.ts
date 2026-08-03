@@ -4,10 +4,12 @@ import { runAgent } from "../services/agent.service";
 import { resolveRun } from "../services/model.service";
 import { TranscriptRecorder } from "../services/transcript.service";
 import { conversationRepository } from "../repositories/conversation.repository";
+import { fitToWindow } from "../services/context-budget.service";
 import { closeStream, createEmitter } from "../lib/sse";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";
 import type { AgentEvent, ChatRequest } from "../types/agent";
+import type { ChatMessage } from "../types/chat";
 import type { ConversationStatus } from "../models/schema";
 
 const newRunId = () => Math.random().toString(36).slice(2, 8);
@@ -46,13 +48,32 @@ export function stream(c: Context) {
     const runId = newRunId();
     const timer = startTimer();
 
-    const recorder = new TranscriptRecorder(history);
-    const conversationId = await conversationRepository.create({
-      userId,
-      title: recorder.title(),
-      modelId: model.id,
-      harnessId: harness.id,
-    });
+    // Continuing an existing thread, or starting one? An unknown or
+    // not-owned id starts a new conversation rather than erroring — the client
+    // may simply be holding a row that was deleted in another tab.
+    const existing = body.conversationId
+      ? await conversationRepository.getOwned(body.conversationId, userId)
+      : undefined;
+
+    let conversationId: string;
+    let recorder: TranscriptRecorder;
+
+    if (existing) {
+      conversationId = existing.id;
+      // Only this turn's new messages are recorded; everything earlier is
+      // already stored, and re-recording it would duplicate the transcript.
+      const seqOffset = await conversationRepository.nextSeq(conversationId);
+      recorder = new TranscriptRecorder(newTurnOf(history), seqOffset);
+      await conversationRepository.setStatus(conversationId, "running");
+    } else {
+      recorder = new TranscriptRecorder(history);
+      conversationId = await conversationRepository.create({
+        userId,
+        title: recorder.title(),
+        modelId: model.id,
+        harnessId: harness.id,
+      });
+    }
 
     // Let the client bind its local agent to the stored row straight away.
     emit({ type: "conversation", id: conversationId });
@@ -78,8 +99,21 @@ export function stream(c: Context) {
     const signal = c.req.raw.signal;
     let turns = 0;
 
+    // Fit the thread to the model's window before the run, summarising older
+    // turns if it no longer fits. Emitted (not recorded) — the meter is live
+    // state, not part of the transcript.
+    const budget = await fitToWindow(model, history, signal);
+    emit(budget.event);
+    if (budget.event.compacted) {
+      record({
+        type: "trace",
+        step: "context.compacted",
+        fields: budget.event.compacted as unknown as Record<string, unknown>,
+      });
+    }
+
     try {
-      turns = await runAgent(harness, model, history, record, {
+      turns = await runAgent(harness, model, budget.history, record, {
         signal,
         runId,
         template: body.template,
@@ -115,6 +149,21 @@ export function stream(c: Context) {
     });
     await closeStream(s);
   });
+}
+
+/**
+ * The trailing user message — the one this turn is actually about.
+ *
+ * The client sends the whole conversation so the model has context, but only
+ * the newest message is new to the transcript. Returning it alone keeps the
+ * recorder writing exactly one turn's worth of rows.
+ */
+function newTurnOf(history: ChatMessage[]): ChatMessage[] {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message?.role === "user") return [message];
+  }
+  return [];
 }
 
 /**

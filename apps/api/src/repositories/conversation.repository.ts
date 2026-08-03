@@ -65,6 +65,28 @@ export const conversationRepository = {
     return rows[0];
   },
 
+  /**
+   * The conversation to continue, or undefined when the id is unknown or owned
+   * by someone else. Ownership is checked here rather than by the caller so a
+   * forged id cannot append turns to another user's thread.
+   */
+  async getOwned(conversationId: string, userId: string): Promise<ConversationRow | undefined> {
+    const rows = await db
+      .select()
+      .from(conversations)
+      .where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)))
+      .limit(1);
+    return rows[0];
+  },
+
+  /** Where the next run's rows start, so a follow-up extends the transcript. */
+  async nextSeq(conversationId: string): Promise<number> {
+    const rows = await db.all<{ next: number | null }>(
+      sql`SELECT MAX(seq) + 1 AS next FROM messages WHERE conversation_id = ${conversationId}`,
+    );
+    return rows[0]?.next ?? 0;
+  },
+
   async setStatus(conversationId: string, status: ConversationStatus): Promise<void> {
     await db
       .update(conversations)

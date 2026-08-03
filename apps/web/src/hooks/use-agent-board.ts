@@ -27,6 +27,34 @@ export type AgentRun = {
   startedAt: number
   /** False for a restored agent whose transcript hasn't been fetched yet. */
   hydrated: boolean
+  /** Context budget as of the last turn, once the server has reported it. */
+  context: ContextUsage | null
+}
+
+export type ContextUsage = {
+  used: number
+  window: number
+  estimated: boolean
+  compacted?: { fromTokens: number; toTokens: number; turnsSummarised: number }
+}
+
+/**
+ * Rebuild the wire history from a rendered transcript.
+ *
+ * Only user and assistant text crosses the wire: tool calls and their results
+ * are replayed server-side by the agent loop, and thinking is not part of the
+ * conversation the model is given. Sending them back would double-count context
+ * the server already accounts for.
+ */
+function historyFrom(items: Item[]): { role: 'user' | 'assistant'; content: string }[] {
+  const out: { role: 'user' | 'assistant'; content: string }[] = []
+  for (const item of items) {
+    if (item.kind === 'user') out.push({ role: 'user', content: item.text })
+    else if (item.kind === 'assistant' && item.text.trim()) {
+      out.push({ role: 'assistant', content: item.text })
+    }
+  }
+  return out
 }
 
 /**
@@ -220,17 +248,49 @@ export function useAgentBoard() {
       elapsed: 0,
       startedAt: Date.now(),
       hydrated: true,
+      context: null,
     }
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
     streamRefs.current.set(id, { thinking: null, text: null })
     setAgents((prev) => [...prev, agent])
     setSelectedId(id)
-    void run(id, agent)
+    void run(id, agent, [{ role: 'user', content: agent.task }])
     return id
   }
 
-  async function run(id: string, seed: AgentRun) {
+  /**
+   * Append a turn to an existing agent and re-run it with the whole thread.
+   *
+   * The full transcript goes up so the model has the conversation, and the
+   * conversation id goes with it so the server extends that row instead of
+   * opening a new one.
+   */
+  function sendFollowUp(agentId: string, text: string) {
+    const agent = agentsRef.current.find((a) => a.id === agentId)
+    if (!agent || agent.status === 'running') return
+
+    const items = itemsRef.current.get(agentId)
+    if (!items) return
+
+    const history = [...historyFrom(items), { role: 'user' as const, content: text }]
+    items.push({ kind: 'user', text })
+    streamRefs.current.set(agentId, { thinking: null, text: null })
+    patchAgent(agentId, {
+      status: 'running',
+      notice: null,
+      items: [...items],
+      startedAt: Date.now(),
+      elapsed: 0,
+    })
+    void run(agentId, agent, history)
+  }
+
+  async function run(
+    id: string,
+    seed: AgentRun,
+    history: { role: 'user' | 'assistant'; content: string }[],
+  ) {
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
 
@@ -239,10 +299,11 @@ export function useAgentBoard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          conversationId: seed.conversationId ?? undefined,
           harnessId: harnessIdRef.current,
           modelId: seed.modelId,
           userId,
-          messages: [{ role: 'user', content: seed.task }],
+          messages: history,
         }),
         signal: controller.signal,
       })
@@ -295,6 +356,17 @@ export function useAgentBoard() {
     switch (event.type) {
       case 'conversation':
         patchAgent(id, { conversationId: event.id })
+        return
+
+      case 'context':
+        patchAgent(id, {
+          context: {
+            used: event.used,
+            window: event.window,
+            estimated: event.estimated,
+            compacted: event.compacted,
+          },
+        })
         return
 
       case 'iteration':
@@ -396,6 +468,7 @@ export function useAgentBoard() {
     selectedId,
     select,
     spawn,
+    sendFollowUp,
     stop,
     remove,
     dismissNotice,
@@ -423,5 +496,6 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     elapsed: Math.max(0, row.updatedAt - row.createdAt),
     startedAt: row.createdAt,
     hydrated: false,
+    context: null,
   }
 }

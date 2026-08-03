@@ -29,6 +29,19 @@ export default function App() {
   const { selected } = board
   const selectedModel = board.meta?.models.find((m) => m.id === selected?.modelId)
 
+  /**
+   * Sending continues the open agent; with nothing selected it starts one.
+   *
+   * The composer looks like a chat box, so it has to behave like one. Starting a
+   * parallel agent stays available as an explicit action (the + in the deck),
+   * which is what the board is for.
+   */
+  const send = (text: string) => {
+    if (selected && selected.status !== 'running') board.sendFollowUp(selected.id, text)
+    else board.spawn(text, board.modelIdForNew)
+    setDeckOpen(false)
+  }
+
   const spawn = (text: string) => {
     board.spawn(text, board.modelIdForNew)
     setDeckOpen(false)
@@ -107,7 +120,7 @@ export default function App() {
           <Composer
             notice={selected?.notice ?? null}
             onDismissNotice={() => selected && board.dismissNotice(selected.id)}
-            onSend={spawn}
+            onSend={send}
           />
         </div>
       </div>

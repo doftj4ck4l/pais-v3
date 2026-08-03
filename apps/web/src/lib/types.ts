@@ -12,6 +12,8 @@ export type Model = {
   hint: string
   brand: string
   ready: boolean
+  /** Usable context window in tokens, as declared by the API catalog. */
+  contextWindow: number
 }
 
 export type Meta = {
@@ -69,4 +71,28 @@ export type ConversationDetail = {
   conversation: ConversationRow
   messages: MessageRow[]
   traces: TraceRow[]
+}
+
+export type DocumentStatus = 'indexed' | 'empty' | 'error'
+
+export type DocumentRow = {
+  id: string
+  userId: string
+  title: string
+  bytes: number
+  pages: number
+  chunkCount: number
+  status: DocumentStatus
+  error: string | null
+  createdAt: number
+}
+
+/** One file's outcome from an upload — the whole batch never fails as a unit. */
+export type IngestResult = {
+  documentId?: string
+  title: string
+  status: DocumentStatus
+  pages: number
+  chunks: number
+  error?: string
 }
