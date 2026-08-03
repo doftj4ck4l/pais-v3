@@ -17,6 +17,10 @@ import {
   type AgentHarnessEvent,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { ExecutionEnv } from "@earendil-works/pi-agent-core";
+import { env as appEnv } from "../config/env";
+import { DockerExecutionEnv } from "./sandbox/docker-execution-env";
+import { sandboxService } from "./sandbox/sandbox.service";
 import path from "node:path";
 import fs from "node:fs";
 import type { AgentEvent } from "../types/agent";
@@ -92,10 +96,25 @@ export async function runPiAgent(opts: {
   const m = models.getModel("gw", model.model);
   if (!m) throw new Error(`model not found: ${model.model}`);
 
-  // --- workspace execution env (host-backed) for the built-in file/shell tools ---
-  const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
-  fs.mkdirSync(workspaceDir, { recursive: true });
-  const env = new NodeExecutionEnv({ cwd: workspaceDir });
+  // --- the agent's world: this host, or a per-user container ---
+  // `docker` isolates the run and gives the user a workspace that outlives the
+  // container. `node` keeps tools on the API host and is the default, so this
+  // stays inert until SANDBOX_BACKEND is switched.
+  let execEnv: ExecutionEnv;
+  let releaseSandbox: (() => Promise<void>) | undefined;
+
+  if (appEnv.sandboxBackend === "docker") {
+    const sandbox = await sandboxService.acquire(userId);
+    execEnv = new DockerExecutionEnv({
+      containerId: sandbox.containerId,
+      cwd: sandbox.workspacePath,
+    });
+    releaseSandbox = () => sandboxService.release(userId);
+  } else {
+    const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    execEnv = new NodeExecutionEnv({ cwd: workspaceDir });
+  }
 
   // --- built-in pi tools: bash + file read/write/edit (scoped to workspace) ---
   const builtinTools: any[] = [
@@ -151,7 +170,7 @@ export async function runPiAgent(opts: {
   const promptsDir = path.resolve(process.cwd(), "prompts");
   let promptTemplates: any[] = [];
   if (fs.existsSync(promptsDir)) {
-    const loaded = await loadPromptTemplates(env, promptsDir);
+    const loaded = await loadPromptTemplates(execEnv, promptsDir);
     promptTemplates = loaded.promptTemplates;
   }
 
@@ -176,7 +195,7 @@ export async function runPiAgent(opts: {
     thinkingLevel: reasoning ? "high" : ("off" as any),
     systemPrompt: systemPromptFn,
     resources: { skills, promptTemplates },
-    toolContext: { env },
+    toolContext: { env: execEnv },
     tools: [...builtinTools, ...agentTools],
   });
 
@@ -261,7 +280,8 @@ export async function runPiAgent(opts: {
     logger.warn("run.error", { run: runId, ms: t.elapsed(), error: (e as Error)?.message });
     emit({ type: "error", message: (e as Error)?.message ?? String(e) });
   } finally {
-    await env.cleanup().catch(() => {});
+    await execEnv.cleanup().catch(() => {});
+    await releaseSandbox?.().catch(() => {});
   }
   return turns;
 }
