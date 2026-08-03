@@ -31,11 +31,18 @@ export const env = {
    */
   sandboxBackend: (process.env.SANDBOX_BACKEND ?? "docker") as "node" | "docker",
 
-  sandboxImage: process.env.SANDBOX_IMAGE ?? "node:22-bookworm-slim",
+  sandboxImage: process.env.SANDBOX_IMAGE ?? "salurai-sandbox:1",
 
   /** Workspaces live here, one directory per user, and are never deleted. */
   sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "salurai-workspaces"),
 
   /** Remove a container after this long without a run. */
   sandboxIdleMs: Number(process.env.SANDBOX_IDLE_MS ?? 300_000),
+
+  /**
+   * Host directory holding SKILL.md skills, bind-mounted read-only into every
+   * sandbox container. Resolved from the package root, not the process cwd, so
+   * it does not depend on where the server was started from.
+   */
+  skillsRoot: process.env.SKILLS_ROOT ?? path.resolve(import.meta.dirname, "..", "..", "skills"),
 } as const;

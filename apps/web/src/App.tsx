@@ -73,6 +73,7 @@ export default function App() {
       onClearAll={board.clearAll}
       theme={theme}
       onToggleTheme={toggle}
+      filesRefreshKey={board.runsCompleted}
     />
   )
 

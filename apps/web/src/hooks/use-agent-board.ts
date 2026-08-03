@@ -77,6 +77,7 @@ export function useAgentBoard() {
   const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
   const [agents, setAgents] = useState<AgentRun[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [runsCompleted, setRunsCompleted] = useState(0)
 
   const userId = useRef(getUserId()).current
   const controllersRef = useRef<Map<string, AbortController>>(new Map())
@@ -344,6 +345,9 @@ export function useAgentBoard() {
       setAgents((prev) =>
         prev.map((a) => (a.id === id && a.status === 'running' ? { ...a, status: 'done' } : a)),
       )
+      // A run is the only thing that writes to the workspace, so its end is the
+      // one moment worth re-listing files — cheaper and more accurate than polling.
+      setRunsCompleted((n) => n + 1)
     }
   }
 
@@ -467,6 +471,7 @@ export function useAgentBoard() {
     selected,
     selectedId,
     select,
+    runsCompleted,
     spawn,
     sendFollowUp,
     stop,

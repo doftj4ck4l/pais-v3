@@ -1,4 +1,11 @@
-import type { ConversationDetail, ConversationRow, DocumentRow, IngestResult, Meta } from '@/lib/types'
+import type {
+  ConversationDetail,
+  ConversationRow,
+  DocumentRow,
+  IngestResult,
+  Meta,
+  WorkspaceFile,
+} from '@/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -55,4 +62,18 @@ export async function deleteDocument(userId: string, id: string): Promise<void> 
   await fetch(`/api/documents/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
     method: 'DELETE',
   })
+}
+
+/** Files the agent has produced in this user's sandbox workspace. */
+export async function listWorkspaceFiles(userId: string): Promise<WorkspaceFile[]> {
+  const { files } = await json<{ files: WorkspaceFile[] }>(
+    await fetch(`/api/workspace/files?userId=${encodeURIComponent(userId)}`),
+  )
+  return files
+}
+
+/** Download URL for one workspace file. Served as an attachment by the API. */
+export function workspaceFileUrl(userId: string, filePath: string): string {
+  const encoded = filePath.split('/').map(encodeURIComponent).join('/')
+  return `/api/workspace/files/${encoded}?userId=${encodeURIComponent(userId)}`
 }

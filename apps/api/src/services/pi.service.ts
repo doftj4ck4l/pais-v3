@@ -174,7 +174,7 @@ export async function runPiAgent(opts: {
     }),
     label: "call_skill",
     execute: async (_id: string, params: any) => {
-      const out = await invokeSkill(String(params?.skill ?? ""), String(params?.query ?? ""));
+      const out = await invokeSkill(String(params?.skill ?? ""), String(params?.query ?? ""), execEnv);
       return { content: [{ type: "text" as const, text: out }], details: { output: out } };
     },
   });

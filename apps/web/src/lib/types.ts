@@ -96,3 +96,9 @@ export type IngestResult = {
   chunks: number
   error?: string
 }
+
+export type WorkspaceFile = {
+  path: string
+  bytes: number
+  modifiedAt: number
+}

@@ -52,6 +52,7 @@ export const sandboxService = {
       image: env.sandboxImage,
       workspacePath,
       name: containerNameFor(userId),
+      skillsPath: env.skillsRoot,
     });
 
     await sandboxRepository.upsert({

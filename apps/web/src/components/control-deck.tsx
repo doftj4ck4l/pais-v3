@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
 import { DocumentPanel } from '@/components/document-panel'
+import { FilesPanel } from '@/components/files-panel'
 import { ModelLogo } from '@/components/model-logo'
 import { RunStats } from '@/components/run-stats'
 import type { AgentRun } from '@/hooks/use-agent-board'
@@ -34,6 +35,7 @@ export function ControlDeck({
   onClearAll,
   theme,
   onToggleTheme,
+  filesRefreshKey,
 }: {
   meta: Meta | null
   harnessId: string
@@ -50,6 +52,8 @@ export function ControlDeck({
   onClearAll: () => void
   theme: 'light' | 'dark'
   onToggleTheme: () => void
+  /** Bumped when a run finishes, so produced files show up without a manual refresh. */
+  filesRefreshKey?: number
 }) {
   const model = meta?.models.find((m) => m.id === modelId)
 
@@ -106,6 +110,12 @@ export function ControlDeck({
 
       <div className="px-4 py-4">
         <DocumentPanel />
+      </div>
+
+      <Separator />
+
+      <div className="px-4 py-4">
+        <FilesPanel refreshKey={filesRefreshKey} />
       </div>
 
       <Separator />
