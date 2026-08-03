@@ -27,7 +27,17 @@ export type Item =
   | { kind: 'assistant'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'iteration'; n: number }
-  | { kind: 'tool'; id: string; name: string; args: string; result?: string }
+  | {
+      kind: 'tool'
+      id: string
+      name: string
+      args: string
+      result?: string
+      /** Wall-clock duration, once the result arrives. */
+      ms?: number
+      /** False when the tool reported a failure. */
+      ok?: boolean
+    }
 
 export type TraceLine = { ts: number; step: string; fields: Record<string, unknown> }
 

@@ -114,7 +114,21 @@ function TranscriptRow({
           <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
             <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="readout truncate font-medium text-card-foreground">{item.name}</span>
-            {pending ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
+            {pending ? (
+              <Spinner className="ml-auto size-3.5 text-muted-foreground" />
+            ) : (
+              <span className="readout ml-auto flex shrink-0 items-center gap-1.5 text-[0.625rem]">
+                {item.ok === false ? (
+                  <span className="text-destructive">failed</span>
+                ) : null}
+                {/* Cost of the call, so a slow tool is visible without opening the trace. */}
+                {item.ms !== undefined ? (
+                  <span className="tabular-nums text-muted-foreground">
+                    {item.ms >= 1000 ? `${(item.ms / 1000).toFixed(1)}s` : `${item.ms}ms`}
+                  </span>
+                ) : null}
+              </span>
+            )}
           </div>
 
           {item.args !== '{}' ? (

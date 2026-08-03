@@ -35,6 +35,8 @@ export function itemsFromRows(rows: MessageRow[]): Item[] {
             name?: string
             args?: unknown
             result?: string
+            ms?: number
+            ok?: boolean
           }
           items.push({
             kind: 'tool',
@@ -42,6 +44,8 @@ export function itemsFromRows(rows: MessageRow[]): Item[] {
             name: parsed.name ?? 'tool',
             args: formatToolArgs(parsed.args),
             result: parsed.result,
+            ms: parsed.ms,
+            ok: parsed.ok,
           })
         } catch {
           // A malformed row shouldn't blank the whole transcript.

@@ -403,7 +403,12 @@ export function useAgentBoard() {
           (x) => x.kind === 'tool' && x.name === event.name && x.result === undefined,
         )
         if (idx >= 0) {
-          items[idx] = { ...(items[idx] as Extract<Item, { kind: 'tool' }>), result: event.content }
+          items[idx] = {
+            ...(items[idx] as Extract<Item, { kind: 'tool' }>),
+            result: event.content,
+            ms: event.ms,
+            ok: event.ok,
+          }
         }
         break
       }

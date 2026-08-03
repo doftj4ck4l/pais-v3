@@ -221,6 +221,10 @@ export async function runPiAgent(opts: {
   };
 
   // --- the real pi AgentHarness (sessions, skills, templates, built-in tools) ---
+  // Tool start times, keyed by call id so parallel calls do not overwrite
+  // each other. Entries are removed as each call ends.
+  const toolStartedAt = new Map<string, number>();
+
   const session = new Session(new InMemorySessionStorage());
   const harness = new AgentHarness({
     session,
@@ -252,12 +256,35 @@ export async function runPiAgent(opts: {
           break;
         }
         case "tool_execution_start":
+          // Started-at is kept per call id, not per tool name: tools run in
+          // parallel, so two calls to the same tool are in flight at once.
+          toolStartedAt.set(event.toolCallId, Date.now());
           logger.info("tool", { run: runId, name: event.toolName, args: event.args });
           emit({ type: "tool_call", id: event.toolCallId, name: event.toolName, args: event.args ?? {} });
           break;
         case "tool_execution_end": {
           const text = extractResultText(event.result);
-          emit({ type: "tool_result", name: event.toolName, content: text, calls: 1 });
+          const startedAt = toolStartedAt.get(event.toolCallId);
+          toolStartedAt.delete(event.toolCallId);
+          const ms = startedAt === undefined ? undefined : Date.now() - startedAt;
+          const failed = event.isError === true;
+
+          logger.info("tool.end", { run: runId, name: event.toolName, ms, ok: !failed });
+          emit({
+            type: "tool_result",
+            name: event.toolName,
+            content: text,
+            calls: 1,
+            ms,
+            ok: !failed,
+          });
+          // Recorded as a trace too, so per-tool cost and failures survive the
+          // run and can be queried later — the transcript keeps only the text.
+          emit({
+            type: "trace",
+            step: "tool",
+            fields: { name: event.toolName, ms, ok: !failed },
+          });
           break;
         }
         // #4: surface slots/persona info (active tool set + queue modes) to the UI

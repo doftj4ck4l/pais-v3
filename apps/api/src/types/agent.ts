@@ -3,7 +3,16 @@ export type AgentEvent =
   | { type: "text"; delta: string }
   | { type: "reasoning"; delta: string }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
-  | { type: "tool_result"; name: string; content: string; calls: number }
+  | {
+      type: "tool_result";
+      name: string;
+      content: string;
+      calls: number;
+      /** Wall-clock duration of the call, absent if the start was not seen. */
+      ms?: number;
+      /** False when the tool reported a failure rather than a usable result. */
+      ok?: boolean;
+    }
   | { type: "iteration"; iteration: number }
   | { type: "trace"; step: string; fields: Record<string, unknown> }
   | {
