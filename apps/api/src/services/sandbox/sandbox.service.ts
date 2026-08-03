@@ -93,3 +93,23 @@ export const sandboxService = {
     if (row) await sandboxRepository.clearContainer(userId);
   },
 };
+
+/**
+ * Run the reaper on a timer. Without this, `reapIdle` is never called and
+ * containers accumulate for every user who ever ran an agent.
+ *
+ * The tick follows the idle window so a short window stays responsive, capped
+ * at a minute so a long one doesn't mean a long poll. Unref'd, so it never
+ * holds the process open.
+ */
+export function startSandboxReaper(): () => void {
+  const intervalMs = Math.max(1_000, Math.min(60_000, env.sandboxIdleMs));
+  const timer = setInterval(() => {
+    void sandboxService.reapIdle().catch((e) => {
+      logger.warn("sandbox.reap_failed", { error: (e as Error).message });
+    });
+  }, intervalMs);
+  timer.unref?.();
+  logger.info("sandbox.reaper_started", { everyMs: intervalMs, idleMs: env.sandboxIdleMs });
+  return () => clearInterval(timer);
+}

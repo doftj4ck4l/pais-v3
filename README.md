@@ -146,6 +146,44 @@ without any reported failure yet produce nothing at all — an unreachable gatew
 or an unknown model name both look like that — so an empty run is recorded as an
 error rather than a success.
 
+### Sandboxed workspaces
+
+With `SANDBOX_BACKEND=docker`, the agent's `bash` / `read` / `write` / `edit`
+tools run inside a per-user Docker container instead of on the API host. The
+user's workspace lives at `SANDBOX_ROOT/<userId>` and is bind-mounted into the
+container **at the same absolute path**, so host and container share one path
+namespace and no translation is ever needed.
+
+Containers are started on demand, reused while warm, and removed after
+`SANDBOX_IDLE_MS` of inactivity by a reaper started at boot. **Workspaces are
+never deleted** — that is the whole point: a file an agent writes today is still
+there for a different agent next week.
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `SANDBOX_BACKEND` | `node` | `node` (API host) or `docker` (per-user container) |
+| `SANDBOX_IMAGE` | `node:22-bookworm-slim` | Image the agent works inside |
+| `SANDBOX_ROOT` | `~/mixmatch-workspaces` | Where workspaces live on the host |
+| `SANDBOX_IDLE_MS` | `300000` | Remove a container after this much idle time |
+
+```bash
+cd apps/api && SANDBOX_BACKEND=docker bun run dev
+```
+
+Needs a running Docker daemon. With `SANDBOX_BACKEND=docker` and Docker down,
+runs fail with a clear message rather than silently falling back to the host —
+a silent fallback would hand the model a shell on the API server.
+
+`DockerExecutionEnv` extends pi's `NodeExecutionEnv` and overrides only `exec`.
+Swapping in a hosted backend (E2B, Fly) means one more class against the same
+`ExecutionEnv` interface; nothing else changes.
+
+Prove the persistence mechanic independently of the app:
+
+```bash
+cd apps/api && bun scripts/sandbox-persistence-check.ts
+```
+
 ### Adding a model
 
 Add an entry to `MODELS` in `apps/api/src/catalog/llm-models.ts` (OpenAI-compatible
