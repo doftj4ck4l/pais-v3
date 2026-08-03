@@ -5,7 +5,7 @@ import { resolveRun } from "../services/model.service";
 import { TranscriptRecorder } from "../services/transcript.service";
 import { conversationRepository } from "../repositories/conversation.repository";
 import { fitToWindow } from "../services/context-budget.service";
-import { closeStream, createEmitter } from "../lib/sse";
+import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";
 import type { AgentEvent, ChatRequest } from "../types/agent";
@@ -27,127 +27,133 @@ const newRunId = () => Math.random().toString(36).slice(2, 8);
 export function stream(c: Context) {
   return streamSSE(c, async (s) => {
     const emit = createEmitter(s);
-    const body = (await c.req.json().catch(() => ({}))) as ChatRequest;
+    // Keeps the connection open across a long, silent tool call. Stopped in the
+    // finally below so it can never outlive the run.
+    const stopHeartbeat = startHeartbeat(s);
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as ChatRequest;
 
-    const resolved = resolveRun({
-      harnessId: body.harnessId,
-      modelId: body.modelId,
-      modelConfig: body.modelConfig,
-    });
-
-    if (!resolved.ok) {
-      logger.warn("run.rejected", { reason: resolved.error });
-      emit({ type: "error", message: resolved.error });
-      await closeStream(s);
-      return;
-    }
-
-    const { harness, model } = resolved;
-    const userId = body.userId ?? env.defaultUserId;
-    const history = body.messages ?? [];
-    const runId = newRunId();
-    const timer = startTimer();
-
-    // Continuing an existing thread, or starting one? An unknown or
-    // not-owned id starts a new conversation rather than erroring — the client
-    // may simply be holding a row that was deleted in another tab.
-    const existing = body.conversationId
-      ? await conversationRepository.getOwned(body.conversationId, userId)
-      : undefined;
-
-    let conversationId: string;
-    let recorder: TranscriptRecorder;
-
-    if (existing) {
-      conversationId = existing.id;
-      // Only this turn's new messages are recorded; everything earlier is
-      // already stored, and re-recording it would duplicate the transcript.
-      const seqOffset = await conversationRepository.nextSeq(conversationId);
-      recorder = new TranscriptRecorder(newTurnOf(history), seqOffset);
-      await conversationRepository.setStatus(conversationId, "running");
-    } else {
-      recorder = new TranscriptRecorder(history);
-      conversationId = await conversationRepository.create({
-        userId,
-        title: recorder.title(),
-        modelId: model.id,
-        harnessId: harness.id,
+      const resolved = resolveRun({
+        harnessId: body.harnessId,
+        modelId: body.modelId,
+        modelConfig: body.modelConfig,
       });
-    }
 
-    // Let the client bind its local agent to the stored row straight away.
-    emit({ type: "conversation", id: conversationId });
+      if (!resolved.ok) {
+        logger.warn("run.rejected", { reason: resolved.error });
+        emit({ type: "error", message: resolved.error });
+        return;
+      }
 
-    logger.info("run.start", {
-      run: runId,
-      conversation: conversationId,
-      harness: harness.id,
-      model: model.id,
-    });
+      const { harness, model } = resolved;
+      const userId = body.userId ?? env.defaultUserId;
+      const history = body.messages ?? [];
+      const runId = newRunId();
+      const timer = startTimer();
 
-    const record = (event: AgentEvent) => {
-      recorder.record(event);
-      emit(event);
-    };
+      // Continuing an existing thread, or starting one? An unknown or
+      // not-owned id starts a new conversation rather than erroring — the client
+      // may simply be holding a row that was deleted in another tab.
+      const existing = body.conversationId
+        ? await conversationRepository.getOwned(body.conversationId, userId)
+        : undefined;
 
-    record({
-      type: "trace",
-      step: "run.start",
-      fields: { harness: harness.id, model: model.id },
-    });
+      let conversationId: string;
+      let recorder: TranscriptRecorder;
 
-    const signal = c.req.raw.signal;
-    let turns = 0;
+      if (existing) {
+        conversationId = existing.id;
+        // Only this turn's new messages are recorded; everything earlier is
+        // already stored, and re-recording it would duplicate the transcript.
+        const seqOffset = await conversationRepository.nextSeq(conversationId);
+        recorder = new TranscriptRecorder(newTurnOf(history), seqOffset);
+        await conversationRepository.setStatus(conversationId, "running");
+      } else {
+        recorder = new TranscriptRecorder(history);
+        conversationId = await conversationRepository.create({
+          userId,
+          title: recorder.title(),
+          modelId: model.id,
+          harnessId: harness.id,
+        });
+      }
 
-    // Fit the thread to the model's window before the run, summarising older
-    // turns if it no longer fits. Emitted (not recorded) — the meter is live
-    // state, not part of the transcript.
-    const budget = await fitToWindow(model, history, signal);
-    emit(budget.event);
-    if (budget.event.compacted) {
+      // Let the client bind its local agent to the stored row straight away.
+      emit({ type: "conversation", id: conversationId });
+
+      logger.info("run.start", {
+        run: runId,
+        conversation: conversationId,
+        harness: harness.id,
+        model: model.id,
+      });
+
+      const record = (event: AgentEvent) => {
+        recorder.record(event);
+        emit(event);
+      };
+
       record({
         type: "trace",
-        step: "context.compacted",
-        fields: budget.event.compacted as unknown as Record<string, unknown>,
+        step: "run.start",
+        fields: { harness: harness.id, model: model.id },
       });
-    }
 
-    try {
-      turns = await runAgent(harness, model, budget.history, record, {
-        signal,
-        runId,
-        template: body.template,
-        workspace: body.workspace,
-        userId,
+      const signal = c.req.raw.signal;
+      let turns = 0;
+
+      // Fit the thread to the model's window before the run, summarising older
+      // turns if it no longer fits. Emitted (not recorded) — the meter is live
+      // state, not part of the transcript.
+      const budget = await fitToWindow(model, history, signal);
+      emit(budget.event);
+      if (budget.event.compacted) {
+        record({
+          type: "trace",
+          step: "context.compacted",
+          fields: budget.event.compacted as unknown as Record<string, unknown>,
+        });
+      }
+
+      try {
+        turns = await runAgent(harness, model, budget.history, record, {
+          signal,
+          runId,
+          template: body.template,
+          workspace: body.workspace,
+          userId,
+        });
+      } catch (e) {
+        // The loop reports failures as events; a throw here means it broke outright.
+        const message = (e as Error).message;
+        logger.error("run.failed", { run: runId, conversation: conversationId, error: message });
+        record({ type: "error", message });
+      }
+
+      // A run that finished quietly without producing anything is a failure the
+      // runtime didn't report. Say so, rather than storing it as a success.
+      if (!signal.aborted && !recorder.error() && !recorder.producedOutput()) {
+        const message = `${model.label} returned no output — check the gateway URL and that the model name is served.`;
+        logger.warn("run.empty", { run: runId, conversation: conversationId, model: model.id });
+        record({ type: "error", message });
+      }
+
+      const status = runStatus(signal.aborted, recorder.error());
+      record({ type: "trace", step: "run.end", fields: { ms: timer.elapsed(), turns, status } });
+
+      await persist(conversationId, recorder, status);
+
+      logger.info("run.end", {
+        run: runId,
+        conversation: conversationId,
+        ms: timer.elapsed(),
+        turns,
+        status,
       });
-    } catch (e) {
-      // The loop reports failures as events; a throw here means it broke outright.
-      const message = (e as Error).message;
-      logger.error("run.failed", { run: runId, conversation: conversationId, error: message });
-      record({ type: "error", message });
+    } finally {
+      stopHeartbeat();
+      await closeStream(s);
     }
-
-    // A run that finished quietly without producing anything is a failure the
-    // runtime didn't report. Say so, rather than storing it as a success.
-    if (!signal.aborted && !recorder.error() && !recorder.producedOutput()) {
-      const message = `${model.label} returned no output — check the gateway URL and that the model name is served.`;
-      logger.warn("run.empty", { run: runId, conversation: conversationId, model: model.id });
-      record({ type: "error", message });
-    }
-
-    const status = runStatus(signal.aborted, recorder.error());
-    record({ type: "trace", step: "run.end", fields: { ms: timer.elapsed(), turns, status } });
-
-    await persist(conversationId, recorder, status);
-
-    logger.info("run.end", {
-      run: runId,
-      conversation: conversationId,
-      ms: timer.elapsed(),
-      turns,
-      status,
-    });
-    await closeStream(s);
   });
 }
 
