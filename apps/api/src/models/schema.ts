@@ -135,3 +135,69 @@ export type SandboxRow = {
   createdAt: number;
   lastUsedAt: number;
 };
+
+// ---- context layer: uploaded documents and their retrievable chunks ----
+
+/**
+ * How ingestion ended. `indexed` is the only state the search tool will read
+ * from; `empty` means the file parsed but yielded no text layer (a scanned PDF),
+ * which is reported to the user rather than left looking like a success.
+ */
+export type DocumentStatus = "indexed" | "empty" | "error";
+
+// One uploaded file per row, scoped to a user like conversations and memory.
+export const documents = sqliteTable(
+  "documents",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(), // original filename
+    bytes: integer("bytes").notNull(),
+    pages: integer("pages").notNull(),
+    chunkCount: integer("chunk_count").notNull(),
+    status: text("status").$type<DocumentStatus>().notNull().default("indexed"),
+    error: text("error"), // why status is `empty` or `error`, for the UI
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_documents_user").on(t.userId, t.createdAt)],
+);
+export type DocumentRow = {
+  id: string;
+  userId: string;
+  title: string;
+  bytes: number;
+  pages: number;
+  chunkCount: number;
+  status: DocumentStatus;
+  error: string | null;
+  createdAt: number;
+};
+
+/**
+ * A retrievable passage. This is the source of truth for chunk text and its
+ * provenance; `chunks_fts` (created in ensureSchema, since Drizzle has no
+ * virtual-table support) mirrors the text for ranking and is kept in sync by
+ * the repository.
+ */
+export const chunks = sqliteTable(
+  "chunks",
+  {
+    id: text("id").primaryKey(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(), // denormalised so search filters without a join
+    seq: integer("seq").notNull(), // order within the document
+    page: integer("page").notNull(), // 1-based, for citations
+    text: text("text").notNull(),
+  },
+  (t) => [index("idx_chunks_document").on(t.documentId, t.seq)],
+);
+export type ChunkRow = {
+  id: string;
+  documentId: string;
+  userId: string;
+  seq: number;
+  page: number;
+  text: string;
+};

@@ -1,4 +1,4 @@
-import type { ConversationDetail, ConversationRow, Meta } from '@/lib/types'
+import type { ConversationDetail, ConversationRow, DocumentRow, IngestResult, Meta } from '@/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -28,4 +28,31 @@ export async function deleteConversation(id: string): Promise<void> {
   } catch {
     // offline or already gone
   }
+}
+
+/** Documents this browser has uploaded, newest first. */
+export async function listDocuments(userId: string): Promise<DocumentRow[]> {
+  const { documents } = await json<{ documents: DocumentRow[] }>(
+    await fetch(`/api/documents?userId=${encodeURIComponent(userId)}`),
+  )
+  return documents
+}
+
+/**
+ * Upload files for indexing. Resolves with one result per file: a PDF that
+ * cannot be indexed is reported, not thrown, so the rest of the batch survives.
+ */
+export async function uploadDocuments(userId: string, files: File[]): Promise<IngestResult[]> {
+  const body = new FormData()
+  for (const file of files) body.append('files', file)
+  const { results } = await json<{ results: IngestResult[] }>(
+    await fetch(`/api/documents?userId=${encodeURIComponent(userId)}`, { method: 'POST', body }),
+  )
+  return results
+}
+
+export async function deleteDocument(userId: string, id: string): Promise<void> {
+  await fetch(`/api/documents/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  })
 }

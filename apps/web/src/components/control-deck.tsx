@@ -12,6 +12,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
+import { DocumentPanel } from '@/components/document-panel'
 import { ModelLogo } from '@/components/model-logo'
 import { RunStats } from '@/components/run-stats'
 import type { AgentRun } from '@/hooks/use-agent-board'
@@ -99,6 +100,12 @@ export function ControlDeck({
             </SelectContent>
           </Select>
         </Field>
+      </div>
+
+      <Separator />
+
+      <div className="px-4 py-4">
+        <DocumentPanel />
       </div>
 
       <Separator />
