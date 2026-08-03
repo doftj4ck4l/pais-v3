@@ -21,7 +21,7 @@ let cached: { env: ExecutionEnv; skills: Skill[] } | null = null;
  */
 export async function getSkills() {
   if (cached) return cached;
-  const skillsDir = fileURLToPath(new URL("../skills/", import.meta.url));
+  const skillsDir = fileURLToPath(new URL("../../skills/", import.meta.url));
   const env = new NodeExecutionEnv({ cwd: skillsDir });
   const { skills, diagnostics } = await loadSkills(env, skillsDir);
   for (const d of diagnostics) logger.warn("skill.load", { code: d.code, message: d.message, path: d.path });
