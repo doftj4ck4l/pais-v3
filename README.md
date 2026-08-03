@@ -149,11 +149,19 @@ error rather than a success.
 
 ### Sandboxed workspaces
 
-With `SANDBOX_BACKEND=docker`, the agent's `bash` / `read` / `write` / `edit`
-tools run inside a per-user Docker container instead of on the API host. The
-user's workspace lives at `SANDBOX_ROOT/<userId>` and is bind-mounted into the
-container **at the same absolute path**, so host and container share one path
-namespace and no translation is ever needed.
+The agent's `bash` / `read` / `write` / `edit` tools run inside a per-user
+Docker container, not on the API host. The user's workspace lives at
+`SANDBOX_ROOT/<userId>` and is bind-mounted into the container **at the same
+absolute path**, so host and container share one path namespace and no
+translation is ever needed.
+
+This is the default, and deliberately so. Under `SANDBOX_BACKEND=node` the same
+tools run directly on the API host as whoever started the server: the working
+directory is a starting point, not a boundary, so the agent can read anything
+that user can — `~/.ssh`, other repositories, `apps/api/.env`, and the server
+process's own environment. Since uploaded documents put untrusted text into the
+model's context, a prompt-injected PDF would inherit all of it. Use `node` only
+as a trusted operator on a machine you would not mind losing.
 
 Containers are started on demand, reused while warm, and removed after
 `SANDBOX_IDLE_MS` of inactivity by a reaper started at boot. **Workspaces are
@@ -162,18 +170,15 @@ there for a different agent next week.
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `SANDBOX_BACKEND` | `node` | `node` (API host) or `docker` (per-user container) |
+| `SANDBOX_BACKEND` | `docker` | `docker` (per-user container, default) or `node` (API host — unsandboxed) |
 | `SANDBOX_IMAGE` | `node:22-bookworm-slim` | Image the agent works inside |
 | `SANDBOX_ROOT` | `~/salurai-workspaces` | Where workspaces live on the host |
 | `SANDBOX_IDLE_MS` | `300000` | Remove a container after this much idle time |
 
-```bash
-cd apps/api && SANDBOX_BACKEND=docker bun run dev
-```
-
-Needs a running Docker daemon. With `SANDBOX_BACKEND=docker` and Docker down,
-runs fail with a clear message rather than silently falling back to the host —
-a silent fallback would hand the model a shell on the API server.
+Needs a running Docker daemon — `bun run dev` is enough, no env var required.
+With Docker down, runs fail with a clear message rather than silently falling
+back to the host; a silent fallback would hand the model a shell on the API
+server, which is exactly what this default exists to prevent.
 
 `DockerExecutionEnv` extends pi's `NodeExecutionEnv` and overrides only `exec`.
 Swapping in a hosted backend (E2B, Fly) means one more class against the same

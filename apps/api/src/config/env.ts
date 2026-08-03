@@ -18,11 +18,18 @@ export const env = {
   /**
    * Where the agent's shell and file tools run.
    *
-   * `node` executes them on this API host — fine for a trusted developer, and
-   * the default so the sandbox work stays inert until switched on. `docker`
-   * gives each user an isolated container over a workspace that outlives it.
+   * `docker` gives each user an isolated container over a workspace that
+   * outlives it, and is the default because the alternative is not safe by
+   * default. `node` executes the same tools directly on this API host, as the
+   * user running the server: `cwd` is a starting directory, not a boundary, so
+   * the agent can read anything that user can — including this process's own
+   * environment and `.env`. Uploaded documents make that reachable by prompt
+   * injection, so `node` is for a trusted operator on a throwaway machine only.
+   *
+   * With `docker` selected and the daemon down, runs fail loudly rather than
+   * falling back to the host — a silent fallback would hand the model a shell.
    */
-  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "node") as "node" | "docker",
+  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "docker") as "node" | "docker",
 
   sandboxImage: process.env.SANDBOX_IMAGE ?? "node:22-bookworm-slim",
 
