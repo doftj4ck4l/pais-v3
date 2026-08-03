@@ -186,7 +186,7 @@ function Wordmark() {
           π
         </span>
       </span>
-      <span className="text-[0.9375rem] font-extrabold tracking-[-0.02em]">Mix ✕ Match</span>
+      <span className="text-[0.9375rem] font-extrabold tracking-[-0.02em]">SalurAI</span>
     </div>
   )
 }

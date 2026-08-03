@@ -13,7 +13,7 @@ import {
 
 /** Container names must survive Docker's charset rules and stay recognisable. */
 const containerNameFor = (userId: string) =>
-  `mixmatch-${userId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
+  `salurai-${userId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
 
 /**
  * Owns the container lifecycle behind a user's workspace.

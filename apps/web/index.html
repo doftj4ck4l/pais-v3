@@ -6,14 +6,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Mix a harness with a model and watch the pi agent loop run, step by step."
+      content="Pair an agent harness with a model and watch the pi agent loop run, step by step."
     />
-    <title>Mix ✕ Match — pi agent console</title>
+    <title>SalurAI — pi agent console</title>
     <script>
       // Paint the right ground colour on the first frame, before React mounts.
       (function () {
         try {
-          var dark = localStorage.getItem('mixmatch-theme') === 'dark'
+          // Falls back to the pre-rebrand key so the first paint after an
+          // upgrade still matches the theme the user had chosen.
+          var saved =
+            localStorage.getItem('salurai-theme') || localStorage.getItem('mixmatch-theme')
+          var dark = saved === 'dark'
           document.documentElement.classList.toggle('dark', dark)
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
         } catch (e) {}

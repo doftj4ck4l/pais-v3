@@ -27,7 +27,7 @@ export const env = {
   sandboxImage: process.env.SANDBOX_IMAGE ?? "node:22-bookworm-slim",
 
   /** Workspaces live here, one directory per user, and are never deleted. */
-  sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "mixmatch-workspaces"),
+  sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "salurai-workspaces"),
 
   /** Remove a container after this long without a run. */
   sandboxIdleMs: Number(process.env.SANDBOX_IDLE_MS ?? 300_000),

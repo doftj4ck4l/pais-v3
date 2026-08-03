@@ -1,8 +1,9 @@
-# Mix & Match POC
+# SalurAI
 
-A small proof-of-concept that mixes **agent harnesses** (how an agent reasons and
-uses tools) with **models** (which backend powers the loop) and runs a **real
-tool-calling agent loop** you can watch step by step.
+An agent console that pairs **agent harnesses** (how an agent reasons and uses
+tools) with **models** (which backend powers the loop) and runs a **real
+tool-calling agent loop** you can watch step by step, over a **context layer**
+built from your own documents.
 
 ```
 packages
@@ -163,7 +164,7 @@ there for a different agent next week.
 | --- | --- | --- |
 | `SANDBOX_BACKEND` | `node` | `node` (API host) or `docker` (per-user container) |
 | `SANDBOX_IMAGE` | `node:22-bookworm-slim` | Image the agent works inside |
-| `SANDBOX_ROOT` | `~/mixmatch-workspaces` | Where workspaces live on the host |
+| `SANDBOX_ROOT` | `~/salurai-workspaces` | Where workspaces live on the host |
 | `SANDBOX_IDLE_MS` | `300000` | Remove a container after this much idle time |
 
 ```bash

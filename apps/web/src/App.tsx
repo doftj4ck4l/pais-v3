@@ -91,7 +91,7 @@ export default function App() {
             >
               <PanelLeftIcon />
             </Button>
-            <span className="text-sm font-extrabold tracking-[-0.02em]">Mix ✕ Match</span>
+            <span className="text-sm font-extrabold tracking-[-0.02em]">SalurAI</span>
             <span className="readout ml-auto text-[0.6875rem] text-muted-foreground">
               {board.agents.length} agent{board.agents.length === 1 ? '' : 's'}
             </span>
