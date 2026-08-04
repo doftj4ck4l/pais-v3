@@ -142,6 +142,25 @@ describe("createDatabaseTools", () => {
     expect(out.toLowerCase()).toContain("more exist");
   });
 
+  it("reports the actual rendered row count in the truncation message, not the requested limit", async () => {
+    // The driver's `boundCap` — not this tool — decides how many rows a
+    // caller-supplied limit actually yields, so the message must describe
+    // what `outcome.rows` really holds (100 rows here) rather than echoing
+    // the raw `limit: 1000` the agent asked for.
+    outcome = {
+      ok: true, columns: ["id"],
+      rows: Array.from({ length: 100 }, (_, i) => ({ id: i })), truncated: true,
+      truncatedReason: "rows",
+    };
+    const out = textOf(
+      await tool("run_query").execute("1", {
+        connection: "sales", sql: "SELECT id FROM orders", limit: 1000,
+      }),
+    );
+    expect(out).toContain("showing the first 100 rows");
+    expect(out).not.toContain("1000");
+  });
+
   it("reports byte-cap truncation with column-narrowing advice, not the row-cap message", async () => {
     outcome = {
       ok: true, columns: ["big"],

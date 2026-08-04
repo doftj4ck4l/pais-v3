@@ -147,7 +147,7 @@ export function scrub(message: string, url: string): string {
  * for every input — negative, zero, fractional, NaN, Infinity, or absurdly
  * large — the result can only ever LOWER ROW_CAP, never raise it.
  */
-function boundCap(cap: number): number {
+export function boundCap(cap: number): number {
   const finite = Number.isFinite(cap) ? Math.floor(cap) : ROW_CAP;
   return Math.max(1, Math.min(ROW_CAP, finite));
 }

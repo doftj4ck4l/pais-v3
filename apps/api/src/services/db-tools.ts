@@ -188,7 +188,7 @@ export function createDatabaseTools(
         const safe: QueryOutcome = outcome.ok
           ? outcome
           : { ok: false, error: scrub(outcome.error, resolved.url) };
-        return text(renderOutcome(safe, cap));
+        return text(renderOutcome(safe));
       },
     },
   ];
@@ -262,18 +262,23 @@ function renderQueryError(error: string): string {
  * A `reason` of `undefined` (an outcome built by hand rather than by the
  * driver, e.g. in older tests) falls back to the row-cap wording, which was
  * this function's only message before the byte budget existed.
+ *
+ * `rowCount` is the number of rows actually rendered (`outcome.rows.length`),
+ * never the caller's requested `limit` — the driver's `boundCap` is free to
+ * clamp the request down (or a byte cap can cut it shorter still), so only
+ * the rendered count is guaranteed true of what the model is looking at.
  */
-function truncationNote(reason: "rows" | "bytes" | null | undefined, cap: number): string {
+function truncationNote(reason: "rows" | "bytes" | null | undefined, rowCount: number): string {
   if (reason === "bytes") {
     return (
       `(truncated: this result exceeds the ${BYTE_CAP.toLocaleString("en-US")}-byte budget. ` +
       "Select fewer columns, or wrap a wide column with left(col, n), rather than re-running as-is.)"
     );
   }
-  return `(showing the first ${cap} rows — more exist. Aggregate in SQL rather than paginating.)`;
+  return `(showing the first ${rowCount} rows — more exist. Aggregate in SQL rather than paginating.)`;
 }
 
-function renderOutcome(outcome: QueryOutcome, cap: number): string {
+function renderOutcome(outcome: QueryOutcome): string {
   if (!outcome.ok) return `query failed: ${renderQueryError(outcome.error)}`;
   if (!outcome.rows.length) return "no rows";
 
@@ -281,7 +286,9 @@ function renderOutcome(outcome: QueryOutcome, cap: number): string {
   const body = outcome.rows
     .map((r) => outcome.columns.map((c) => format(r[c])).join(" | "))
     .join("\n");
-  const note = outcome.truncated ? `\n\n${truncationNote(outcome.truncatedReason, cap)}` : "";
+  const note = outcome.truncated
+    ? `\n\n${truncationNote(outcome.truncatedReason, outcome.rows.length)}`
+    : "";
 
   return `${header}\n${"-".repeat(header.length)}\n${body}${note}`;
 }
