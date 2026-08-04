@@ -45,4 +45,11 @@ export const env = {
    * it does not depend on where the server was started from.
    */
   skillsRoot: process.env.SKILLS_ROOT ?? path.resolve(import.meta.dirname, "..", "..", "skills"),
+
+  /**
+   * Key material for encrypting stored database connection strings. Absent, the
+   * API refuses to store one rather than writing it in plaintext — the same
+   * stance the sandbox takes when Docker is down.
+   */
+  connectionSecret: process.env.CONNECTION_SECRET ?? "",
 } as const;
