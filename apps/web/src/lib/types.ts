@@ -112,3 +112,16 @@ export type WorkspaceFile = {
   bytes: number
   modifiedAt: number
 }
+
+export type DbConnectionRow = {
+  id: string
+  name: string
+  engine: string
+  status: 'connected' | 'error'
+  error: string | null
+  displayHost: string
+  displayDatabase: string
+  tableCount: number
+  lastIntrospectedAt: number | null
+  createdAt: number
+}

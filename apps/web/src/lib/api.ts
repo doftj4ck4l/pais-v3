@@ -1,6 +1,7 @@
 import type {
   ConversationDetail,
   ConversationRow,
+  DbConnectionRow,
   DocumentRow,
   IngestResult,
   Meta,
@@ -76,4 +77,44 @@ export async function listWorkspaceFiles(userId: string): Promise<WorkspaceFile[
 export function workspaceFileUrl(userId: string, filePath: string): string {
   const encoded = filePath.split('/').map(encodeURIComponent).join('/')
   return `/api/workspace/files/${encoded}?userId=${encodeURIComponent(userId)}`
+}
+
+/** Read-only Postgres connections this browser has added. */
+export async function listConnections(userId: string): Promise<DbConnectionRow[]> {
+  const { connections } = await json<{ connections: DbConnectionRow[] }>(
+    await fetch(`/api/databases?userId=${encodeURIComponent(userId)}`),
+  )
+  return connections
+}
+
+/**
+ * Connect a read-only database. An unreachable database is not a form error —
+ * the API still returns 201 with a connection whose status is 'error', which
+ * the panel lists like any other. `error` here is only for a rejected request:
+ * a bad name, a missing url, a duplicate name, or a missing server config.
+ */
+export async function addConnection(
+  userId: string,
+  name: string,
+  url: string,
+): Promise<{ connection?: DbConnectionRow; error?: string }> {
+  const res = await fetch(`/api/databases?userId=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, url }),
+  })
+  return await res.json()
+}
+
+export async function refreshConnection(userId: string, id: string): Promise<void> {
+  await fetch(
+    `/api/databases/${encodeURIComponent(id)}/refresh?userId=${encodeURIComponent(userId)}`,
+    { method: 'POST' },
+  )
+}
+
+export async function deleteConnection(userId: string, id: string): Promise<void> {
+  await fetch(`/api/databases/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  })
 }

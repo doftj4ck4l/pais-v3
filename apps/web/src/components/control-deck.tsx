@@ -12,6 +12,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
+import { DatabasePanel } from '@/components/database-panel'
 import { DocumentPanel } from '@/components/document-panel'
 import { FilesPanel } from '@/components/files-panel'
 import { ModelLogo } from '@/components/model-logo'
@@ -110,6 +111,12 @@ export function ControlDeck({
 
       <div className="px-4 py-4">
         <DocumentPanel />
+      </div>
+
+      <Separator />
+
+      <div className="px-4 py-4">
+        <DatabasePanel />
       </div>
 
       <Separator />
