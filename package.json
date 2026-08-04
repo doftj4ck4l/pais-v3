@@ -7,6 +7,8 @@
     "apps/web"
   ],
   "scripts": {
+    "setup": "bun run scripts/setup.ts",
+    "sandbox:build": "bun run --filter ./apps/api sandbox:build",
     "dev": "bun run --filter ./apps/api dev & bun run --filter ./apps/web dev",
     "dev:api": "bun run --filter ./apps/api dev",
     "dev:web": "bun run --filter ./apps/web dev"

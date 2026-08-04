@@ -14,17 +14,30 @@ packages
 ## Quick start
 
 ```bash
-# install deps (from apps/web so bun resolves all workspaces)
-bun install
-
-# run both servers
+bun run setup          # deps, .env, and the sandbox image
 bun run dev            # API on :4000, web on :5173
-# or in separate terminals:
-bun run dev:api
-bun run dev:web
 ```
 
 Open http://localhost:5173.
+
+`setup` is idempotent — re-run it any time. It installs dependencies, creates
+`apps/api/.env` from the example if missing, and builds the sandbox image. It
+finishes by listing anything it could not do rather than failing silently, so a
+missing API key or a stopped Docker daemon is reported instead of surfacing
+later as a broken run.
+
+Two things it cannot do for you: put a real key in `.env`, and start Docker.
+
+| Command | What it does |
+| --- | --- |
+| `bun run setup` | Everything a fresh clone needs |
+| `bun run dev` | API + web together |
+| `bun run dev:api` / `bun run dev:web` | One at a time |
+| `bun run sandbox:build` | Rebuild the sandbox image after editing its Dockerfile |
+
+The sandbox image is built locally and is not published anywhere, so it has to
+be built on each machine — `setup` does it, and `SANDBOX_IMAGE` overrides the
+tag if you want a different one.
 
 Models are served by an OpenAI-compatible gateway. Point the API at yours in
 `apps/api/.env`:
