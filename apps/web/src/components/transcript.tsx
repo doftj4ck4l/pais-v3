@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { ChevronRightIcon, WrenchIcon } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { NodeHead, NodeRing, NodeSquare, NodeTick, RailRow } from '@/components/loop-rail'
@@ -16,20 +15,17 @@ export function Transcript({
   running: boolean
   runSummary: string | null
 }) {
-  const endRef = useRef<HTMLDivElement>(null)
-
   // A model that goes straight to a tool call opens an empty text block first.
   // It has nothing to say, so it gets no node on the rail.
   const visible = items.filter((i) => i.kind !== 'assistant' || i.text.trim() !== '')
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [items, running])
-
+  // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
+  // not by this component. Following from in here would mean scrolling an
+  // ancestor it does not own, and would override the reader unconditionally.
   return (
     // Top-aligned: the agent header anchors the top of this column, so the rail
     // should start right under it rather than float above the composer.
-    <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-4 sm:px-6">
+    <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
       {visible.map((item, i) => {
         const last = i === visible.length - 1
         return (
@@ -48,8 +44,6 @@ export function Transcript({
           <p className="readout pt-0.5 text-muted-foreground">{runSummary ?? 'working…'}</p>
         </RailRow>
       ) : null}
-
-      <div ref={endRef} />
     </div>
   )
 }

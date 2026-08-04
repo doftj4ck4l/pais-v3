@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PanelLeftIcon } from 'lucide-react'
+import { ArrowDownIcon, PanelLeftIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -10,7 +10,9 @@ import { EmptyState, type Suggestion } from '@/components/empty-state'
 import { TraceSheet } from '@/components/trace-sheet'
 import { Transcript } from '@/components/transcript'
 import { useAgentBoard } from '@/hooks/use-agent-board'
+import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { useTheme } from '@/hooks/use-theme'
+import { cn } from '@/lib/utils'
 
 // Each one fires a real tool, so a new agent has something to show.
 const SUGGESTIONS: Suggestion[] = [
@@ -27,6 +29,9 @@ export default function App() {
   const [traceOpen, setTraceOpen] = useState(false)
 
   const { selected } = board
+  // Keyed on the agent, so switching to another transcript starts at its end
+  // rather than inheriting this one's scroll offset.
+  const scroll = useStickToBottom<HTMLElement>(board.selectedId)
   const selectedModel = board.meta?.models.find((m) => m.id === selected?.modelId)
 
   /**
@@ -106,17 +111,36 @@ export default function App() {
             />
           ) : null}
 
-          <main className="min-h-0 flex-1 overflow-y-auto">
-            {selected ? (
-              <Transcript
-                items={selected.items}
-                running={selected.status === 'running'}
-                runSummary={`Working… ${(selected.elapsed / 1000).toFixed(1)}s`}
-              />
-            ) : (
-              <EmptyState suggestions={SUGGESTIONS} onPick={spawn} />
-            )}
-          </main>
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <main ref={scroll.ref} className="min-h-0 flex-1 overflow-y-auto">
+              {selected ? (
+                <Transcript
+                  items={selected.items}
+                  running={selected.status === 'running'}
+                  runSummary={`Working… ${(selected.elapsed / 1000).toFixed(1)}s`}
+                />
+              ) : (
+                <EmptyState suggestions={SUGGESTIONS} onPick={spawn} />
+              )}
+            </main>
+
+            {/* Only meaningful with a transcript to return to. */}
+            {selected && !scroll.stuck ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => scroll.scrollToBottom()}
+                aria-label="Scroll to the latest message"
+                className={cn(
+                  'absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 rounded-full',
+                  'border shadow-md',
+                )}
+              >
+                <ArrowDownIcon className="size-3.5" />
+                {selected.status === 'running' ? 'Following paused' : 'Latest'}
+              </Button>
+            ) : null}
+          </div>
 
           <Composer
             notice={selected?.notice ?? null}
