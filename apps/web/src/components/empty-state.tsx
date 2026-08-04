@@ -10,7 +10,7 @@ export function EmptyState({
   onPick: (text: string) => void
 }) {
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-4 py-12 sm:px-6">
+    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-4 py-12 sm:px-6">
       <h1 className="text-[clamp(1.9rem,4.5vw,2.6rem)] leading-[1.08] font-extrabold tracking-[-0.03em]">
         Run agents.
         <br />

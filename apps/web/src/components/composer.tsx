@@ -36,7 +36,7 @@ export function Composer({
   return (
     <div className="border-t bg-background">
       {notice ? (
-        <div className="mx-auto flex w-full max-w-3xl items-start gap-3 px-4 pt-3 sm:px-6">
+        <div className="mx-auto flex w-full max-w-5xl items-start gap-3 px-4 pt-3 sm:px-6">
           <p className="flex-1 border-l-2 border-foreground py-1 pl-3 text-xs text-muted-foreground">
             {notice}
           </p>
@@ -52,7 +52,7 @@ export function Composer({
       ) : null}
 
       <form
-        className="mx-auto w-full max-w-3xl px-4 py-4 sm:px-6"
+        className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6"
         onSubmit={(e) => {
           e.preventDefault()
           submit()
