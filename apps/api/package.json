@@ -8,6 +8,7 @@
     "sandbox:build": "docker build -t ${SANDBOX_IMAGE:-salurai-sandbox:1} -f sandbox/Dockerfile sandbox/"
   },
   "dependencies": {
+    "@cline/sdk": "^0.0.69",
     "@firecrawl/pdf-inspector": "^1.11.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0"
