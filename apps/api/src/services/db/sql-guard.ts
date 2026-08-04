@@ -39,8 +39,11 @@ const FORBIDDEN = [
  * Replace comments and string literals with equivalent-length blanks. Blanking
  * rather than deleting keeps offsets stable, so a future caller could report a
  * position without re-parsing.
+ *
+ * Returns { blanked, ok } where ok is false if any literal or comment is
+ * unterminated. Fail closed: incomplete strings reject the statement.
  */
-function blankLiteralsAndComments(sql: string): string {
+function blankLiteralsAndComments(sql: string): { blanked: string; ok: boolean } {
   const out = sql.split("");
   let i = 0;
   const blank = (from: number, to: number) => {
@@ -69,19 +72,54 @@ function blankLiteralsAndComments(sql: string): string {
         if (sql.slice(j, j + 2) === "*/") { depth--; j += 2; continue; }
         j++;
       }
+      if (depth > 0) {
+        // Unterminated block comment
+        return { blanked: out.join(""), ok: false };
+      }
       blank(i, j);
       i = j;
       continue;
     }
 
     if (sql[i] === "'") {
+      // Check if this is an E-string (E or e immediately before the quote, with word boundary).
+      let isEString = false;
+      let startIndex = i;
+      if (i > 0 && (sql[i - 1] === 'E' || sql[i - 1] === 'e')) {
+        // Word boundary check: position i-2 should not be a word character.
+        if (i - 2 < 0 || !/\w/.test(sql[i - 2])) {
+          isEString = true;
+          startIndex = i - 1; // Include the E in the blanked region.
+        }
+      }
+
       let j = i + 1;
+      let terminated = false;
       while (j < sql.length) {
-        if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; } // '' escape
-        if (sql[j] === "'") { j++; break; }
+        if (isEString && sql[j] === '\\' && j + 1 < sql.length) {
+          // In E-strings, backslash escapes the next character.
+          j += 2;
+          continue;
+        }
+        if (sql[j] === "'" && j + 1 < sql.length && sql[j + 1] === "'") {
+          // '' escape (works in both ordinary and E-strings).
+          j += 2;
+          continue;
+        }
+        if (sql[j] === "'") {
+          j++; // Include the closing quote.
+          terminated = true;
+          break;
+        }
         j++;
       }
-      blank(i, j);
+
+      if (!terminated) {
+        // Unterminated string literal.
+        return { blanked: out.join(""), ok: false };
+      }
+
+      blank(startIndex, j);
       i = j;
       continue;
     }
@@ -91,6 +129,10 @@ function blankLiteralsAndComments(sql: string): string {
       // for keywords either — a column may legitimately be named "update".
       let j = i + 1;
       while (j < sql.length && sql[j] !== '"') j++;
+      if (j >= sql.length) {
+        // Unterminated quoted identifier.
+        return { blanked: out.join(""), ok: false };
+      }
       blank(i, j + 1);
       i = j + 1;
       continue;
@@ -98,11 +140,17 @@ function blankLiteralsAndComments(sql: string): string {
 
     if (sql[i] === "$") {
       // Dollar-quoted string: $tag$ ... $tag$
-      const match = /^\$[A-Za-z_0-9]*\$/.exec(sql.slice(i));
+      // Tag can be empty ($$) or start with letter/underscore followed by digits/letters/underscores.
+      // Tag cannot start with a digit if it has characters.
+      const match = /^\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$/.exec(sql.slice(i));
       if (match) {
         const tag = match[0];
         const end = sql.indexOf(tag, i + tag.length);
-        const stop = end === -1 ? sql.length : end + tag.length;
+        if (end === -1) {
+          // Unterminated dollar-quoted string.
+          return { blanked: out.join(""), ok: false };
+        }
+        const stop = end + tag.length;
         blank(i, stop);
         i = stop;
         continue;
@@ -112,14 +160,19 @@ function blankLiteralsAndComments(sql: string): string {
     i++;
   }
 
-  return out.join("");
+  return { blanked: out.join(""), ok: true };
 }
 
 export function guardReadOnly(raw: string): GuardResult {
   const trimmed = raw.trim();
   if (!trimmed) return { ok: false, reason: "empty statement" };
 
-  const scan = blankLiteralsAndComments(trimmed).trim();
+  const { blanked, ok: blankOk } = blankLiteralsAndComments(trimmed);
+  if (!blankOk) {
+    return { ok: false, reason: "statement contains unterminated string or comment" };
+  }
+
+  const scan = blanked.trim();
 
   // One statement only. A trailing semicolon is fine; anything after it is not.
   const withoutTrailing = scan.replace(/;\s*$/, "");

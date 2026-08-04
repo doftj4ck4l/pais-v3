@@ -24,6 +24,13 @@ const ALLOWED = [
   ["a column literally named comment", "SELECT comment FROM reviews"],
   ["a column named start", "SELECT start, duration FROM sessions"],
   ["leading whitespace and newlines", "\n\n  SELECT 1\n"],
+  ["an E-string with backslash escape", "SELECT E'line\\nbreak' FROM logs"],
+  ["ordinary doubled-quote escape", "SELECT 'it''s fine' FROM t"],
+  ["ordinary string with trailing backslash", "SELECT 'a\\' FROM t"],
+  ["dollar-quoted string", "SELECT $$dollar quoted$$ AS x"],
+  ["dollar-quoted string with tag", "SELECT $tag$body$tag$ AS x"],
+  ["quoted identifiers with keywords", 'SELECT "close", "update" FROM prices'],
+  ["nested block comments", "SELECT 1 /* outer /* nested */ still comment */"],
 ] as const;
 
 const REJECTED = [
@@ -42,6 +49,12 @@ const REJECTED = [
   ["a cursor declaration, caught by the prefix check", "DECLARE c CURSOR FOR SELECT 1"],
   ["an empty statement", "   "],
   ["a bare non-select", "TRUNCATE orders"],
+  ["E-string with backslash hiding stacked statement", "SELECT E'\\'' ; SET statement_timeout = 1 --'"],
+  ["E-string with backslash hiding DROP", "SELECT E'\\'' ; DROP TABLE orders --'"],
+  ["unterminated single-quoted string", "SELECT 'unterminated"],
+  ["unterminated block comment", "SELECT 1 /* unterminated"],
+  ["unterminated dollar-quoted string", "SELECT $$unterminated"],
+  ["quoted identifier with semicolon outside", 'SELECT "close" ; DROP TABLE t'],
 ] as const;
 
 describe("guardReadOnly", () => {
