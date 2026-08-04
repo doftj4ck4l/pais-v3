@@ -99,4 +99,68 @@ describe("buildSnapshot", () => {
     expect(snap.find((t) => t.schemaName === "public")!.columns).toEqual([]);
     expect(snap.find((t) => t.schemaName === "archive")!.columns.map((c) => c.name)).toEqual(["archived_at"]);
   });
+
+  it("keeps each column of a composite foreign key pointed at its own referenced column", () => {
+    // The driver emits one row per column pair in a composite FK, so a naive
+    // merge keyed only on the referencing table (not table+column) could pin
+    // the same fkColumn onto both referencing columns.
+    const snap = buildSnapshot(
+      catalog({
+        tables: [
+          { schemaName: "public", name: "order_items", comment: null, rowEstimate: 5 },
+          { schemaName: "public", name: "orders", comment: null, rowEstimate: 1 },
+        ],
+        columns: [
+          { schemaName: "public", tableName: "order_items", seq: 1, name: "order_id", dataType: "integer", nullable: false, comment: null },
+          { schemaName: "public", tableName: "order_items", seq: 2, name: "order_region", dataType: "text", nullable: false, comment: null },
+          { schemaName: "public", tableName: "orders", seq: 1, name: "id", dataType: "integer", nullable: false, comment: null },
+          { schemaName: "public", tableName: "orders", seq: 2, name: "region", dataType: "text", nullable: false, comment: null },
+        ],
+        primaryKeys: [],
+        foreignKeys: [
+          { schemaName: "public", tableName: "order_items", columnName: "order_id", refSchema: "public", refTable: "orders", refColumn: "id" },
+          { schemaName: "public", tableName: "order_items", columnName: "order_region", refSchema: "public", refTable: "orders", refColumn: "region" },
+        ],
+        indexes: [],
+      }),
+    );
+    const items = snap.find((t) => t.name === "order_items")!;
+    const orderId = items.columns.find((c) => c.name === "order_id")!;
+    const orderRegion = items.columns.find((c) => c.name === "order_region")!;
+    expect(orderId.fkTable).toBe("public.orders");
+    expect(orderId.fkColumn).toBe("id");
+    expect(orderRegion.fkTable).toBe("public.orders");
+    expect(orderRegion.fkColumn).toBe("region");
+  });
+
+  it("keys primary-key and foreign-key flags by table, not by column name alone", () => {
+    // `orders.code` and `refunds.code` share a column name but have opposite
+    // PK/FK status. The default fixture's shared name (`id` on both `orders`
+    // and `customers`) happens to be a PK on both sides, so it can't catch a
+    // merge that keys on column name only — this fixture can.
+    const snap = buildSnapshot(
+      catalog({
+        tables: [
+          { schemaName: "public", name: "orders", comment: null, rowEstimate: 1 },
+          { schemaName: "public", name: "refunds", comment: null, rowEstimate: 1 },
+        ],
+        columns: [
+          { schemaName: "public", tableName: "orders", seq: 1, name: "code", dataType: "text", nullable: false, comment: null },
+          { schemaName: "public", tableName: "refunds", seq: 1, name: "code", dataType: "text", nullable: true, comment: null },
+        ],
+        primaryKeys: [{ schemaName: "public", tableName: "orders", columnName: "code" }],
+        foreignKeys: [
+          { schemaName: "public", tableName: "refunds", columnName: "code", refSchema: "public", refTable: "orders", refColumn: "code" },
+        ],
+        indexes: [],
+      }),
+    );
+    const ordersCode = snap.find((t) => t.name === "orders")!.columns.find((c) => c.name === "code")!;
+    const refundsCode = snap.find((t) => t.name === "refunds")!.columns.find((c) => c.name === "code")!;
+    expect(ordersCode.isPrimaryKey).toBe(true);
+    expect(ordersCode.fkTable).toBeNull();
+    expect(refundsCode.isPrimaryKey).toBe(false);
+    expect(refundsCode.fkTable).toBe("public.orders");
+    expect(refundsCode.fkColumn).toBe("code");
+  });
 });

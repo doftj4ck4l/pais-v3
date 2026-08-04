@@ -32,6 +32,11 @@ export type TableDetail = {
   rowEstimate: number;
   indexes: string[];
   columns: DbColumnRow[];
+  // The OTHER schema names (besides the one resolved into `schemaName`) that
+  // also hold a table of this name in this connection. Empty when the bare
+  // name was unambiguous. A bare-name lookup across non-public schemas has no
+  // natural tiebreaker, so this is how the caller finds out it guessed.
+  alternateSchemas: string[];
 };
 
 export type SchemaHit = {
@@ -270,20 +275,23 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     connectionName: string,
     table: string,
   ): Promise<TableDetail | null> {
-    const [maybeSchema, maybeName] = table.includes(".")
-      ? table.split(".", 2)
-      : [null, table];
+    // `split(".", 2)` splits on EVERY "." and then truncates — it silently
+    // drops anything past the second segment (`"a.b.c".split(".", 2)` is
+    // `["a","b"]`, not `["a","b.c"]`). A qualified name is "schema" + "the
+    // rest", so split on the first dot only.
+    const dot = table.indexOf(".");
+    const maybeSchema = dot > -1 ? table.slice(0, dot) : null;
+    const maybeName = dot > -1 ? table.slice(dot + 1) : table;
 
     const rows = (await this.dbImpl.all(sql`
       SELECT t.id AS tableId, t.schema_name AS schemaName, t.name AS name,
              t.comment AS comment, t.row_estimate AS rowEstimate, t.indexes AS indexes
       FROM db_tables t
       JOIN db_connections c ON c.id = t.connection_id
-      WHERE c.user_id = ${userId} AND c.name = ${connectionName}
+      WHERE c.user_id = ${userId} AND c.name = ${connectionName} AND c.status = 'connected'
         AND t.name = ${maybeName}
         AND (${maybeSchema} IS NULL OR t.schema_name = ${maybeSchema})
-      ORDER BY CASE t.schema_name WHEN 'public' THEN 0 ELSE 1 END
-      LIMIT 1
+      ORDER BY CASE t.schema_name WHEN 'public' THEN 0 ELSE 1 END, t.schema_name ASC
     `)) as {
       tableId: string; schemaName: string; name: string;
       comment: string | null; rowEstimate: number; indexes: string | null;
@@ -306,6 +314,10 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
       rowEstimate: hit.rowEstimate,
       indexes: hit.indexes ? (JSON.parse(hit.indexes) as string[]) : [],
       columns,
+      // Every OTHER schema among the candidate rows also holds a table of this
+      // name in this connection — the resolution above picked `hit`, but the
+      // agent should be told it was a guess.
+      alternateSchemas: rows.slice(1).map((r) => r.schemaName),
     };
   }
 
@@ -334,6 +346,11 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
       LEFT JOIN db_tables  ct  ON ct.id  = col.table_id
       WHERE db_schema_fts MATCH ${ftsQuery}
         AND c.user_id = ${userId}
+        -- A snapshot from a connection whose last re-introspection failed is
+        -- exactly the "plausible but wrong" input this design exists to avoid:
+        -- it already dropped out of inventory(), so it must not still resolve
+        -- here or in describeTable. The user sees the error and can refresh.
+        AND c.status = 'connected'
         AND (${connectionName} IS NULL OR c.name = ${connectionName})
       ORDER BY score DESC
       LIMIT ${limit}

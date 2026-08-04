@@ -199,4 +199,56 @@ describe("snapshot", () => {
     await store.remove("u1", "c1");
     expect(await store.searchSchema("u1", '"orders"', null, 5)).toHaveLength(0);
   });
+
+  it("stops describing and searching a snapshot once the connection errors", async () => {
+    // inventory() already excludes a non-connected connection; describeTable
+    // and searchSchema must match, or a re-introspection failure leaves a
+    // stale — possibly wrong — snapshot fully queryable by name.
+    await store.markStatus("c1", "error", "could not connect: timeout");
+    expect(await store.describeTable("u1", "sales", "orders")).toBeNull();
+    expect(await store.searchSchema("u1", '"orders"', null, 5)).toHaveLength(0);
+  });
+});
+
+describe("bare-name resolution across non-public schemas", () => {
+  beforeEach(async () => {
+    await store.create(conn());
+    // Two non-public schemas both holding a table named "orders": the
+    // `public`-first tiebreaker in describeTable does not apply, so without a
+    // secondary sort key SQLite could return either one nondeterministically.
+    await store.saveSnapshot("c1", "u1", [
+      {
+        schemaName: "eu",
+        name: "orders",
+        comment: null,
+        rowEstimate: 1,
+        indexes: [],
+        columns: [
+          { seq: 1, name: "id", dataType: "integer", nullable: false, isPrimaryKey: true, fkTable: null, fkColumn: null, comment: null },
+        ],
+      },
+      {
+        schemaName: "us",
+        name: "orders",
+        comment: null,
+        rowEstimate: 1,
+        indexes: [],
+        columns: [
+          { seq: 1, name: "id", dataType: "integer", nullable: false, isPrimaryKey: true, fkTable: null, fkColumn: null, comment: null },
+        ],
+      },
+    ]);
+  });
+
+  it("resolves a bare ambiguous name deterministically and reports the alternate schema", async () => {
+    const detail = await store.describeTable("u1", "sales", "orders");
+    expect(detail?.schemaName).toBe("eu"); // alphabetically first among the tied candidates
+    expect(detail?.alternateSchemas).toEqual(["us"]);
+  });
+
+  it("reports no alternates once the name is qualified", async () => {
+    const detail = await store.describeTable("u1", "sales", "us.orders");
+    expect(detail?.schemaName).toBe("us");
+    expect(detail?.alternateSchemas).toEqual([]);
+  });
 });
