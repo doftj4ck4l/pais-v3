@@ -128,4 +128,4 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
   }
 }
 
-export const databaseConnectionStore = new SqliteDatabaseConnectionStore();
+export const databaseConnectionStore: DatabaseConnectionStore = new SqliteDatabaseConnectionStore();
