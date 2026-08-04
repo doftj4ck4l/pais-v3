@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
+import { PanelRightIcon, PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -29,6 +29,7 @@ export function ControlDeck({
   onNewAgent,
   onOpenTrace,
   onOpenSettings,
+  onToggleResources,
 }: {
   meta: Meta | null
   agents: AgentRun[]
@@ -39,6 +40,7 @@ export function ControlDeck({
   onNewAgent: () => void
   onOpenTrace: () => void
   onOpenSettings: () => void
+  onToggleResources: () => void
 }) {
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -90,6 +92,18 @@ export function ControlDeck({
           <TerminalIcon data-icon="inline-start" />
           Trace
           <span className="readout text-[0.625rem] opacity-70">{selected?.trace.length ?? 0}</span>
+        </Button>
+
+        {/* Also on the agent header, but that only exists once a run is open —
+            and attaching a database is something you do before any run. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleResources}
+          className="ml-auto gap-1.5 text-muted-foreground"
+        >
+          <PanelRightIcon data-icon="inline-start" />
+          Resources
         </Button>
       </div>
     </div>

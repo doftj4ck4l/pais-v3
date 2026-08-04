@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowDownIcon, PanelLeftIcon } from 'lucide-react'
+import { ArrowDownIcon, PanelLeftIcon, PanelRightIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -80,6 +80,10 @@ export default function App() {
         setDeckOpen(false)
         setSettingsOpen(true)
       }}
+      onToggleResources={() => {
+        setDeckOpen(false)
+        panel.toggle()
+      }}
     />
   )
 
@@ -106,6 +110,14 @@ export default function App() {
             <span className="readout ml-auto text-[0.6875rem] text-muted-foreground">
               {board.agents.length} agent{board.agents.length === 1 ? '' : 's'}
             </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={panel.toggle}
+              aria-label="Toggle documents, databases and files"
+            >
+              <PanelRightIcon />
+            </Button>
           </header>
 
           {selected ? (
