@@ -58,7 +58,7 @@
 **Interfaces:**
 - Produces: `workspaces` table; `WorkspaceRow = { id, userId, name, createdAt }`; `backfill(target: Database): void`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/api/src/db/backfill.test.ts
@@ -124,12 +124,12 @@ describe("backfill", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd apps/api && bun test src/db/backfill.test.ts`
 Expected: FAIL — `Cannot find module './backfill'`
 
-- [ ] **Step 3: Add the table and columns**
+- [x] **Step 3: Add the table and columns**
 
 In `apps/api/src/models/schema.ts`, append:
 
@@ -157,7 +157,7 @@ Add `workspaceId: text("workspace_id")` to `conversations`, `documents`, `chunks
 
 Leave `user_id` on those tables for now — dropping a column in SQLite means rebuilding the table, and the backfill needs it to find each row's owner. Task 10 removes the reads; the columns can be dropped later.
 
-- [ ] **Step 4: Add DDL and indexes**
+- [x] **Step 4: Add DDL and indexes**
 
 In `applySchema()` in `apps/api/src/db/client.ts`, add to the main `exec` block:
 
@@ -195,7 +195,7 @@ for (const table of SCOPED) {
 }
 ```
 
-- [ ] **Step 5: Write the backfill**
+- [x] **Step 5: Write the backfill**
 
 ```ts
 // apps/api/src/db/backfill.ts
@@ -257,17 +257,17 @@ export function ensureSchema() {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `cd apps/api && bun test src/db/backfill.test.ts`
 Expected: PASS, 3 tests
 
-- [ ] **Step 7: Confirm nothing else broke**
+- [x] **Step 7: Confirm nothing else broke**
 
 Run: `cd apps/api && bunx tsc --noEmit && bun test`
 Expected: typecheck clean, 248 pass
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/api/src/models/schema.ts apps/api/src/db/client.ts apps/api/src/db/backfill.ts apps/api/src/db/backfill.test.ts
@@ -292,7 +292,7 @@ git commit -m "feat: workspaces table and backfill of existing rows"
   `remove(id: string, userId: string): Promise<boolean>`,
   `resolve(userId: string, requested?: string): Promise<WorkspaceRow>`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/api/src/repositories/workspace-registry.repository.test.ts
@@ -386,12 +386,12 @@ describe("workspace registry", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd apps/api && bun test src/repositories/workspace-registry.repository.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/api/src/repositories/workspace-registry.repository.ts
@@ -511,12 +511,12 @@ export const workspaceRegistry: WorkspaceRegistry = new SqliteWorkspaceRegistry(
 
 Export `workspaces` and `WorkspaceRow` from `apps/api/src/db/client.ts` alongside the other tables.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && bun test src/repositories/workspace-registry.repository.test.ts`
 Expected: PASS, 9 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/repositories/workspace-registry.repository.ts apps/api/src/repositories/workspace-registry.repository.test.ts apps/api/src/db/client.ts
@@ -536,7 +536,7 @@ git commit -m "feat: workspace registry with ownership-checked resolution"
 - Consumes: `workspaceRegistry` from Task 2
 - Produces: `GET /api/workspaces`, `POST /api/workspaces`, `PATCH /api/workspaces/:id`, `DELETE /api/workspaces/:id`
 
-- [ ] **Step 1: Write the controller**
+- [x] **Step 1: Write the controller**
 
 ```ts
 // apps/api/src/controllers/workspace-registry.controller.ts
@@ -583,7 +583,7 @@ export async function destroy(c: Context) {
 }
 ```
 
-- [ ] **Step 2: Add routes**
+- [x] **Step 2: Add routes**
 
 ```ts
 // apps/api/src/routes/workspace-registry.routes.ts
@@ -604,7 +604,7 @@ In `apps/api/src/routes/index.ts`, import it and add:
 apiRoutes.route("/workspaces", workspaceRegistryRoutes);
 ```
 
-- [ ] **Step 3: Verify by hand**
+- [x] **Step 3: Verify by hand**
 
 ```bash
 cd /home/farhan/dev/salur && bun run dev
@@ -616,7 +616,7 @@ curl -s -X POST "http://localhost:4000/api/workspaces?userId=t1" \
 
 Expected: the first call returns one workspace named `Default`; the second returns a second named `Research`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/api/src/controllers/workspace-registry.controller.ts apps/api/src/routes/
@@ -642,7 +642,7 @@ git commit -m "feat: workspace endpoints"
   `ingestPdf(workspaceId, title, bytes, store)`;
   `createDocumentTools(workspaceId, store)`
 
-- [ ] **Step 1: Update the existing tests to the new key**
+- [x] **Step 1: Update the existing tests to the new key**
 
 In `search.service.test.ts` and `ingest.service.test.ts`, replace the `userId` argument with a workspace id throughout, and add:
 
@@ -660,12 +660,12 @@ it("never returns another workspace's chunks", async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `cd apps/api && bun test src/services/search.service.test.ts`
 Expected: FAIL — argument type mismatch
 
-- [ ] **Step 3: Re-scope the repository**
+- [x] **Step 3: Re-scope the repository**
 
 In `document.repository.ts`, replace every `userId` parameter and predicate with `workspaceId`:
 
@@ -683,16 +683,16 @@ WHERE chunks_fts MATCH ${ftsQuery}
   AND d.status = 'indexed'
 ```
 
-- [ ] **Step 4: Thread it through the services**
+- [x] **Step 4: Thread it through the services**
 
 `ingestPdf(workspaceId, ...)` writes `workspaceId` on the document and every chunk. `searchDocuments(workspaceId, ...)` passes it to `store.search`. `createDocumentTools(workspaceId, store)` closes over it.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cd apps/api && bun test src/services/`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/repositories/document.repository.ts apps/api/src/services/
@@ -711,7 +711,7 @@ git commit -m "feat: scope documents and retrieval to a workspace"
 **Interfaces:**
 - Produces: connection store and `db_tables` / `db_columns` snapshot rows keyed by `workspaceId`; `createDatabaseTools(workspaceId)`
 
-- [ ] **Step 1: Update tests to workspace ids and add an isolation case**
+- [x] **Step 1: Update tests to workspace ids and add an isolation case**
 
 ```ts
 it("does not surface another workspace's tables", async () => {
@@ -721,23 +721,23 @@ it("does not surface another workspace's tables", async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && bun test src/repositories/database-connection.repository.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: Re-scope**
+- [x] **Step 3: Re-scope**
 
 Replace `userId` with `workspaceId` in the connection repository, the snapshot writer in `introspect.service.ts`, and the three tools in `db-tools.ts`. The `db_schema_fts` query gains `AND t.workspace_id = ?` the same way `chunks_fts` did.
 
 `secret` stays server-side — no change to what is selected into responses.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && bun test src/`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/repositories/database-connection.repository.ts apps/api/src/services/db/ apps/api/src/services/db-tools.ts
@@ -756,7 +756,7 @@ git commit -m "feat: scope database connections and schema snapshots to a worksp
 **Interfaces:**
 - Produces: `conversationRepository.list(workspaceId)`, `create({ workspaceId, ... })`, `getOwned(conversationId, workspaceId)`; `createMemoryTools(workspaceId, store)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/api/src/repositories/conversation.repository.test.ts (new file)
@@ -785,23 +785,23 @@ describe("conversation scoping", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `cd apps/api && bun test src/repositories/conversation.repository.test.ts`
 Expected: FAIL — `workspace_id` has no value, so the row is not matched
 
-- [ ] **Step 3: Re-scope**
+- [x] **Step 3: Re-scope**
 
 `create()` takes and stores `workspaceId`. `list()` filters on it. `getOwned(conversationId, workspaceId)` replaces the `userId` check — ownership now runs through the workspace, which the registry has already verified belongs to the user.
 
 `memory.repository.ts` and `createMemoryTools` swap `userId` for `workspaceId`, so notes belong to the body of work rather than the browser.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd apps/api && bun test src/`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/repositories/ apps/api/src/services/memory.service.ts apps/api/src/controllers/conversation.controller.ts
@@ -822,16 +822,16 @@ git commit -m "feat: scope conversations and memory to a workspace"
 **Interfaces:**
 - Produces: `sandboxService.acquire(workspaceId)` returning `{ containerId, workspacePath }` where `workspacePath = SANDBOX_ROOT/<workspaceId>`; container named `salurai-<workspaceId>`; `list(workspaceId)` and `resolve(workspaceId, path)` for files
 
-- [ ] **Step 1: Update the file-guard tests to workspace ids**
+- [x] **Step 1: Update the file-guard tests to workspace ids**
 
 In `workspace.repository.test.ts`, replace `const USER = "u1"` with `const WS = "ws1"` and update every call. The guard logic is unchanged — only the directory name is.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd apps/api && bun test src/repositories/workspace.repository.test.ts`
 Expected: FAIL — argument name/type mismatch
 
-- [ ] **Step 3: Re-scope the sandbox**
+- [x] **Step 3: Re-scope the sandbox**
 
 In `sandbox.service.ts`:
 
@@ -843,7 +843,7 @@ and `containerNameFor(workspaceId)`. In `sandbox.repository.ts`, the primary key
 
 In `workspace.repository.ts` (files), `workspaceRoot(workspaceId)` becomes `path.join(env.sandboxRoot, workspaceId)`.
 
-- [ ] **Step 4: Move existing sandbox directories**
+- [x] **Step 4: Move existing sandbox directories**
 
 Add to `backfill.ts`, after the row updates:
 
@@ -875,12 +875,12 @@ export function migrateSandboxDirs(target: Database): void {
 
 Call it from `backfill()` after the `UPDATE` loop.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cd apps/api && bun test src/`
 Expected: PASS (sandbox/docker tests need the Docker daemon running)
 
-- [ ] **Step 6: Verify a real container**
+- [x] **Step 6: Verify a real container**
 
 ```bash
 cd /home/farhan/dev/salur && bun run dev
@@ -892,7 +892,7 @@ ls ~/salurai-workspaces/
 
 Expected: the container and the directory are both named after the workspace id, not the user id.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/src/services/sandbox/ apps/api/src/repositories/ apps/api/src/controllers/workspace.controller.ts apps/api/src/db/backfill.ts
@@ -913,7 +913,7 @@ git commit -m "feat: one sandbox and file workspace per workspace"
 - Consumes: `workspaceRegistry.resolve` from Task 2
 - Produces: `ChatRequest.workspaceId?: string`; `AgentOptions.workspaceId: string`; `runPiAgent({ ..., workspaceId })`
 
-- [ ] **Step 1: Add the field**
+- [x] **Step 1: Add the field**
 
 In `apps/api/src/types/agent.ts`:
 
@@ -927,7 +927,7 @@ export type ChatRequest = {
 };
 ```
 
-- [ ] **Step 2: Resolve once per request**
+- [x] **Step 2: Resolve once per request**
 
 In `chat.controller.ts`, immediately after `const userId = ...`:
 
@@ -942,11 +942,11 @@ Pass `workspace.id` to `conversationRepository.create`, `getOwned`, and `runAgen
 
 Do the same in `document.controller.ts`, `database.controller.ts`, and `workspace.controller.ts`, reading `c.req.query("workspaceId")`.
 
-- [ ] **Step 3: Thread into the runtime**
+- [x] **Step 3: Thread into the runtime**
 
 `runPiAgent` takes `workspaceId` and uses it for `sandboxService.acquire`, `createDocumentTools`, `createMemoryTools`, `createDatabaseTools`, and the docs prompt.
 
-- [ ] **Step 4: Verify end to end**
+- [x] **Step 4: Verify end to end**
 
 ```bash
 cd /home/farhan/dev/salur && bun run dev
@@ -958,7 +958,7 @@ curl -sN --max-time 90 -X POST http://localhost:4000/api/chat -H 'Content-Type: 
 
 Expected: a `get_current_time` result, and `~/salurai-workspaces/$WS/` exists.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src
@@ -978,7 +978,7 @@ git commit -m "feat: resolve and thread workspaceId through every run"
 - Consumes: `/api/workspaces` from Task 3
 - Produces: `useWorkspace()` returning `{ workspaces, current, setCurrent, create, rename, remove, loading }`
 
-- [ ] **Step 1: Add the hook**
+- [x] **Step 1: Add the hook**
 
 ```ts
 // apps/web/src/hooks/use-workspace.ts
@@ -1038,7 +1038,7 @@ export function useWorkspace() {
 }
 ```
 
-- [ ] **Step 2: Add the API client functions**
+- [x] **Step 2: Add the API client functions**
 
 ```ts
 // apps/web/src/lib/api.ts
@@ -1072,11 +1072,11 @@ export type WorkspaceRow = {
 }
 ```
 
-- [ ] **Step 3: Pass workspaceId on every scoped call**
+- [x] **Step 3: Pass workspaceId on every scoped call**
 
 Add `workspaceId` to the query string of `listConversations`, `listDocuments`, `uploadDocuments`, `deleteDocument`, `listWorkspaceFiles`, `workspaceFileUrl`, and the database functions; add it to the `/api/chat` body in `use-agent-board.ts`.
 
-- [ ] **Step 4: Add the switcher**
+- [x] **Step 4: Add the switcher**
 
 Place it directly under the wordmark in `control-deck.tsx` — it is the frame everything below sits in, so it belongs above the agent list rather than inside the settings modal.
 
@@ -1156,7 +1156,7 @@ export function WorkspaceSwitcher({
 }
 ```
 
-- [ ] **Step 5: Re-fetch everything on switch**
+- [x] **Step 5: Re-fetch everything on switch**
 
 In `App.tsx`, key the board and the resource panels on the workspace so switching remounts them:
 
@@ -1166,7 +1166,7 @@ In `App.tsx`, key the board and the resource panels on the workspace so switchin
 
 and in `use-agent-board.ts`, re-run the conversation restore whenever `workspaceId` changes. Without this the previous workspace's agents stay on screen.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```bash
 cd apps/web && bun run build && bun run lint
@@ -1174,7 +1174,7 @@ cd apps/web && bun run build && bun run lint
 
 Then in the browser: create a second workspace, confirm the agent list empties, upload a PDF, switch back, and confirm the first workspace's documents are unchanged.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/web/src
@@ -1189,7 +1189,7 @@ git commit -m "feat: workspace switcher and per-workspace console state"
 - Modify: `README.md`
 - Modify: `apps/api/src/models/schema.ts`
 
-- [ ] **Step 1: Document the model**
+- [x] **Step 1: Document the model**
 
 Add to `README.md` under Persistence:
 
@@ -1209,7 +1209,7 @@ the upgrade. That backfill is idempotent and still runs, so a database from
 before the change can be opened at any time.
 ```
 
-- [ ] **Step 2: Mark the legacy columns**
+- [x] **Step 2: Mark the legacy columns**
 
 Leave `user_id` on the scoped tables but document it, so nobody reads it by accident:
 
@@ -1219,7 +1219,7 @@ Leave `user_id` on the scoped tables but document it, so nobody reads it by acci
 userId: text("user_id"),
 ```
 
-- [ ] **Step 3: Full verification**
+- [x] **Step 3: Full verification**
 
 ```bash
 cd apps/api && bunx tsc --noEmit && bun test
@@ -1228,7 +1228,7 @@ cd ../web && bun run build && bun run lint
 
 Expected: typecheck clean, all tests pass, build clean.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md apps/api/src/models/schema.ts
