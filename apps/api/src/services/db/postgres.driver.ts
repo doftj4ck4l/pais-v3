@@ -191,7 +191,24 @@ export async function probe(url: string): Promise<Probe> {
   }
 }
 
-export async function fetchCatalog(url: string): Promise<RawCatalog> {
+/** Which catalog query just landed, and how many rows it returned. */
+export type CatalogStep = {
+  step: "tables" | "columns" | "primaryKeys" | "foreignKeys" | "indexes";
+  count: number;
+};
+
+/**
+ * `onStep` reports each catalog query as it completes.
+ *
+ * Introspection is five sequential round trips and, against a remote database
+ * with a wide schema, the slow part of attaching a connection. Reporting per
+ * query is the finest granularity available without splitting a single query,
+ * and it is what lets the console show progress rather than a spinner.
+ */
+export async function fetchCatalog(
+  url: string,
+  onStep?: (step: CatalogStep) => void,
+): Promise<RawCatalog> {
   // Constructed inside the try: see `probe` for why.
   let sql: any;
   try {
@@ -208,6 +225,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
         AND n.nspname NOT LIKE 'pg_toast%'
       ORDER BY n.nspname, c.relname
     `);
+    onStep?.({ step: "tables", count: tables.length });
 
     const columns = await sql.unsafe(`
       SELECT n.nspname AS "schemaName",
@@ -225,6 +243,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
         AND n.nspname NOT IN ${SYSTEM_SCHEMAS}
       ORDER BY n.nspname, c.relname, a.attnum
     `);
+    onStep?.({ step: "columns", count: columns.length });
 
     const primaryKeys = await sql.unsafe(`
       SELECT n.nspname AS "schemaName",
@@ -237,6 +256,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ck.attnum
       WHERE k.contype = 'p' AND n.nspname NOT IN ${SYSTEM_SCHEMAS}
     `);
+    onStep?.({ step: "primaryKeys", count: primaryKeys.length });
 
     const foreignKeys = await sql.unsafe(`
       SELECT n.nspname   AS "schemaName",
@@ -255,6 +275,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
       JOIN pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = k.confkey[i]
       WHERE k.contype = 'f' AND n.nspname NOT IN ${SYSTEM_SCHEMAS}
     `);
+    onStep?.({ step: "foreignKeys", count: foreignKeys.length });
 
     const indexes = await sql.unsafe(`
       SELECT schemaname AS "schemaName",
@@ -264,6 +285,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
       WHERE schemaname NOT IN ${SYSTEM_SCHEMAS}
         AND schemaname NOT LIKE 'pg_toast%'
     `);
+    onStep?.({ step: "indexes", count: indexes.length });
 
     return {
       tables: tables.map((t: any) => ({ ...t, rowEstimate: Number(t.rowEstimate) })),

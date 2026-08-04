@@ -1,4 +1,6 @@
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
+import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import {
   databaseConnectionStore,
   DuplicateConnectionNameError,
@@ -23,37 +25,43 @@ export async function index(c: Context) {
 }
 
 /**
- * POST /api/databases — add a connection, then introspect it.
- *
- * A database that cannot be reached is still stored, with the reason, so the
- * user can see and fix it. Only a genuinely invalid request is rejected outright.
+ * Everything `create` does up to and including writing the row: validate, probe,
+ * insert. Shared by the JSON and streaming variants so the two cannot drift —
+ * the only difference between them is how introspection is reported.
  */
-export async function create(c: Context) {
-  const userId = userIdOf(c);
+type Prepared =
+  | { ok: false; status: 400 | 409 | 503; error: string }
+  | { ok: true; id: string; url: string; name: string; reachable: boolean };
 
+async function prepareConnection(c: Context, userId: string): Promise<Prepared> {
   if (!env.connectionSecret) {
-    return c.json(
-      { error: "CONNECTION_SECRET is not set — the API will not store a database credential" },
-      503,
-    );
+    return {
+      ok: false,
+      status: 503,
+      error: "CONNECTION_SECRET is not set — the API will not store a database credential",
+    };
   }
 
   let body: { name?: string; url?: string };
   try {
     body = await c.req.json();
   } catch {
-    return c.json({ error: "Expected a JSON body" }, 400);
+    return { ok: false, status: 400, error: "Expected a JSON body" };
   }
 
   const name = String(body.name ?? "").trim();
   const url = String(body.url ?? "").trim();
   if (!NAME_PATTERN.test(name)) {
-    return c.json({ error: "Name must be 1-31 letters, digits, hyphens or underscores" }, 400);
+    return {
+      ok: false,
+      status: 400,
+      error: "Name must be 1-31 letters, digits, hyphens or underscores",
+    };
   }
-  if (!url) return c.json({ error: "A connection URL is required" }, 400);
+  if (!url) return { ok: false, status: 400, error: "A connection URL is required" };
 
   if (await databaseConnectionStore.findByName(userId, name)) {
-    return c.json({ error: `A connection named "${name}" already exists` }, 409);
+    return { ok: false, status: 409, error: `A connection named "${name}" already exists` };
   }
 
   // Probed BEFORE the row is written, so the single insert below already
@@ -91,24 +99,72 @@ export async function create(c: Context) {
     // same name can race past it and hit the DB's unique index instead. That
     // must still surface as the same 409, not an unhandled 500.
     if (e instanceof DuplicateConnectionNameError) {
-      return c.json({ error: e.message }, 409);
+      return { ok: false, status: 409, error: e.message };
     }
     throw e;
   }
 
-  if (!reached.ok) {
-    logger.warn("db.connect_failed", { id, name, error: reached.error });
-    const connection = (await databaseConnectionStore.list(userId)).find((r) => r.id === id);
-    // Re-reading the row we just wrote should never miss; if it does, saying so
-    // beats silently returning an undefined body.
-    if (!connection) return c.json({ error: "Connection was stored but could not be re-read" }, 500);
-    return c.json({ connection }, 201);
-  }
+  if (!reached.ok) logger.warn("db.connect_failed", { id, name, error: reached.error });
+  return { ok: true, id, url, name, reachable: reached.ok };
+}
 
-  await introspectConnection(id, userId, url);
-  const connection = (await databaseConnectionStore.list(userId)).find((r) => r.id === id);
+/** Re-read a row we just wrote. A miss should be impossible; say so if it happens. */
+async function readBack(userId: string, id: string) {
+  return (await databaseConnectionStore.list(userId)).find((r) => r.id === id) ?? null;
+}
+
+/**
+ * POST /api/databases — add a connection, then introspect it.
+ *
+ * A database that cannot be reached is still stored, with the reason, so the
+ * user can see and fix it. Only a genuinely invalid request is rejected outright.
+ */
+export async function create(c: Context) {
+  const userId = userIdOf(c);
+  const prepared = await prepareConnection(c, userId);
+  if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status);
+
+  if (prepared.reachable) await introspectConnection(prepared.id, userId, prepared.url);
+
+  const connection = await readBack(userId, prepared.id);
   if (!connection) return c.json({ error: "Connection was stored but could not be re-read" }, 500);
   return c.json({ connection }, 201);
+}
+
+/**
+ * POST /api/databases/stream — the same thing, reporting each phase as it happens.
+ *
+ * Validation failures answer with plain JSON and their real status code, exactly
+ * as `create` does; the stream only opens once there is genuinely work to watch.
+ * That keeps a rejected request a normal HTTP error rather than a 200 whose body
+ * has to be parsed to discover it failed.
+ */
+export async function createStreaming(c: Context) {
+  const userId = userIdOf(c);
+  const prepared = await prepareConnection(c, userId);
+  if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status);
+
+  return streamSSE(c, async (stream) => {
+    const emit = createEmitter(stream);
+    const stopHeartbeat = startHeartbeat(stream);
+    try {
+      if (prepared.reachable) {
+        emit({ type: "phase", phase: "connected", name: prepared.name });
+        await introspectConnection(prepared.id, userId, prepared.url, databaseConnectionStore, (p) =>
+          emit({ type: "phase", ...p }),
+        );
+      }
+      const connection = await readBack(userId, prepared.id);
+      emit({ type: "connection", connection });
+    } catch (e: any) {
+      // introspectConnection records its own failures, so reaching here means
+      // something outside it broke; the client still needs to be told.
+      emit({ type: "phase", phase: "failed", step: "attaching", error: e?.message ?? String(e) });
+    } finally {
+      stopHeartbeat();
+      await closeStream(stream);
+    }
+  });
 }
 
 /** POST /api/databases/:id/refresh — re-introspect an existing connection. */

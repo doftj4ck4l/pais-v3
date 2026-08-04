@@ -1,4 +1,4 @@
-import { fetchCatalog, type RawCatalog } from "./postgres.driver";
+import { fetchCatalog, type CatalogStep, type RawCatalog } from "./postgres.driver";
 import {
   databaseConnectionStore,
   type DatabaseConnectionStore,
@@ -91,28 +91,83 @@ export function buildSnapshot(raw: RawCatalog): SnapshotTable[] {
 }
 
 /**
+ * What introspection is doing, reported as it happens.
+ *
+ * Attaching a database is the one place this feature does real work before the
+ * user sees anything, and against a remote server with a wide schema it is five
+ * sequential round trips plus a write. A spinner makes that indistinguishable
+ * from a hang; these phases make it legible, and a failure names the step it
+ * died on instead of surfacing as one opaque error string.
+ */
+export type IntrospectPhase =
+  | { phase: "catalog"; step: CatalogStep["step"]; count: number }
+  | { phase: "building"; tables: number; columns: number }
+  | { phase: "indexing"; entries: number }
+  | { phase: "done"; tables: number; columns: number; entries: number; ms: number }
+  | { phase: "failed"; step: string; error: string };
+
+/** Human-readable name for the step a failure happened on. */
+const STEP_LABEL: Record<string, string> = {
+  tables: "reading tables",
+  columns: "reading columns",
+  primaryKeys: "reading primary keys",
+  foreignKeys: "reading foreign keys",
+  indexes: "reading indexes",
+  building: "building the snapshot",
+  indexing: "indexing for search",
+};
+
+/**
  * Introspect a connection and replace its snapshot.
  *
  * A failure is recorded on the connection rather than thrown: the user added it
  * and needs to see what happened, the same way a PDF that cannot be parsed still
  * gets a row.
+ *
+ * `onPhase` is optional and purely observational — nothing about the outcome
+ * depends on whether anyone is listening, so the non-streaming callers are
+ * unaffected.
  */
 export async function introspectConnection(
   connectionId: string,
   userId: string,
   url: string,
   store: DatabaseConnectionStore = databaseConnectionStore,
+  onPhase?: (event: IntrospectPhase) => void,
 ): Promise<{ ok: true; tableCount: number } | { ok: false; error: string }> {
+  const startedAt = Date.now();
+  // Tracks how far we got, so a failure can name the step rather than leaving
+  // the user to guess which of five round trips died.
+  let reached = "tables";
+
   try {
-    const raw = await fetchCatalog(url);
+    const raw = await fetchCatalog(url, (s) => {
+      reached = s.step;
+      onPhase?.({ phase: "catalog", step: s.step, count: s.count });
+    });
+
+    reached = "building";
     const tables = buildSnapshot(raw);
+    const columnCount = tables.reduce((n, t) => n + t.columns.length, 0);
+    onPhase?.({ phase: "building", tables: tables.length, columns: columnCount });
+
+    // One FTS row per table plus one per column — the index `search_schema`
+    // ranks against, and the largest write of the whole pipeline.
+    reached = "indexing";
+    const entries = tables.length + columnCount;
+    onPhase?.({ phase: "indexing", entries });
+
     await store.saveSnapshot(connectionId, userId, tables);
-    logger.info("db.introspected", { connectionId, tables: tables.length });
+
+    const ms = Date.now() - startedAt;
+    logger.info("db.introspected", { connectionId, tables: tables.length, ms });
+    onPhase?.({ phase: "done", tables: tables.length, columns: columnCount, entries, ms });
     return { ok: true, tableCount: tables.length };
   } catch (e: any) {
     const error = e?.message ?? String(e);
     await store.markStatus(userId, connectionId, "error", error);
-    logger.warn("db.introspect_failed", { connectionId, error });
+    logger.warn("db.introspect_failed", { connectionId, step: reached, error });
+    onPhase?.({ phase: "failed", step: STEP_LABEL[reached] ?? reached, error });
     return { ok: false, error };
   }
 }

@@ -106,6 +106,75 @@ export async function addConnection(
   return await res.json()
 }
 
+/** One step of an attach, as the server reports it. Mirrors IntrospectPhase. */
+export type AttachPhase =
+  | { phase: 'connected'; name: string }
+  | { phase: 'catalog'; step: string; count: number }
+  | { phase: 'building'; tables: number; columns: number }
+  | { phase: 'indexing'; entries: number }
+  | { phase: 'done'; tables: number; columns: number; entries: number; ms: number }
+  | { phase: 'failed'; step: string; error: string }
+
+/**
+ * Connect a database, reporting each phase as it happens.
+ *
+ * Uses `fetch` + a stream reader rather than `EventSource`, which cannot POST —
+ * and the credential must go in a body, never a query string. A rejected request
+ * still answers with ordinary JSON and its real status code, so the stream is
+ * only read once the server has committed to doing work.
+ */
+export async function addConnectionStreaming(
+  userId: string,
+  name: string,
+  url: string,
+  onPhase: (p: AttachPhase) => void,
+): Promise<{ connection?: DbConnectionRow; error?: string }> {
+  const res = await fetch(`/api/databases/stream?userId=${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, url }),
+  })
+
+  if (!res.ok) return (await res.json()) as { error?: string }
+  if (!res.body) return { error: 'The server sent no stream' }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let connection: DbConnectionRow | undefined
+
+  // SSE frames are separated by a blank line and can split across chunks, so the
+  // tail of the buffer is kept until its terminator arrives.
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let split: number
+    while ((split = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, split)
+      buffer = buffer.slice(split + 2)
+
+      const data = frame
+        .split('\n')
+        .find((l) => l.startsWith('data:'))
+        ?.slice(5)
+        .trim()
+      if (!data) continue
+
+      try {
+        const parsed = JSON.parse(data) as { type?: string; connection?: DbConnectionRow }
+        if (parsed.type === 'phase') onPhase(parsed as unknown as AttachPhase)
+        else if (parsed.type === 'connection') connection = parsed.connection
+      } catch {
+        // A malformed frame is not worth failing the whole attach over.
+      }
+    }
+  }
+
+  return connection ? { connection } : { error: 'The attach ended without a result' }
+}
+
 export async function refreshConnection(userId: string, id: string): Promise<void> {
   await fetch(
     `/api/databases/${encodeURIComponent(id)}/refresh?userId=${encodeURIComponent(userId)}`,

@@ -3,7 +3,13 @@ import { AlertTriangleIcon, DatabaseIcon, PlusIcon, RefreshCwIcon, Trash2Icon } 
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { addConnection, deleteConnection, listConnections, refreshConnection } from '@/lib/api'
+import {
+  addConnectionStreaming,
+  deleteConnection,
+  listConnections,
+  refreshConnection,
+  type AttachPhase,
+} from '@/lib/api'
 import { getUserId } from '@/lib/user'
 import type { DbConnectionRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -23,6 +29,7 @@ export function DatabasePanel() {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [steps, setSteps] = useState<AttachPhase[]>([])
 
   const refresh = useCallback(async () => {
     try {
@@ -40,8 +47,11 @@ export function DatabasePanel() {
     if (!name.trim() || !url.trim()) return
     setBusy(true)
     setError(null)
+    setSteps([])
     try {
-      const out = await addConnection(getUserId(), name.trim(), url.trim())
+      const out = await addConnectionStreaming(getUserId(), name.trim(), url.trim(), (p) =>
+        setSteps((prev) => [...prev, p]),
+      )
       if (out.error) {
         setError(out.error)
         // Drop the credential, keep the name: a rejection here is a bad
@@ -60,6 +70,10 @@ export function DatabasePanel() {
       setError('Could not reach the API')
     } finally {
       setBusy(false)
+      // Deliberately NOT cleared here. A local attach finishes in ~20ms, so
+      // clearing on completion would mean the user never sees the steps at all
+      // — the log survives until the next attach or an explicit cancel, leaving
+      // a record of what just happened above the row it produced.
     }
   }, [name, url, refresh])
 
@@ -115,6 +129,7 @@ export function DatabasePanel() {
                 setError(null)
                 setName('')
                 setUrl('')
+                setSteps([])
               }}
             >
               Cancel
@@ -135,6 +150,12 @@ export function DatabasePanel() {
           Connect a read-only database
         </button>
       )}
+
+      {steps.length ? (
+        <div className="mt-2">
+          <AttachLog steps={steps} />
+        </div>
+      ) : null}
 
       {connections.length ? (
         <ul className="mt-2 flex flex-col gap-0.5">
@@ -161,6 +182,72 @@ export function DatabasePanel() {
         </ul>
       ) : null}
     </div>
+  )
+}
+
+/** One line per phase, in the order the server reported them. */
+function describe(p: AttachPhase): string {
+  switch (p.phase) {
+    case 'connected':
+      return 'connected'
+    case 'catalog':
+      return `${CATALOG_LABEL[p.step] ?? p.step} · ${p.count.toLocaleString()}`
+    case 'building':
+      return `${p.tables.toLocaleString()} tables · ${p.columns.toLocaleString()} columns`
+    case 'indexing':
+      return `indexing ${p.entries.toLocaleString()} entries`
+    case 'done':
+      return `ready in ${p.ms.toLocaleString()}ms`
+    case 'failed':
+      return `${p.step} failed — ${p.error}`
+  }
+}
+
+const CATALOG_LABEL: Record<string, string> = {
+  tables: 'tables',
+  columns: 'columns',
+  primaryKeys: 'primary keys',
+  foreignKeys: 'foreign keys',
+  indexes: 'indexes',
+}
+
+/**
+ * The attach, step by step.
+ *
+ * Introspection is five sequential round trips plus a write, and against a
+ * remote database that is long enough for a spinner to read as a hang. Showing
+ * the steps also means a failure names the phase it died on — "reading foreign
+ * keys failed" is actionable in a way that one opaque error string is not.
+ */
+function AttachLog({ steps }: { steps: AttachPhase[] }) {
+  const last = steps[steps.length - 1]
+  const settled = last?.phase === 'done' || last?.phase === 'failed'
+
+  return (
+    <ul className="readout flex flex-col gap-0.5 rounded-md border bg-muted/30 px-2 py-1.5 text-[0.625rem]">
+      {steps.map((p, i) => {
+        const isLast = i === steps.length - 1
+        const failed = p.phase === 'failed'
+        // Everything before the tail is finished by definition; only the tail
+        // can still be in flight.
+        const glyph = failed ? '×' : isLast && !settled ? '▸' : '✓'
+        return (
+          <li
+            key={i}
+            className={cn(
+              'flex gap-1.5 tabular-nums',
+              failed ? 'text-foreground' : 'text-muted-foreground',
+              isLast && !settled && 'text-foreground',
+            )}
+          >
+            <span aria-hidden className="w-2 shrink-0">
+              {glyph}
+            </span>
+            <span className="min-w-0 break-words">{describe(p)}</span>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
