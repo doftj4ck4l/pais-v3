@@ -229,7 +229,7 @@ Read-only is enforced in four layers:
 | Operator | Point the connection at a `GRANT SELECT`-only role |
 | Statement | Only `SELECT` / `WITH` / `EXPLAIN`; write keywords rejected anywhere in the statement |
 | Transaction | `BEGIN TRANSACTION READ ONLY`, always rolled back |
-| Budget | 10s `statement_timeout`, 100-row cap |
+| Budget | 10s `statement_timeout`, 100-row cap, 50KB result cap |
 
 The statement guard exists to give the model a correctable error message. The
 transaction is the actual guarantee — Postgres allows data-modifying CTEs, so

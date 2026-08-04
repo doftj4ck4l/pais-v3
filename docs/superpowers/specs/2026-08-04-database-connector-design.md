@@ -96,8 +96,15 @@ searches or joins them.
 agent that asks for 5000 rows gets 100 and a truncation notice.
 
 The system prompt carries only the cheap inventory — connection names and table
-names — assembled the way `docsPrompt` is today in `pi.service.ts`, and omitted
-entirely when the user has no connection. Full detail is pulled on demand, so the
+names — assembled the way `docsPrompt` is today in `pi.service.ts`. Unlike
+`docsPrompt`, it is never omitted: when the user has no connection it is replaced
+with an explicit "No databases are connected yet" line rather than dropped.
+`docsPrompt` can afford to disappear because `search_docs` is only ever offered
+alongside it — no documents, no tool, nothing to explain. A `db-analyst` run holds
+all three database tools unconditionally (that's the point of gating by harness,
+not by corpus), so silence would leave the agent guessing whether the empty
+result from `search_schema` means "no databases" or "nothing matched" — the
+explicit line answers that up front. Full detail is pulled on demand, so the
 design scales from ten tables to a thousand without changing.
 
 This tiering is what makes generated SQL correct rather than merely plausible.

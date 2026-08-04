@@ -95,4 +95,35 @@ describe("guardReadOnly", () => {
     if (out.ok) return;
     expect(out.reason.toLowerCase()).toContain("delete");
   });
+
+  it("strips a trailing semicolon even when a comment follows it", () => {
+    // Regression: matching `;\s*$` against RAW text misses this, because the
+    // comment after the `;` is non-whitespace there — the driver then wraps
+    // a statement with a semicolon still inside it and Postgres syntax-errors.
+    const out = guardReadOnly("SELECT 1 AS one; -- note");
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.sql).toBe("SELECT 1 AS one");
+    expect(out.isExplain).toBe(false);
+  });
+
+  it("recognises EXPLAIN behind a leading comment", () => {
+    // Regression: re-deriving isExplain from raw text with `/^\s*explain\b/`
+    // misses this, because a leading block comment is non-whitespace — the
+    // driver then wraps EXPLAIN in the row-cap subquery, which is invalid SQL.
+    const out = guardReadOnly("/* plan */ EXPLAIN SELECT 1");
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.isExplain).toBe(true);
+    expect(out.sql).toBe("/* plan */ EXPLAIN SELECT 1");
+  });
+
+  for (const [label, sql] of ALLOWED) {
+    it(`reports isExplain correctly for ${label}`, () => {
+      const out = guardReadOnly(sql);
+      expect(out.ok).toBe(true);
+      if (!out.ok) return;
+      expect(out.isExplain).toBe(/^explain\b/i.test(sql.trim()));
+    });
+  }
 });

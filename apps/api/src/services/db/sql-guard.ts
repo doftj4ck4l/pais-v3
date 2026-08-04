@@ -16,7 +16,20 @@
  *   writes.
  */
 
-export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
+export type GuardResult =
+  | {
+      ok: true;
+      sql: string;
+      /**
+       * Decided here, against the blanked (comment/literal-free) text, and
+       * must be consumed as-is by the driver rather than re-derived from
+       * `sql`: `sql` can start with a leading block comment, e.g. a "plan"
+       * note before an EXPLAIN, which makes a naive `/^\s*explain\b/`
+       * re-check on raw text miss it.
+       */
+      isExplain: boolean;
+    }
+  | { ok: false; reason: string };
 
 /**
  * Words that can write from *inside* a statement — within a CTE, a subquery, or
@@ -174,7 +187,13 @@ export function guardReadOnly(raw: string): GuardResult {
 
   const scan = blanked.trim();
 
-  // One statement only. A trailing semicolon is fine; anything after it is not.
+  // One statement only. A trailing semicolon is fine, whether or not a
+  // comment follows it — blanking has already turned a trailing comment into
+  // plain whitespace, so `;\s*$` matches straight through it. This is the fix
+  // for `SELECT 1 AS one; -- note`: matching that pattern against RAW text
+  // (the previous bug) fails, because the comment after the `;` is
+  // non-whitespace there, so the trailing `;` reads as "more statement
+  // follows" and the caller wraps (and breaks) an ordinary trailing comment.
   const withoutTrailing = scan.replace(/;\s*$/, "");
   if (withoutTrailing.includes(";")) {
     return {
@@ -191,7 +210,9 @@ export function guardReadOnly(raw: string): GuardResult {
     };
   }
 
-  if (/^explain\b/i.test(withoutTrailing) && /\banalyze\b/i.test(withoutTrailing)) {
+  const isExplain = /^explain\b/i.test(withoutTrailing);
+
+  if (isExplain && /\banalyze\b/i.test(withoutTrailing)) {
     return {
       ok: false,
       reason: "EXPLAIN ANALYZE executes the query it explains — use plain EXPLAIN",
@@ -209,5 +230,15 @@ export function guardReadOnly(raw: string): GuardResult {
     }
   }
 
-  return { ok: true, sql: trimmed.replace(/;\s*$/, "") };
+  // Reconstruct the RAW statement — preserving string literals, which
+  // `blanked` destroyed — with the trailing `;` and anything after it
+  // (comment or otherwise) removed. `blanked` is exactly as long as
+  // `trimmed` and position-for-position aligned with it (blanking replaces
+  // characters in place, it never deletes), so the cut point found via the
+  // same `;\s*$` match against the UNTRIMMED `blanked` is valid to apply to
+  // `trimmed` directly, regardless of what a leading comment did to `scan`.
+  const blankedWithoutTrailing = blanked.replace(/;\s*$/, "");
+  const sql = trimmed.slice(0, blankedWithoutTrailing.length).trimEnd();
+
+  return { ok: true, sql, isExplain };
 }

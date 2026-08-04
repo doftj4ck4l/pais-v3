@@ -190,8 +190,16 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     this.dbImpl.transaction((tx) => {
       // db_tables and db_columns cascade; the FTS mirror is virtual and has no
       // foreign keys, so it is cleared explicitly — same as chunks_fts.
+      //
+      // The ownership check above already guarantees `id` belongs to `userId`
+      // before this runs, so scoping by `userId` here too is redundant for
+      // correctness today. It is kept anyway, consistent with every other
+      // write in this file (see `saveSnapshot`): a future caller that skips
+      // the pre-check gets a no-op instead of touching someone else's row.
       tx.run(sql`DELETE FROM db_schema_fts WHERE connection_id = ${id}`);
-      tx.delete(dbConnections).where(eq(dbConnections.id, id)).run();
+      tx.delete(dbConnections)
+        .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, id)))
+        .run();
     });
     return true;
   }
@@ -208,9 +216,32 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     userId: string,
     tables: SnapshotTable[],
   ): Promise<void> {
+    // Ownership pre-check, same shape as `remove()`. It matters more here
+    // than it looks: `db_schema_fts` has no `user_id` column (it is an FTS5
+    // virtual table mirroring `db_tables`/`db_columns`, both UNINDEXED
+    // columns aside), so its own DELETE below cannot be scoped by userId at
+    // all. Without this pre-check, a mismatched `userId` would still wipe
+    // the real owner's FTS index for this connection even though the
+    // userId-scoped writes further down became no-ops — a partial failure
+    // instead of the complete no-op this fix requires.
+    const owned = await this.dbImpl
+      .select({ id: dbConnections.id })
+      .from(dbConnections)
+      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, connectionId)));
+    if (!owned.length) return;
+
     this.dbImpl.transaction((tx) => {
+      // Every write below is scoped by BOTH `userId` and `connectionId`, not
+      // `connectionId` alone. `saveSnapshot`'s only caller (introspection,
+      // after `create`/`refresh`) always proves ownership first, so this is
+      // not exploitable today — but it is the one write path in this file
+      // that used to filter on id only, which made a mismatched `userId`
+      // silently mutate and read back someone else's connection instead of
+      // being a no-op, unlike every other method here.
       tx.run(sql`DELETE FROM db_schema_fts WHERE connection_id = ${connectionId}`);
-      tx.delete(dbTables).where(eq(dbTables.connectionId, connectionId)).run();
+      tx.delete(dbTables)
+        .where(and(eq(dbTables.userId, userId), eq(dbTables.connectionId, connectionId)))
+        .run();
 
       for (const t of tables) {
         const tableId = `${connectionId}:${t.schemaName}.${t.name}`;
@@ -274,7 +305,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
           tableCount: tables.length,
           lastIntrospectedAt: Date.now(),
         })
-        .where(eq(dbConnections.id, connectionId))
+        .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, connectionId)))
         .run();
     });
   }

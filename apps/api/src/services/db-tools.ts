@@ -4,7 +4,7 @@ import {
   type TableDetail,
 } from "../repositories/database-connection.repository";
 import { toFtsQuery } from "./search.service";
-import { ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./db/postgres.driver";
+import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./db/postgres.driver";
 
 /**
  * The agent's three database tools, bound to one user's connections.
@@ -27,8 +27,14 @@ export function createDatabaseTools(
   store: DatabaseConnectionStore = databaseConnectionStore,
   execute: Execute = runReadOnly,
 ): any[] {
-  /** Resolve a connection name to its id and url, or explain what is available. */
-  async function resolve(name: string) {
+  /**
+   * Resolve a connection name to its row, or explain what is available.
+   * Deliberately does not decrypt anything — `store.list` returns only the
+   * public columns. `describe_table` and `search_schema` call only this, so
+   * a plaintext connection string never enters memory on a path that never
+   * uses it.
+   */
+  async function resolveConnection(name: string) {
     const trimmed = String(name ?? "").trim();
     const connections = await store.list(userId);
     const known = connections.map((c) => c.name);
@@ -44,9 +50,18 @@ export function createDatabaseTools(
         ? `unknown database "${trimmed}" — available: ${known.join(", ")}`
         : "no databases are connected" };
     }
-    const url = await store.resolveUrl(userId, hit.id);
-    if (!url) return { ok: false as const, message: `unknown database "${trimmed}"` };
-    return { ok: true as const, row: hit, url };
+    return { ok: true as const, row: hit };
+  }
+
+  /**
+   * Decrypt the URL for an already-resolved connection. Split out from
+   * `resolveConnection` so only `run_query` — the one tool that actually
+   * executes SQL — ever puts a plaintext connection string in memory.
+   */
+  async function resolveUrl(row: { id: string; name: string }) {
+    const url = await store.resolveUrl(userId, row.id);
+    if (!url) return { ok: false as const, message: `unknown database "${row.name}"` };
+    return { ok: true as const, url };
   }
 
   return [
@@ -114,7 +129,7 @@ export function createDatabaseTools(
         required: ["connection", "table"],
       },
       async execute(_id: string, params: any) {
-        const found = await resolve(params?.connection);
+        const found = await resolveConnection(params?.connection);
         if (!found.ok) return text(found.message);
 
         const table = String(params?.table ?? "").trim();
@@ -149,20 +164,30 @@ export function createDatabaseTools(
         required: ["connection", "sql"],
       },
       async execute(_id: string, params: any) {
-        const found = await resolve(params?.connection);
+        const found = await resolveConnection(params?.connection);
         if (!found.ok) return text(found.message);
 
         const statement = String(params?.sql ?? "").trim();
         if (!statement) return text("error: sql required");
 
-        const cap = Math.max(1, Math.min(ROW_CAP, Number(params?.limit ?? ROW_CAP) || ROW_CAP));
-        const outcome = await execute(found.url, statement, cap);
+        // Only run_query ever decrypts a connection string — it is the only
+        // one of the three tools that actually needs it.
+        const resolved = await resolveUrl(found.row);
+        if (!resolved.ok) return text(resolved.message);
+
+        // No clamping here: the driver's `boundCap` is the single authority
+        // on what a caller-supplied limit is allowed to mean (see
+        // postgres.driver.ts). `?? ROW_CAP` substitutes a default only when
+        // `limit` is genuinely absent — unlike `||`, it does not also
+        // (mis)treat an explicit `limit: 0` as "no limit given".
+        const cap = Number(params?.limit ?? ROW_CAP);
+        const outcome = await execute(resolved.url, statement, cap);
         // `runReadOnly` already scrubs its own errors, but this is the last
         // point before the text reaches the model — scrub again defensively
         // rather than trust every executor implementation to have done it.
         const safe: QueryOutcome = outcome.ok
           ? outcome
-          : { ok: false, error: scrub(outcome.error, found.url) };
+          : { ok: false, error: scrub(outcome.error, resolved.url) };
         return text(renderOutcome(safe, cap));
       },
     },
@@ -208,17 +233,55 @@ function renderTable(detail: TableDetail): string {
   return `${ambiguity}${head}\nColumns:\n${columns}${indexes}`;
 }
 
+/**
+ * Postgres's own wording for a `statement_timeout` cancellation. Detected here
+ * (rather than in the driver) because the guidance that follows is about how
+ * the *agent* should change its next call — a tool-layer concern, same as the
+ * truncation advice below.
+ */
+const STATEMENT_TIMEOUT_PATTERN = /statement timeout/i;
+
+function renderQueryError(error: string): string {
+  if (STATEMENT_TIMEOUT_PATTERN.test(error)) {
+    return (
+      `${error} — this query was cancelled for taking too long. Re-running it unchanged ` +
+      "will time out again. Aggregate in SQL (COUNT/SUM/GROUP BY), add a WHERE filter to " +
+      "narrow it, or select fewer rows instead."
+    );
+  }
+  return error;
+}
+
+/**
+ * Truncation has two independent causes with different fixes, so the advice
+ * has to name which one fired: too many ROWS means aggregate instead of
+ * fetching everything; too many BYTES means the shown rows themselves are too
+ * wide (a large text/json/bytea column) and no amount of aggregating rows
+ * helps — the query needs fewer columns or a `left(col, n)` wrapper.
+ *
+ * A `reason` of `undefined` (an outcome built by hand rather than by the
+ * driver, e.g. in older tests) falls back to the row-cap wording, which was
+ * this function's only message before the byte budget existed.
+ */
+function truncationNote(reason: "rows" | "bytes" | null | undefined, cap: number): string {
+  if (reason === "bytes") {
+    return (
+      `(truncated: this result exceeds the ${BYTE_CAP.toLocaleString("en-US")}-byte budget. ` +
+      "Select fewer columns, or wrap a wide column with left(col, n), rather than re-running as-is.)"
+    );
+  }
+  return `(showing the first ${cap} rows — more exist. Aggregate in SQL rather than paginating.)`;
+}
+
 function renderOutcome(outcome: QueryOutcome, cap: number): string {
-  if (!outcome.ok) return `query failed: ${outcome.error}`;
+  if (!outcome.ok) return `query failed: ${renderQueryError(outcome.error)}`;
   if (!outcome.rows.length) return "no rows";
 
   const header = outcome.columns.join(" | ");
   const body = outcome.rows
     .map((r) => outcome.columns.map((c) => format(r[c])).join(" | "))
     .join("\n");
-  const note = outcome.truncated
-    ? `\n\n(showing the first ${cap} rows — more exist. Aggregate in SQL rather than paginating.)`
-    : "";
+  const note = outcome.truncated ? `\n\n${truncationNote(outcome.truncatedReason, cap)}` : "";
 
   return `${header}\n${"-".repeat(header.length)}\n${body}${note}`;
 }

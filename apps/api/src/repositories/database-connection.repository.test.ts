@@ -101,6 +101,15 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(await store.remove("u1", "c1")).toBe(true);
     expect(await store.list("u1")).toHaveLength(0);
   });
+
+  it("does nothing when markStatus is called with a mismatched userId", async () => {
+    await store.create(conn());
+    await store.markStatus("mallory", "c1", "error", "attacker-supplied error");
+    const row = (await store.list("u1"))[0]!;
+    // Still whatever `create()` left it as — untouched by the mismatched call.
+    expect(row.status).toBe("connected");
+    expect(row.error).toBeNull();
+  });
 });
 
 const snapshot: SnapshotTable[] = [
@@ -207,6 +216,22 @@ describe("snapshot", () => {
     await store.markStatus("u1", "c1", "error", "could not connect: timeout");
     expect(await store.describeTable("u1", "sales", "orders")).toBeNull();
     expect(await store.searchSchema("u1", '"orders"', null, 5)).toHaveLength(0);
+  });
+
+  it("does nothing when saveSnapshot is called with a mismatched userId", async () => {
+    // A single-table snapshot from an attacker-controlled call. If any part
+    // of saveSnapshot ran unscoped, this would either replace the owner's
+    // two-table snapshot with this one, or wipe the FTS index it depends on
+    // while leaving the two `db_tables` rows behind — a partial, worse-than-
+    // either failure. Neither may happen: the whole call must be a no-op.
+    await store.saveSnapshot("c1", "mallory", [snapshot[1]!]);
+
+    const row = (await store.list("u1"))[0]!;
+    expect(row.tableCount).toBe(2);
+
+    const inv = await store.inventory("u1");
+    expect(inv[0]!.tables).toEqual(["orders", "refunds"]);
+    expect(await store.searchSchema("u1", '"refund"', null, 5)).not.toHaveLength(0);
   });
 });
 

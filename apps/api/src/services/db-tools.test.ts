@@ -84,6 +84,22 @@ describe("createDatabaseTools", () => {
     expect(out.toLowerCase()).not.toContain("sample");
   });
 
+  it("never decrypts a connection string for describe_table or search_schema, only for run_query", async () => {
+    let resolveUrlCalls = 0;
+    const originalResolveUrl = store.resolveUrl.bind(store);
+    store.resolveUrl = async (...args: Parameters<typeof originalResolveUrl>) => {
+      resolveUrlCalls++;
+      return originalResolveUrl(...args);
+    };
+
+    await tool("describe_table").execute("1", { connection: "sales", table: "orders" });
+    await tool("search_schema").execute("1", { query: "orders" });
+    expect(resolveUrlCalls).toBe(0);
+
+    await tool("run_query").execute("1", { connection: "sales", sql: "SELECT 1" });
+    expect(resolveUrlCalls).toBe(1);
+  });
+
   it("tells the agent which tables exist when it names an unknown one", async () => {
     const out = textOf(await tool("describe_table").execute("1", { connection: "sales", table: "ghost" }));
     expect(out).toContain("orders");
@@ -116,13 +132,46 @@ describe("createDatabaseTools", () => {
     expect(out).toContain("totl");
   });
 
-  it("reports truncation so the agent aggregates instead of paginating", async () => {
+  it("reports row-cap truncation so the agent aggregates instead of paginating", async () => {
     outcome = {
       ok: true, columns: ["id"],
       rows: Array.from({ length: 100 }, (_, i) => ({ id: i })), truncated: true,
+      truncatedReason: "rows",
     };
     const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT id FROM orders" }));
     expect(out.toLowerCase()).toContain("more exist");
+  });
+
+  it("reports byte-cap truncation with column-narrowing advice, not the row-cap message", async () => {
+    outcome = {
+      ok: true, columns: ["big"],
+      rows: [{ big: "x".repeat(60_000) }], truncated: true,
+      truncatedReason: "bytes",
+    };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT big FROM orders" }));
+    expect(out.toLowerCase()).not.toContain("more exist");
+    expect(out.toLowerCase()).toContain("byte");
+    expect(out.toLowerCase()).toContain("left(");
+  });
+
+  it("falls back to the row-cap wording when an outcome is truncated with no reason given", async () => {
+    // Guards a caller (e.g. an older test, or a future executor) that builds
+    // a QueryOutcome by hand without `truncatedReason` — the message must
+    // still say something actionable rather than silently omitting advice.
+    outcome = {
+      ok: true, columns: ["id"],
+      rows: [{ id: 1 }], truncated: true,
+    } as any;
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT id FROM orders" }));
+    expect(out.toLowerCase()).toContain("more exist");
+  });
+
+  it("appends aggregation guidance to a statement-timeout error, not just the raw Postgres message", async () => {
+    outcome = { ok: false, error: "canceling statement due to statement timeout" };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT * FROM orders" }));
+    expect(out).toContain("statement timeout");
+    expect(out.toLowerCase()).toContain("aggregate");
+    expect(out.toLowerCase()).toContain("again");
   });
 
   it("says so plainly when a query returns nothing", async () => {
@@ -196,29 +245,39 @@ describe("describe_table with an ambiguous bare name", () => {
 });
 
 describe("run_query cap forwarding", () => {
-  // `limit` may only ever LOWER the cap, never raise it — the forwarded cap
-  // must always land in [1, ROW_CAP]. `limit: 0` intentionally falls back to
-  // the max rather than meaning "zero rows" (deferred, not a bug being fixed
-  // here); documented here so the actual clamping behavior stays under test.
+  // The tool no longer clamps `limit` itself — the driver's `boundCap` (see
+  // postgres.driver.ts) is the single authority on what a caller-supplied
+  // value is allowed to mean, so what reaches `execute` here is the raw
+  // value, `Number`-coerced but otherwise unclamped in either direction.
+  // `0` and above-cap values used to be silently rewritten to 100 by this
+  // tool before reaching the driver, which is exactly the contradiction this
+  // fix removes (the driver's own `boundCap(0) -> 1` was unreachable from
+  // this path). Driver-side clamping to [1, ROW_CAP] — the invariant that
+  // must still hold end to end — is exercised for real against Postgres by
+  // `scripts/db-connector-check.ts` ("caps rows").
   const cases: { label: string; limit: unknown; expected: number }[] = [
     { label: "omitted", limit: undefined, expected: 100 },
-    { label: "1000 (above cap)", limit: 1000, expected: 100 },
-    { label: "0", limit: 0, expected: 100 },
-    { label: "-5", limit: -5, expected: 1 },
-    { label: "NaN", limit: NaN, expected: 100 },
+    { label: "1000 (above cap)", limit: 1000, expected: 1000 },
+    { label: "0", limit: 0, expected: 0 },
+    { label: "-5", limit: -5, expected: -5 },
     { label: '"20" (numeric string)', limit: "20", expected: 20 },
   ];
 
   for (const { label, limit, expected } of cases) {
-    it(`forwards cap=${expected} when limit is ${label}`, async () => {
+    it(`forwards the raw value (${expected}) when limit is ${label}`, async () => {
       const params: any = { connection: "sales", sql: "SELECT count(*) FROM orders" };
       if (limit !== undefined) params.limit = limit;
       await tool("run_query").execute("1", params);
       expect(lastCap).toBe(expected);
-      expect(lastCap!).toBeGreaterThanOrEqual(1);
-      expect(lastCap!).toBeLessThanOrEqual(100);
     });
   }
+
+  it("forwards NaN when limit is NaN, rather than substituting a default", async () => {
+    await tool("run_query").execute("1", {
+      connection: "sales", sql: "SELECT count(*) FROM orders", limit: NaN,
+    });
+    expect(Number.isNaN(lastCap)).toBe(true);
+  });
 });
 
 describe("run_query row rendering disambiguates NULL", () => {

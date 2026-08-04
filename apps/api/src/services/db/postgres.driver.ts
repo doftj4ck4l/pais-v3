@@ -15,6 +15,14 @@ const STATEMENT_TIMEOUT_MS = 10_000;
 /** Rows returned to the model in one query. A caller may lower this, never raise it. */
 export const ROW_CAP = 100;
 
+/**
+ * Serialized bytes of row data returned to the model in one query, independent
+ * of ROW_CAP. A handful of rows with a wide text/json/bytea column can blow the
+ * model's context long before 100 rows accumulate, so this is a second,
+ * orthogonal cap — not a derivation of the row cap.
+ */
+export const BYTE_CAP = 50_000;
+
 export type RawCatalog = {
   tables: { schemaName: string; name: string; comment: string | null; rowEstimate: number }[];
   columns: {
@@ -34,7 +42,26 @@ export type Probe =
   | { ok: false; error: string };
 
 export type QueryOutcome =
-  | { ok: true; columns: string[]; rows: Record<string, unknown>[]; truncated: boolean }
+  | {
+      ok: true;
+      columns: string[];
+      rows: Record<string, unknown>[];
+      truncated: boolean;
+      /**
+       * Which budget cut the result short, so the tool layer can give advice
+       * that matches the actual problem: too many rows means aggregate in
+       * SQL; too many bytes means select fewer columns or use `left(col, n)`.
+       * `null` when `truncated` is false. When both budgets would have fired,
+       * `"bytes"` wins — it is the one that actually determined how many of
+       * the row-capped rows made it into `rows`.
+       *
+       * Optional (not just nullable) so an outcome built by hand — an older
+       * test, or a future executor — remains a valid `QueryOutcome` without
+       * this field; the tool layer treats a missing reason the same as
+       * `"rows"`, its behavior before this field existed.
+       */
+      truncatedReason?: "rows" | "bytes" | null;
+    }
   | { ok: false; error: string };
 
 /**
@@ -65,6 +92,11 @@ function client(url: string): any {
  * - A malformed URL can still carry credentials verbatim in its text (it
  *   just doesn't parse). Falling back to silence would leak them, so the
  *   catch branch strips any userinfo-shaped segment instead.
+ * - A Postgres URI can also carry the password as a `?password=...` query
+ *   parameter (`Bun.SQL` honours it — confirmed live: a URL with a bogus
+ *   userinfo password but a correct `?password=` connects). Destinations are
+ *   the server log and the browser tooltip, same as the userinfo password,
+ *   so it is scrubbed the same way — encoded and decoded form both.
  *
  * Exported (not just used internally) so `db-tools.ts` can apply it again to
  * `outcome.error` before rendering: `runReadOnly`'s own callers are expected
@@ -86,6 +118,22 @@ export function scrub(message: string, url: string): string {
         // A malformed percent-escape must not throw inside an error handler.
       }
     }
+    // `URLSearchParams.get` returns the DECODED value — the mirror image of
+    // `URL.password`, which is encoded. So the raw (possibly still-encoded)
+    // form has to come from the query string text itself, not from the
+    // parsed API, or a password containing `%`, `+`, or `&`-adjacent bytes
+    // would only get scrubbed in one of its two possible on-the-wire forms.
+    const rawQueryMatch = /[?&]password=([^&]*)/.exec(parsed.search);
+    const rawQueryPassword = rawQueryMatch?.[1];
+    if (rawQueryPassword) {
+      out = out.split(rawQueryPassword).join("***");
+      try {
+        const decoded = decodeURIComponent(rawQueryPassword);
+        if (decoded && decoded !== rawQueryPassword) out = out.split(decoded).join("***");
+      } catch {
+        // A malformed percent-escape must not throw inside an error handler.
+      }
+    }
   } catch {
     // Fail safe, not silent: strip any "//user:pass@" userinfo segment even
     // though the URL itself didn't parse.
@@ -102,6 +150,16 @@ export function scrub(message: string, url: string): string {
 function boundCap(cap: number): number {
   const finite = Number.isFinite(cap) ? Math.floor(cap) : ROW_CAP;
   return Math.max(1, Math.min(ROW_CAP, finite));
+}
+
+/**
+ * `JSON.stringify` throws on a `bigint` (a real value for a Postgres `bigint`
+ * column), which would turn a byte-budget check into a 500 on exactly the
+ * wide-row queries this budget exists to catch. This is only used to size a
+ * row for the budget, not to build what is sent to the model.
+ */
+function serializeForSize(row: Record<string, unknown>): string {
+  return JSON.stringify(row, (_key, value) => (typeof value === "bigint" ? value.toString() : value));
 }
 
 export async function probe(url: string): Promise<Probe> {
@@ -245,7 +303,11 @@ export async function runReadOnly(
   if (!guarded.ok) return { ok: false, error: guarded.reason };
 
   const bounded = boundCap(cap);
-  const isExplain = /^\s*explain\b/i.test(guarded.sql);
+  // `isExplain` is a fact the guard already decided against the blanked
+  // (comment/literal-free) text — re-deriving it here from `guarded.sql`
+  // (raw text) is exactly the bug this fix removes: a leading block comment
+  // before EXPLAIN reads as "not EXPLAIN" to a regex over raw text.
+  const isExplain = guarded.isExplain;
   const statement = isExplain
     ? guarded.sql
     : `SELECT * FROM (\n${guarded.sql}\n) AS _capped LIMIT ${bounded + 1}`;
@@ -260,14 +322,41 @@ export async function runReadOnly(
     await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
 
     const rows: Record<string, unknown>[] = await sql.unsafe(statement);
-    const truncated = !isExplain && rows.length > bounded;
-    const shown = truncated ? rows.slice(0, bounded) : rows;
+    const rowCapped = !isExplain && rows.length > bounded;
+    const rowLimited = rowCapped ? rows.slice(0, bounded) : rows;
+
+    // Byte budget applies AFTER the row cap (so a query already trimmed to
+    // `bounded` rows is what gets measured) but is not exempt for EXPLAIN —
+    // an EXPLAIN plan is itself unbounded and can be large. At least one row
+    // is always kept even if it alone exceeds the budget: a single-row,
+    // single-column result cannot be partially truncated, so it is returned
+    // whole with `truncated: true` rather than dropped entirely.
+    let bytes = 0;
+    let byteCapped = false;
+    const shown: Record<string, unknown>[] = [];
+    for (const row of rowLimited) {
+      const size = Buffer.byteLength(serializeForSize(row));
+      if (shown.length > 0 && bytes + size > BYTE_CAP) {
+        byteCapped = true;
+        break;
+      }
+      shown.push(row);
+      bytes += size;
+      if (bytes > BYTE_CAP) {
+        byteCapped = true;
+        break;
+      }
+    }
+
+    const truncated = rowCapped || byteCapped;
+    const truncatedReason: "rows" | "bytes" | null = byteCapped ? "bytes" : rowCapped ? "rows" : null;
 
     return {
       ok: true,
       columns: shown.length ? Object.keys(shown[0]!) : [],
       rows: shown,
       truncated,
+      truncatedReason,
     };
   } catch (e: any) {
     return { ok: false, error: scrub(e?.message ?? String(e), url) };
