@@ -185,7 +185,6 @@ export const documents = sqliteTable(
   "documents",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id"),
     workspaceId: text("workspace_id"),
     title: text("title").notNull(), // original filename
     bytes: integer("bytes").notNull(),
@@ -195,14 +194,10 @@ export const documents = sqliteTable(
     error: text("error"), // why status is `empty` or `error`, for the UI
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [
-    index("idx_documents_user").on(t.userId, t.createdAt),
-    index("idx_documents_workspace").on(t.workspaceId, t.createdAt),
-  ],
+  (t) => [index("idx_documents_workspace").on(t.workspaceId, t.createdAt)],
 );
 export type DocumentRow = {
   id: string;
-  userId: string | null;
   workspaceId: string | null;
   title: string;
   bytes: number;
@@ -226,7 +221,6 @@ export const chunks = sqliteTable(
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
-    userId: text("user_id"),
     // denormalised so search filters without a join
     workspaceId: text("workspace_id"),
     seq: integer("seq").notNull(), // order within the document
@@ -241,7 +235,6 @@ export const chunks = sqliteTable(
 export type ChunkRow = {
   id: string;
   documentId: string;
-  userId: string | null;
   workspaceId: string | null;
   seq: number;
   page: number;
@@ -263,7 +256,6 @@ export const dbConnections = sqliteTable(
   "db_connections",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id"),
     workspaceId: text("workspace_id"),
     name: text("name").notNull(), // how the agent refers to it
     engine: text("engine").notNull().default("postgres"),
@@ -276,14 +268,10 @@ export const dbConnections = sqliteTable(
     lastIntrospectedAt: integer("last_introspected_at"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [
-    index("idx_db_connections_user").on(t.userId, t.createdAt),
-    index("idx_db_connections_workspace").on(t.workspaceId, t.createdAt),
-  ],
+  (t) => [index("idx_db_connections_workspace").on(t.workspaceId, t.createdAt)],
 );
 export type DbConnectionRow = {
   id: string;
-  userId: string | null;
   workspaceId: string | null;
   name: string;
   engine: string;
@@ -304,7 +292,6 @@ export const dbTables = sqliteTable(
     connectionId: text("connection_id")
       .notNull()
       .references(() => dbConnections.id, { onDelete: "cascade" }),
-    userId: text("user_id"),
     workspaceId: text("workspace_id"),
     schemaName: text("schema_name").notNull(),
     name: text("name").notNull(),
@@ -321,7 +308,6 @@ export const dbTables = sqliteTable(
 export type DbTableRow = {
   id: string;
   connectionId: string;
-  userId: string | null;
   workspaceId: string | null;
   schemaName: string;
   name: string;
@@ -340,7 +326,6 @@ export const dbColumns = sqliteTable(
       .notNull()
       .references(() => dbTables.id, { onDelete: "cascade" }),
     connectionId: text("connection_id").notNull(),
-    userId: text("user_id"),
     workspaceId: text("workspace_id"),
     seq: integer("seq").notNull(),
     name: text("name").notNull(),
@@ -357,7 +342,6 @@ export type DbColumnRow = {
   id: string;
   tableId: string;
   connectionId: string;
-  userId: string | null;
   workspaceId: string | null;
   seq: number;
   name: string;

@@ -181,7 +181,7 @@ export async function runPiAgent(opts: {
   // Gated rather than always-on: the inventory prompt and three extra tools are
   // dead weight on a run that will never touch a database.
   if (harnessTools.includes("db")) {
-    for (const dbt of createDatabaseTools(userId)) {
+    for (const dbt of createDatabaseTools(workspaceId)) {
       agentTools.push({
         name: dbt.name,
         description: dbt.description,
@@ -247,7 +247,7 @@ export async function runPiAgent(opts: {
   let dbPrompt = "";
   if (harnessTools.includes("db")) {
     try {
-      const inventory = await databaseConnectionStore.inventory(userId);
+      const inventory = await databaseConnectionStore.inventory(workspaceId);
       if (inventory.length) {
         dbPrompt =
           `\n\nConnected databases:\n` +
@@ -267,7 +267,7 @@ export async function runPiAgent(opts: {
           `\n\nNo databases are connected yet. Say so if the user asks you to query one.`;
       }
     } catch (e: any) {
-      logger.warn("db.inventory_failed", { userId, message: e?.message ?? String(e) });
+      logger.warn("db.inventory_failed", { workspaceId, message: e?.message ?? String(e) });
     }
   }
 

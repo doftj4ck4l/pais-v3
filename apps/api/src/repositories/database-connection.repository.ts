@@ -15,7 +15,7 @@ import type { SnapshotTable } from "../services/db/introspect.service";
 
 export type NewConnection = {
   id: string;
-  userId: string;
+  workspaceId: string;
   name: string;
   url: string;
   displayHost: string;
@@ -29,7 +29,7 @@ export type NewConnection = {
 };
 
 /**
- * Thrown by `create()` when the DB-level unique index on (user_id, name) is
+ * Thrown by `create()` when the DB-level unique index on (workspace_id, name) is
  * hit by a request that slipped past the caller's own pre-check — two inserts
  * for the same name racing each other. Lets the controller map the race to
  * the same 409 the pre-check returns, instead of a bare 500.
@@ -44,7 +44,7 @@ export class DuplicateConnectionNameError extends Error {
 /**
  * bun:sqlite reports a violated UNIQUE index via `error.code`, not by message
  * text alone, so this checks the code first. The table also has a PRIMARY KEY
- * uniqueness on `id`; the message-text check narrows this to the (user_id,
+ * uniqueness on `id`; the message-text check narrows this to the (workspace_id,
  * name) index specifically, so an id collision (which should never happen —
  * ids are randomly generated) is not misreported as a duplicate name.
  */
@@ -84,27 +84,27 @@ export type SchemaHit = {
 
 export interface DatabaseConnectionStore {
   create(conn: NewConnection): Promise<void>;
-  list(userId: string): Promise<DbConnectionRow[]>;
-  findByName(userId: string, name: string): Promise<DbConnectionRow | null>;
-  resolveUrl(userId: string, connectionId: string): Promise<string | null>;
+  list(workspaceId: string): Promise<DbConnectionRow[]>;
+  findByName(workspaceId: string, name: string): Promise<DbConnectionRow | null>;
+  resolveUrl(workspaceId: string, connectionId: string): Promise<string | null>;
   markStatus(
-    userId: string,
+    workspaceId: string,
     id: string,
     status: DbConnectionStatus,
     error: string | null,
   ): Promise<void>;
-  remove(userId: string, id: string): Promise<boolean>;
-  saveSnapshot(connectionId: string, userId: string, tables: SnapshotTable[]): Promise<void>;
-  inventory(userId: string): Promise<ConnectionInventoryEntry[]>;
-  describeTable(userId: string, connectionName: string, table: string): Promise<TableDetail | null>;
+  remove(workspaceId: string, id: string): Promise<boolean>;
+  saveSnapshot(connectionId: string, workspaceId: string, tables: SnapshotTable[]): Promise<void>;
+  inventory(workspaceId: string): Promise<ConnectionInventoryEntry[]>;
+  describeTable(workspaceId: string, connectionName: string, table: string): Promise<TableDetail | null>;
   searchSchema(
-    userId: string, ftsQuery: string, connectionName: string | null, limit: number,
+    workspaceId: string, ftsQuery: string, connectionName: string | null, limit: number,
   ): Promise<SchemaHit[]>;
 }
 
 const PUBLIC_COLUMNS = {
   id: dbConnections.id,
-  userId: dbConnections.userId,
+  workspaceId: dbConnections.workspaceId,
   name: dbConnections.name,
   engine: dbConnections.engine,
   status: dbConnections.status,
@@ -123,7 +123,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     try {
       await this.dbImpl.insert(dbConnections).values({
         id: conn.id,
-        userId: conn.userId,
+        workspaceId: conn.workspaceId,
         name: conn.name,
         engine: "postgres",
         secret: encryptSecret(conn.url),
@@ -141,35 +141,35 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     }
   }
 
-  async list(userId: string): Promise<DbConnectionRow[]> {
+  async list(workspaceId: string): Promise<DbConnectionRow[]> {
     const rows = await this.dbImpl
       .select(PUBLIC_COLUMNS)
       .from(dbConnections)
-      .where(eq(dbConnections.userId, userId))
+      .where(eq(dbConnections.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
     return rows as DbConnectionRow[];
   }
 
-  async findByName(userId: string, name: string): Promise<DbConnectionRow | null> {
+  async findByName(workspaceId: string, name: string): Promise<DbConnectionRow | null> {
     const rows = await this.dbImpl
       .select(PUBLIC_COLUMNS)
       .from(dbConnections)
-      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.name, name)));
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.name, name)));
     return (rows[0] as DbConnectionRow) ?? null;
   }
 
   /** Decrypts only after confirming the caller owns the row. */
-  async resolveUrl(userId: string, connectionId: string): Promise<string | null> {
+  async resolveUrl(workspaceId: string, connectionId: string): Promise<string | null> {
     const rows = await this.dbImpl
       .select({ secret: dbConnections.secret })
       .from(dbConnections)
-      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, connectionId)));
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
     const secret = rows[0]?.secret;
     return secret ? decryptSecret(secret) : null;
   }
 
   async markStatus(
-    userId: string,
+    workspaceId: string,
     id: string,
     status: DbConnectionStatus,
     error: string | null,
@@ -177,28 +177,28 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     await this.dbImpl
       .update(dbConnections)
       .set({ status, error })
-      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, id)));
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, id)));
   }
 
-  async remove(userId: string, id: string): Promise<boolean> {
+  async remove(workspaceId: string, id: string): Promise<boolean> {
     const owned = await this.dbImpl
       .select({ id: dbConnections.id })
       .from(dbConnections)
-      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, id)));
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, id)));
     if (!owned.length) return false;
 
     this.dbImpl.transaction((tx) => {
       // db_tables and db_columns cascade; the FTS mirror is virtual and has no
       // foreign keys, so it is cleared explicitly — same as chunks_fts.
       //
-      // The ownership check above already guarantees `id` belongs to `userId`
-      // before this runs, so scoping by `userId` here too is redundant for
+      // The ownership check above already guarantees `id` belongs to `workspaceId`
+      // before this runs, so scoping by `workspaceId` here too is redundant for
       // correctness today. It is kept anyway, consistent with every other
       // write in this file (see `saveSnapshot`): a future caller that skips
       // the pre-check gets a no-op instead of touching someone else's row.
       tx.run(sql`DELETE FROM db_schema_fts WHERE connection_id = ${id}`);
       tx.delete(dbConnections)
-        .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, id)))
+        .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, id)))
         .run();
     });
     return true;
@@ -213,34 +213,34 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
    */
   async saveSnapshot(
     connectionId: string,
-    userId: string,
+    workspaceId: string,
     tables: SnapshotTable[],
   ): Promise<void> {
     // Ownership pre-check, same shape as `remove()`. It matters more here
-    // than it looks: `db_schema_fts` has no `user_id` column (it is an FTS5
+    // than it looks: `db_schema_fts` has no `workspace_id` column (it is an FTS5
     // virtual table mirroring `db_tables`/`db_columns`, both UNINDEXED
-    // columns aside), so its own DELETE below cannot be scoped by userId at
-    // all. Without this pre-check, a mismatched `userId` would still wipe
+    // columns aside), so its own DELETE below cannot be scoped by workspaceId at
+    // all. Without this pre-check, a mismatched `workspaceId` would still wipe
     // the real owner's FTS index for this connection even though the
-    // userId-scoped writes further down became no-ops — a partial failure
+    // workspaceId-scoped writes further down became no-ops — a partial failure
     // instead of the complete no-op this fix requires.
     const owned = await this.dbImpl
       .select({ id: dbConnections.id })
       .from(dbConnections)
-      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, connectionId)));
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
     if (!owned.length) return;
 
     this.dbImpl.transaction((tx) => {
-      // Every write below is scoped by BOTH `userId` and `connectionId`, not
+      // Every write below is scoped by BOTH `workspaceId` and `connectionId`, not
       // `connectionId` alone. `saveSnapshot`'s only caller (introspection,
       // after `create`/`refresh`) always proves ownership first, so this is
       // not exploitable today — but it is the one write path in this file
-      // that used to filter on id only, which made a mismatched `userId`
+      // that used to filter on id only, which made a mismatched `workspaceId`
       // silently mutate and read back someone else's connection instead of
       // being a no-op, unlike every other method here.
       tx.run(sql`DELETE FROM db_schema_fts WHERE connection_id = ${connectionId}`);
       tx.delete(dbTables)
-        .where(and(eq(dbTables.userId, userId), eq(dbTables.connectionId, connectionId)))
+        .where(and(eq(dbTables.workspaceId, workspaceId), eq(dbTables.connectionId, connectionId)))
         .run();
 
       for (const t of tables) {
@@ -249,7 +249,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
           .values({
             id: tableId,
             connectionId,
-            userId,
+            workspaceId,
             schemaName: t.schemaName,
             name: t.name,
             comment: t.comment,
@@ -276,7 +276,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
               id: columnId,
               tableId,
               connectionId,
-              userId,
+              workspaceId,
               seq: c.seq,
               name: c.name,
               dataType: c.dataType,
@@ -305,19 +305,19 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
           tableCount: tables.length,
           lastIntrospectedAt: Date.now(),
         })
-        .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, connectionId)))
+        .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)))
         .run();
     });
   }
 
   /** Connection names and their table names — everything the system prompt needs. */
-  async inventory(userId: string): Promise<ConnectionInventoryEntry[]> {
+  async inventory(workspaceId: string): Promise<ConnectionInventoryEntry[]> {
     const rows = (await this.dbImpl.all(sql`
       SELECT c.name AS connectionName, c.table_count AS tableCount,
              t.schema_name AS schemaName, t.name AS tableName
       FROM db_connections c
       LEFT JOIN db_tables t ON t.connection_id = c.id
-      WHERE c.user_id = ${userId} AND c.status = 'connected'
+      WHERE c.workspace_id = ${workspaceId} AND c.status = 'connected'
       ORDER BY c.name, t.schema_name, t.name
     `)) as {
       connectionName: string; tableCount: number;
@@ -347,7 +347,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
    * must resolve.
    */
   async describeTable(
-    userId: string,
+    workspaceId: string,
     connectionName: string,
     table: string,
   ): Promise<TableDetail | null> {
@@ -364,7 +364,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
              t.comment AS comment, t.row_estimate AS rowEstimate, t.indexes AS indexes
       FROM db_tables t
       JOIN db_connections c ON c.id = t.connection_id
-      WHERE c.user_id = ${userId} AND c.name = ${connectionName} AND c.status = 'connected'
+      WHERE c.workspace_id = ${workspaceId} AND c.name = ${connectionName} AND c.status = 'connected'
         AND t.name = ${maybeName}
         AND (${maybeSchema} IS NULL OR t.schema_name = ${maybeSchema})
       ORDER BY CASE t.schema_name WHEN 'public' THEN 0 ELSE 1 END, t.schema_name ASC
@@ -399,7 +399,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
 
   /** Rank tables and columns against a prepared FTS5 query. */
   async searchSchema(
-    userId: string,
+    workspaceId: string,
     ftsQuery: string,
     connectionName: string | null,
     limit: number,
@@ -421,7 +421,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
       LEFT JOIN db_columns col ON col.id = db_schema_fts.object_id
       LEFT JOIN db_tables  ct  ON ct.id  = col.table_id
       WHERE db_schema_fts MATCH ${ftsQuery}
-        AND c.user_id = ${userId}
+        AND c.workspace_id = ${workspaceId}
         -- A snapshot from a connection whose last re-introspection failed is
         -- exactly the "plausible but wrong" input this design exists to avoid:
         -- it already dropped out of inventory(), so it must not still resolve

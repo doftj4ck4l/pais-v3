@@ -9,8 +9,17 @@ import { introspectConnection } from "../services/db/introspect.service";
 import { probe } from "../services/db/postgres.driver";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
+import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 
-const userIdOf = (c: Context) => c.req.query("userId") ?? env.defaultUserId;
+/**
+ * The workspace this request applies to. `resolve` is the one place a
+ * client-supplied workspace id is checked against ownership.
+ */
+const workspaceIdOf = async (c: Context) => {
+  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
+  return workspace.id;
+};
 
 const newConnectionId = () =>
   `db_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -18,9 +27,9 @@ const newConnectionId = () =>
 /** Names reach the model, so they are constrained to something unambiguous. */
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,30}$/i;
 
-/** GET /api/databases — a user's connections, newest first, never with a secret. */
+/** GET /api/databases — a workspace's connections, newest first, never with a secret. */
 export async function index(c: Context) {
-  const connections = await databaseConnectionStore.list(userIdOf(c));
+  const connections = await databaseConnectionStore.list(await workspaceIdOf(c));
   return c.json({ connections });
 }
 
@@ -33,7 +42,7 @@ type Prepared =
   | { ok: false; status: 400 | 409 | 503; error: string }
   | { ok: true; id: string; url: string; name: string; reachable: boolean };
 
-async function prepareConnection(c: Context, userId: string): Promise<Prepared> {
+async function prepareConnection(c: Context, workspaceId: string): Promise<Prepared> {
   if (!env.connectionSecret) {
     return {
       ok: false,
@@ -60,7 +69,7 @@ async function prepareConnection(c: Context, userId: string): Promise<Prepared> 
   }
   if (!url) return { ok: false, status: 400, error: "A connection URL is required" };
 
-  if (await databaseConnectionStore.findByName(userId, name)) {
+  if (await databaseConnectionStore.findByName(workspaceId, name)) {
     return { ok: false, status: 409, error: `A connection named "${name}" already exists` };
   }
 
@@ -86,7 +95,7 @@ async function prepareConnection(c: Context, userId: string): Promise<Prepared> 
   try {
     await databaseConnectionStore.create({
       id,
-      userId,
+      workspaceId,
       name,
       url,
       displayHost,
@@ -109,8 +118,8 @@ async function prepareConnection(c: Context, userId: string): Promise<Prepared> 
 }
 
 /** Re-read a row we just wrote. A miss should be impossible; say so if it happens. */
-async function readBack(userId: string, id: string) {
-  return (await databaseConnectionStore.list(userId)).find((r) => r.id === id) ?? null;
+async function readBack(workspaceId: string, id: string) {
+  return (await databaseConnectionStore.list(workspaceId)).find((r) => r.id === id) ?? null;
 }
 
 /**
@@ -120,13 +129,13 @@ async function readBack(userId: string, id: string) {
  * user can see and fix it. Only a genuinely invalid request is rejected outright.
  */
 export async function create(c: Context) {
-  const userId = userIdOf(c);
-  const prepared = await prepareConnection(c, userId);
+  const workspaceId = await workspaceIdOf(c);
+  const prepared = await prepareConnection(c, workspaceId);
   if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status);
 
-  if (prepared.reachable) await introspectConnection(prepared.id, userId, prepared.url);
+  if (prepared.reachable) await introspectConnection(prepared.id, workspaceId, prepared.url);
 
-  const connection = await readBack(userId, prepared.id);
+  const connection = await readBack(workspaceId, prepared.id);
   if (!connection) return c.json({ error: "Connection was stored but could not be re-read" }, 500);
   return c.json({ connection }, 201);
 }
@@ -140,8 +149,8 @@ export async function create(c: Context) {
  * has to be parsed to discover it failed.
  */
 export async function createStreaming(c: Context) {
-  const userId = userIdOf(c);
-  const prepared = await prepareConnection(c, userId);
+  const workspaceId = await workspaceIdOf(c);
+  const prepared = await prepareConnection(c, workspaceId);
   if (!prepared.ok) return c.json({ error: prepared.error }, prepared.status);
 
   return streamSSE(c, async (stream) => {
@@ -150,11 +159,11 @@ export async function createStreaming(c: Context) {
     try {
       if (prepared.reachable) {
         emit({ type: "phase", phase: "connected", name: prepared.name });
-        await introspectConnection(prepared.id, userId, prepared.url, databaseConnectionStore, (p) =>
+        await introspectConnection(prepared.id, workspaceId, prepared.url, databaseConnectionStore, (p) =>
           emit({ type: "phase", ...p }),
         );
       }
-      const connection = await readBack(userId, prepared.id);
+      const connection = await readBack(workspaceId, prepared.id);
       emit({ type: "connection", connection });
     } catch (e: any) {
       // introspectConnection records its own failures, so reaching here means
@@ -169,15 +178,15 @@ export async function createStreaming(c: Context) {
 
 /** POST /api/databases/:id/refresh — re-introspect an existing connection. */
 export async function refresh(c: Context) {
-  const userId = userIdOf(c);
+  const workspaceId = await workspaceIdOf(c);
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing connection id" }, 400);
 
-  const url = await databaseConnectionStore.resolveUrl(userId, id);
+  const url = await databaseConnectionStore.resolveUrl(workspaceId, id);
   if (!url) return c.json({ error: "Connection not found" }, 404);
 
-  await introspectConnection(id, userId, url);
-  const connection = (await databaseConnectionStore.list(userId)).find((r) => r.id === id);
+  await introspectConnection(id, workspaceId, url);
+  const connection = (await databaseConnectionStore.list(workspaceId)).find((r) => r.id === id);
   return c.json({ connection });
 }
 
@@ -186,7 +195,7 @@ export async function destroy(c: Context) {
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing connection id" }, 400);
 
-  const removed = await databaseConnectionStore.remove(userIdOf(c), id);
+  const removed = await databaseConnectionStore.remove(await workspaceIdOf(c), id);
   if (!removed) return c.json({ error: "Connection not found" }, 404);
   return c.body(null, 204);
 }

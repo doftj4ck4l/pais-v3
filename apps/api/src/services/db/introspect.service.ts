@@ -130,7 +130,7 @@ const STEP_LABEL: Record<string, string> = {
  */
 export async function introspectConnection(
   connectionId: string,
-  userId: string,
+  workspaceId: string,
   url: string,
   store: DatabaseConnectionStore = databaseConnectionStore,
   onPhase?: (event: IntrospectPhase) => void,
@@ -157,7 +157,7 @@ export async function introspectConnection(
     const entries = tables.length + columnCount;
     onPhase?.({ phase: "indexing", entries });
 
-    await store.saveSnapshot(connectionId, userId, tables);
+    await store.saveSnapshot(connectionId, workspaceId, tables);
 
     const ms = Date.now() - startedAt;
     logger.info("db.introspected", { connectionId, tables: tables.length, ms });
@@ -165,7 +165,7 @@ export async function introspectConnection(
     return { ok: true, tableCount: tables.length };
   } catch (e: any) {
     const error = e?.message ?? String(e);
-    await store.markStatus(userId, connectionId, "error", error);
+    await store.markStatus(workspaceId, connectionId, "error", error);
     logger.warn("db.introspect_failed", { connectionId, step: reached, error });
     onPhase?.({ phase: "failed", step: STEP_LABEL[reached] ?? reached, error });
     return { ok: false, error };

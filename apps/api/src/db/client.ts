@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "node:path";
 import fs from "node:fs";
-import { backfill, columnsOf, SCOPED_TABLES } from "./backfill";
+import { backfill, columnsOf, dropLegacyUserId, SCOPED_TABLES } from "./backfill";
 import {
   memoryNotes,
   users,
@@ -135,7 +135,6 @@ export function applySchema(target: Database) {
       error       TEXT,
       created_at  INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_documents_user ON documents (user_id, created_at);
     CREATE TABLE IF NOT EXISTS chunks (
       id          TEXT PRIMARY KEY,
       document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -159,10 +158,6 @@ export function applySchema(target: Database) {
       last_introspected_at INTEGER,
       created_at           INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_db_connections_user ON db_connections (user_id, created_at);
-    -- The agent addresses a connection by name, so a duplicate name would make
-    -- "query the sales database" ambiguous. Rejected at the schema level.
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_db_connections_name ON db_connections (user_id, name);
     CREATE TABLE IF NOT EXISTS db_tables (
       id            TEXT PRIMARY KEY,
       connection_id TEXT NOT NULL REFERENCES db_connections(id) ON DELETE CASCADE,
@@ -243,14 +238,28 @@ export function applySchema(target: Database) {
 }
 
 /**
- * Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations),
- * then place any pre-workspace rows into a workspace.
+ * Tables whose repositories have been re-scoped and no longer read `user_id`.
  *
- * `dropLegacyUserId` is deliberately not called here yet — a table's `user_id`
- * is only retired in the same commit that stops its repository reading it, so
- * that every step of the upgrade leaves a working application behind.
+ * A table joins this list in the same commit that stops its repository reading
+ * the column, never earlier. `user_id` was `NOT NULL` on databases created
+ * before workspaces, so a table that has stopped being written with one but
+ * still has the column would reject every new row.
+ */
+const RESCOPED_TABLES = [
+  "documents",
+  "chunks",
+  "db_connections",
+  "db_tables",
+  "db_columns",
+];
+
+/**
+ * Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations),
+ * place any pre-workspace rows into a workspace, then retire the old scoping
+ * key from the tables that have finished moving over.
  */
 export function ensureSchema() {
   applySchema(sqlite);
   backfill(sqlite);
+  dropLegacyUserId(sqlite, RESCOPED_TABLES);
 }

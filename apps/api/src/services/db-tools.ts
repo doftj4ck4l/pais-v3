@@ -23,7 +23,7 @@ import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./db/p
 type Execute = typeof runReadOnly;
 
 export function createDatabaseTools(
-  userId: string,
+  workspaceId: string,
   store: DatabaseConnectionStore = databaseConnectionStore,
   execute: Execute = runReadOnly,
 ): any[] {
@@ -36,7 +36,7 @@ export function createDatabaseTools(
    */
   async function resolveConnection(name: string) {
     const trimmed = String(name ?? "").trim();
-    const connections = await store.list(userId);
+    const connections = await store.list(workspaceId);
     const known = connections.map((c) => c.name);
 
     if (!trimmed) {
@@ -59,7 +59,7 @@ export function createDatabaseTools(
    * executes SQL — ever puts a plaintext connection string in memory.
    */
   async function resolveUrl(row: { id: string; name: string }) {
-    const url = await store.resolveUrl(userId, row.id);
+    const url = await store.resolveUrl(workspaceId, row.id);
     if (!url) return { ok: false as const, message: `unknown database "${row.name}"` };
     return { ok: true as const, url };
   }
@@ -88,10 +88,10 @@ export function createDatabaseTools(
 
         const connection = params?.connection ? String(params.connection) : null;
         const limit = Math.max(1, Math.min(50, Number(params?.limit ?? 10) || 10));
-        const hits = await store.searchSchema(userId, ftsQuery, connection, limit);
+        const hits = await store.searchSchema(workspaceId, ftsQuery, connection, limit);
 
         if (!hits.length) {
-          const inv = await store.inventory(userId);
+          const inv = await store.inventory(workspaceId);
           if (!inv.length) return text("no schema is available — no databases are connected");
           return text(
             `no schema matched "${raw}". Databases: ` +
@@ -133,9 +133,9 @@ export function createDatabaseTools(
         if (!found.ok) return text(found.message);
 
         const table = String(params?.table ?? "").trim();
-        const detail = await store.describeTable(userId, found.row.name, table);
+        const detail = await store.describeTable(workspaceId, found.row.name, table);
         if (!detail) {
-          const inv = await store.inventory(userId);
+          const inv = await store.inventory(workspaceId);
           const names = inv.find((c) => c.name === found.row.name)?.tables ?? [];
           return text(
             `no table "${table}" in ${found.row.name}. ` +

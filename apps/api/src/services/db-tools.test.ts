@@ -39,7 +39,7 @@ let lastCap: number | undefined;
 let outcome: QueryOutcome;
 
 const toolsFor = () =>
-  createDatabaseTools("u1", store, async (_url, sql, cap) => {
+  createDatabaseTools("ws1", store, async (_url, sql, cap) => {
     lastSql = sql;
     lastCap = cap;
     return outcome;
@@ -54,11 +54,11 @@ beforeEach(async () => {
   applySchema(sqlite);
   store = new SqliteDatabaseConnectionStore(drizzle(sqlite) as any);
   await store.create({
-    id: "c1", userId: "u1", name: "sales",
+    id: "c1", workspaceId: "ws1", name: "sales",
     url: "postgres://reader:hunter2@db.example.com:5432/sales",
     displayHost: "db.example.com", displayDatabase: "sales",
   });
-  await store.saveSnapshot("c1", "u1", snapshot);
+  await store.saveSnapshot("c1", "ws1", snapshot);
   lastSql = null;
   lastCap = undefined;
   outcome = { ok: true, columns: ["count"], rows: [{ count: 3 }], truncated: false };
@@ -232,7 +232,7 @@ describe("describe_table with an ambiguous bare name", () => {
   beforeEach(async () => {
     // Two non-public schemas both holding a table named "orders" — the same
     // setup the repository's own tests use to exercise alternateSchemas.
-    await store.saveSnapshot("c1", "u1", [
+    await store.saveSnapshot("c1", "ws1", [
       {
         schemaName: "eu", name: "orders", comment: null, rowEstimate: 1, indexes: [],
         columns: [
