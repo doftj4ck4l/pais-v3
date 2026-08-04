@@ -125,3 +125,11 @@ export type DbConnectionRow = {
   lastIntrospectedAt: number | null
   createdAt: number
 }
+
+/** A container for one body of work: its agents, documents, databases, files. */
+export type WorkspaceRow = {
+  id: string
+  userId: string
+  name: string
+  createdAt: number
+}

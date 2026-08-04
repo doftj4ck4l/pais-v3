@@ -5,6 +5,8 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
 import { RunStats } from '@/components/run-stats'
+import { WorkspaceSwitcher } from '@/components/workspace-switcher'
+import { useWorkspace } from '@/hooks/use-workspace'
 import type { AgentRun } from '@/hooks/use-agent-board'
 import type { Meta } from '@/lib/types'
 
@@ -42,9 +44,18 @@ export function ControlDeck({
   onOpenSettings: () => void
   onToggleResources: () => void
 }) {
+  const workspace = useWorkspace()
+
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <Wordmark onOpenSettings={onOpenSettings} />
+      <WorkspaceSwitcher
+        workspaces={workspace.workspaces}
+        current={workspace.current}
+        loading={workspace.loading}
+        onSelect={workspace.setCurrent}
+        onCreate={(name) => void workspace.create(name)}
+      />
 
       <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
         <div className="mb-2 flex items-center gap-2">

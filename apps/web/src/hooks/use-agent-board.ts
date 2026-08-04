@@ -6,7 +6,7 @@ import {
   listConversations,
 } from '@/lib/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/lib/transcript'
-import { getUserId } from '@/lib/user'
+import type { Scope } from '@/lib/api'
 import type { ConversationRow, Item, Meta, Slots, TraceLine } from '@/lib/types'
 
 export type AgentStatus = 'running' | 'done' | 'stopped' | 'error'
@@ -71,7 +71,7 @@ function historyFrom(items: Item[]): { role: 'user' | 'assistant'; content: stri
  * single agent are processed sequentially, so mutating its own array is safe;
  * parallel agents touch disjoint arrays.
  */
-export function useAgentBoard() {
+export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [harnessId, setHarnessId] = useState('')
   const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
@@ -79,7 +79,6 @@ export function useAgentBoard() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [runsCompleted, setRunsCompleted] = useState(0)
 
-  const userId = useRef(getUserId()).current
   const controllersRef = useRef<Map<string, AbortController>>(new Map())
   const itemsRef = useRef<Map<string, Item[]>>(new Map())
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
@@ -129,14 +128,34 @@ export function useAgentBoard() {
       })
   }, [])
 
-  // Bring back everything this browser has run before. Guarded because React
+  // Bring back everything this workspace has run before, and do it again when
+  // the workspace changes. Keyed by id rather than a boolean because React
   // StrictMode runs effects twice in dev, which would restore each run twice.
-  const restoredRef = useRef(false)
+  const restoredForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (restoredRef.current) return
-    restoredRef.current = true
+    const workspaceId = scope.workspaceId
+    // Null until the first workspace list arrives; restoring now would ask the
+    // server for a scope it would have to guess at.
+    if (!workspaceId) return
+    if (restoredForRef.current === workspaceId) return
+    const switching = restoredForRef.current !== null
+    restoredForRef.current = workspaceId
 
-    listConversations(userId)
+    if (switching) {
+      // The previous workspace's agents are not this workspace's agents, so the
+      // board starts empty. In-flight runs are deliberately left alone: the API
+      // ties the run to the request signal, so aborting here would kill a
+      // working agent merely because the user looked at something else. Their
+      // events land on ids the board no longer holds, which is a no-op, and
+      // switching back restores them from the transcript.
+      itemsRef.current.clear()
+      traceRef.current.clear()
+      streamRefs.current.clear()
+      setAgents([])
+      setSelectedId(null)
+    }
+
+    listConversations(scope)
       .then((rows) => {
         if (!rows.length) return
         const restored = rows.map(toRestoredAgent)
@@ -152,7 +171,7 @@ export function useAgentBoard() {
       .catch(() => {
         /* nothing stored, or API down */
       })
-  }, [userId])
+  }, [scope])
 
   // Live elapsed per running agent. Skipped entirely when nothing is running.
   useEffect(() => {
@@ -303,7 +322,8 @@ export function useAgentBoard() {
           conversationId: seed.conversationId ?? undefined,
           harnessId: harnessIdRef.current,
           modelId: seed.modelId,
-          userId,
+          userId: scope.userId,
+          workspaceId: scope.workspaceId ?? undefined,
           messages: history,
         }),
         signal: controller.signal,

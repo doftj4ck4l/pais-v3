@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { deleteDocument, listDocuments, uploadDocuments } from '@/lib/api'
-import { getUserId } from '@/lib/user'
+import { useScope } from '@/hooks/use-workspace'
 import type { DocumentRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -21,14 +21,15 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const scope = useScope()
 
   const refresh = useCallback(async () => {
     try {
-      setDocs(await listDocuments(getUserId()))
+      setDocs(await listDocuments(scope))
     } catch {
       // The panel is secondary to the console; a listing failure is not fatal.
     }
-  }, [])
+  }, [scope])
 
   useEffect(() => {
     void refresh()
@@ -39,22 +40,22 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
       if (!files.length) return
       setBusy(true)
       try {
-        await uploadDocuments(getUserId(), files)
+        await uploadDocuments(scope, files)
         await refresh()
       } finally {
         setBusy(false)
       }
     },
-    [refresh],
+    [refresh, scope],
   )
 
   const remove = useCallback(
     async (id: string) => {
       setDocs((prev) => prev.filter((d) => d.id !== id)) // optimistic
-      await deleteDocument(getUserId(), id)
+      await deleteDocument(scope, id)
       await refresh()
     },
-    [refresh],
+    [refresh, scope],
   )
 
   const indexed = docs.filter((d) => d.status === 'indexed')

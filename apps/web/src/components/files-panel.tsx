@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { DownloadIcon, FileIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { listWorkspaceFiles, workspaceFileUrl } from '@/lib/api'
-import { getUserId } from '@/lib/user'
+import { useScope } from '@/hooks/use-workspace'
 import type { WorkspaceFile } from '@/lib/types'
 
 const fmtBytes = (n: number) =>
@@ -25,18 +25,18 @@ export function FilesPanel({
 }) {
   const [files, setFiles] = useState<WorkspaceFile[]>([])
   const [busy, setBusy] = useState(false)
-  const userId = getUserId()
+  const scope = useScope()
 
   const refresh = useCallback(async () => {
     setBusy(true)
     try {
-      setFiles(await listWorkspaceFiles(userId))
+      setFiles(await listWorkspaceFiles(scope))
     } catch {
       // Panel is secondary to the console; a listing failure is not fatal.
     } finally {
       setBusy(false)
     }
-  }, [userId])
+  }, [scope])
 
   useEffect(() => {
     void refresh()
@@ -68,7 +68,7 @@ export function FilesPanel({
           {files.map((file) => (
             <li key={file.path}>
               <a
-                href={workspaceFileUrl(userId, file.path)}
+                href={workspaceFileUrl(scope, file.path)}
                 download
                 className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
               >

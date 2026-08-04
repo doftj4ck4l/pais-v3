@@ -6,6 +6,7 @@ import type {
   IngestResult,
   Meta,
   WorkspaceFile,
+  WorkspaceRow,
 } from '@/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -13,14 +14,72 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
+/**
+ * Who is asking, and which body of work they are asking about.
+ *
+ * Passed as one object rather than two positional strings: both are opaque ids,
+ * so getting them the wrong way round would type-check cleanly and silently
+ * read an empty workspace. `workspaceId` may be null before the first list has
+ * arrived, in which case the server picks the user's default.
+ */
+export type Scope = { userId: string; workspaceId: string | null }
+
+const scoped = (scope: Scope, extra: Record<string, string> = {}) => {
+  const params = new URLSearchParams({ userId: scope.userId, ...extra })
+  if (scope.workspaceId) params.set('workspaceId', scope.workspaceId)
+  return params.toString()
+}
+
+/** Every workspace this user owns, oldest first. The server creates one if none exist. */
+export async function listWorkspaces(userId: string): Promise<WorkspaceRow[]> {
+  const { workspaces } = await json<{ workspaces: WorkspaceRow[] }>(
+    await fetch(`/api/workspaces?userId=${encodeURIComponent(userId)}`),
+  )
+  return workspaces
+}
+
+export async function createWorkspace(userId: string, name: string): Promise<WorkspaceRow> {
+  const { workspace } = await json<{ workspace: WorkspaceRow }>(
+    await fetch(`/api/workspaces?userId=${encodeURIComponent(userId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  )
+  return workspace
+}
+
+export async function renameWorkspace(userId: string, id: string, name: string): Promise<void> {
+  await fetch(`/api/workspaces/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+/**
+ * Remove a workspace and everything in it. The API refuses to remove the last
+ * one with a 409, which is reported rather than thrown — it is a rule, not a
+ * failure.
+ */
+export async function deleteWorkspace(userId: string, id: string): Promise<{ error?: string }> {
+  const res = await fetch(
+    `/api/workspaces/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`,
+    { method: 'DELETE' },
+  )
+  if (res.ok) return {}
+  const body = (await res.json().catch(() => ({}))) as { error?: string }
+  return { error: body.error ?? `HTTP ${res.status}` }
+}
+
 export async function fetchMeta(): Promise<Meta> {
   return json<Meta>(await fetch('/api/meta'))
 }
 
 /** Stored runs for this browser, oldest first so new agents append at the end. */
-export async function listConversations(userId: string): Promise<ConversationRow[]> {
+export async function listConversations(scope: Scope): Promise<ConversationRow[]> {
   const { conversations } = await json<{ conversations: ConversationRow[] }>(
-    await fetch(`/api/conversations?userId=${encodeURIComponent(userId)}`),
+    await fetch(`/api/conversations?${scoped(scope)}`),
   )
   return [...conversations].reverse()
 }
@@ -39,9 +98,9 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 /** Documents this browser has uploaded, newest first. */
-export async function listDocuments(userId: string): Promise<DocumentRow[]> {
+export async function listDocuments(scope: Scope): Promise<DocumentRow[]> {
   const { documents } = await json<{ documents: DocumentRow[] }>(
-    await fetch(`/api/documents?userId=${encodeURIComponent(userId)}`),
+    await fetch(`/api/documents?${scoped(scope)}`),
   )
   return documents
 }
@@ -50,39 +109,37 @@ export async function listDocuments(userId: string): Promise<DocumentRow[]> {
  * Upload files for indexing. Resolves with one result per file: a PDF that
  * cannot be indexed is reported, not thrown, so the rest of the batch survives.
  */
-export async function uploadDocuments(userId: string, files: File[]): Promise<IngestResult[]> {
+export async function uploadDocuments(scope: Scope, files: File[]): Promise<IngestResult[]> {
   const body = new FormData()
   for (const file of files) body.append('files', file)
   const { results } = await json<{ results: IngestResult[] }>(
-    await fetch(`/api/documents?userId=${encodeURIComponent(userId)}`, { method: 'POST', body }),
+    await fetch(`/api/documents?${scoped(scope)}`, { method: 'POST', body }),
   )
   return results
 }
 
-export async function deleteDocument(userId: string, id: string): Promise<void> {
-  await fetch(`/api/documents/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
-    method: 'DELETE',
-  })
+export async function deleteDocument(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
-/** Files the agent has produced in this user's sandbox workspace. */
-export async function listWorkspaceFiles(userId: string): Promise<WorkspaceFile[]> {
+/** Files the agent has produced in this workspace's sandbox directory. */
+export async function listWorkspaceFiles(scope: Scope): Promise<WorkspaceFile[]> {
   const { files } = await json<{ files: WorkspaceFile[] }>(
-    await fetch(`/api/workspace/files?userId=${encodeURIComponent(userId)}`),
+    await fetch(`/api/workspace/files?${scoped(scope)}`),
   )
   return files
 }
 
 /** Download URL for one workspace file. Served as an attachment by the API. */
-export function workspaceFileUrl(userId: string, filePath: string): string {
+export function workspaceFileUrl(scope: Scope, filePath: string): string {
   const encoded = filePath.split('/').map(encodeURIComponent).join('/')
-  return `/api/workspace/files/${encoded}?userId=${encodeURIComponent(userId)}`
+  return `/api/workspace/files/${encoded}?${scoped(scope)}`
 }
 
 /** Read-only Postgres connections this browser has added. */
-export async function listConnections(userId: string): Promise<DbConnectionRow[]> {
+export async function listConnections(scope: Scope): Promise<DbConnectionRow[]> {
   const { connections } = await json<{ connections: DbConnectionRow[] }>(
-    await fetch(`/api/databases?userId=${encodeURIComponent(userId)}`),
+    await fetch(`/api/databases?${scoped(scope)}`),
   )
   return connections
 }
@@ -94,11 +151,11 @@ export async function listConnections(userId: string): Promise<DbConnectionRow[]
  * a bad name, a missing url, a duplicate name, or a missing server config.
  */
 export async function addConnection(
-  userId: string,
+  scope: Scope,
   name: string,
   url: string,
 ): Promise<{ connection?: DbConnectionRow; error?: string }> {
-  const res = await fetch(`/api/databases?userId=${encodeURIComponent(userId)}`, {
+  const res = await fetch(`/api/databases?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, url }),
@@ -124,12 +181,12 @@ export type AttachPhase =
  * only read once the server has committed to doing work.
  */
 export async function addConnectionStreaming(
-  userId: string,
+  scope: Scope,
   name: string,
   url: string,
   onPhase: (p: AttachPhase) => void,
 ): Promise<{ connection?: DbConnectionRow; error?: string }> {
-  const res = await fetch(`/api/databases/stream?userId=${encodeURIComponent(userId)}`, {
+  const res = await fetch(`/api/databases/stream?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name, url }),
@@ -175,15 +232,12 @@ export async function addConnectionStreaming(
   return connection ? { connection } : { error: 'The attach ended without a result' }
 }
 
-export async function refreshConnection(userId: string, id: string): Promise<void> {
-  await fetch(
-    `/api/databases/${encodeURIComponent(id)}/refresh?userId=${encodeURIComponent(userId)}`,
-    { method: 'POST' },
-  )
+export async function refreshConnection(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/databases/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, {
+    method: 'POST',
+  })
 }
 
-export async function deleteConnection(userId: string, id: string): Promise<void> {
-  await fetch(`/api/databases/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
-    method: 'DELETE',
-  })
+export async function deleteConnection(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }

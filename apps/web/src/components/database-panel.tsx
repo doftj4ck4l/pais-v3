@@ -10,7 +10,7 @@ import {
   refreshConnection,
   type AttachPhase,
 } from '@/lib/api'
-import { getUserId } from '@/lib/user'
+import { useScope } from '@/hooks/use-workspace'
 import type { DbConnectionRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -31,14 +31,15 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
   const [error, setError] = useState<string | null>(null)
   useEffect(() => onCountChange?.(connections.length), [connections.length, onCountChange])
   const [steps, setSteps] = useState<AttachPhase[]>([])
+  const scope = useScope()
 
   const refresh = useCallback(async () => {
     try {
-      setConnections(await listConnections(getUserId()))
+      setConnections(await listConnections(scope))
     } catch {
       // Secondary to the console; a listing failure is not fatal.
     }
-  }, [])
+  }, [scope])
 
   useEffect(() => {
     void refresh()
@@ -50,7 +51,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
     setError(null)
     setSteps([])
     try {
-      const out = await addConnectionStreaming(getUserId(), name.trim(), url.trim(), (p) =>
+      const out = await addConnectionStreaming(scope, name.trim(), url.trim(), (p) =>
         setSteps((prev) => [...prev, p]),
       )
       if (out.error) {
@@ -76,7 +77,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
       // — the log survives until the next attach or an explicit cancel, leaving
       // a record of what just happened above the row it produced.
     }
-  }, [name, url, refresh])
+  }, [name, url, refresh, scope])
 
   const connected = connections.filter((c) => c.status === 'connected')
   const tableTotal = connected.reduce((n, c) => n + c.tableCount, 0)
@@ -167,7 +168,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
               onRefresh={async () => {
                 setBusy(true)
                 try {
-                  await refreshConnection(getUserId(), c.id)
+                  await refreshConnection(scope, c.id)
                   await refresh()
                 } finally {
                   setBusy(false)
@@ -175,7 +176,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
               }}
               onRemove={async () => {
                 setConnections((prev) => prev.filter((x) => x.id !== c.id)) // optimistic
-                await deleteConnection(getUserId(), c.id)
+                await deleteConnection(scope, c.id)
                 await refresh()
               }}
             />
