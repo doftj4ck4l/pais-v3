@@ -167,8 +167,8 @@ export default function App() {
           />
         </div>
 
-        {panel.open ? (
-          <aside className="hidden w-72 shrink-0 border-l xl:block">{resources}</aside>
+        {panel.isWide && panel.open ? (
+          <aside className="w-72 shrink-0 border-l">{resources}</aside>
         ) : null}
       </div>
 
@@ -179,14 +179,17 @@ export default function App() {
         </SheetContent>
       </Sheet>
 
-      {/* Under xl the third column would leave no room to read, so the same
-          panel opens as a sheet instead. */}
-      <Sheet open={panel.open} onOpenChange={panel.setOpen}>
-        <SheetContent side="right" className="w-80 gap-0 p-0 sm:max-w-80 xl:hidden">
-          <SheetTitle className="sr-only">Documents, databases and files</SheetTitle>
-          {resources}
-        </SheetContent>
-      </Sheet>
+      {/* Narrow only. A Sheet portals its own backdrop, so mounting it
+          alongside the inline column would dim the page behind that column —
+          hiding just its content with a CSS class is not enough. */}
+      {!panel.isWide ? (
+        <Sheet open={panel.open} onOpenChange={panel.setOpen}>
+          <SheetContent side="right" className="w-80 gap-0 p-0 sm:max-w-80">
+            <SheetTitle className="sr-only">Documents, databases and files</SheetTitle>
+            {resources}
+          </SheetContent>
+        </Sheet>
+      ) : null}
 
       <SettingsModal
         open={settingsOpen}
