@@ -38,11 +38,15 @@ if (!reached.ok) process.exit(1);
 const catalog = await fetchCatalog(url);
 const snapshot = buildSnapshot(catalog);
 check("introspects", snapshot.length > 0, `${snapshot.length} tables`);
+// A schema with zero foreign keys would make this pass vacuously no matter
+// what buildSnapshot does with them, so the check first demands the seed
+// schema actually has some to exercise — "cannot verify" beats a false ok.
 check(
   "captures foreign keys",
-  catalog.foreignKeys.length === 0 ||
-    snapshot.some((t) => t.columns.some((c) => c.fkTable !== null)),
-  `${catalog.foreignKeys.length} in catalog`,
+  catalog.foreignKeys.length > 0 && snapshot.some((t) => t.columns.some((c) => c.fkTable !== null)),
+  catalog.foreignKeys.length === 0
+    ? "the target database has no foreign keys — this check cannot verify anything against it, seed a schema with at least one FK"
+    : `${catalog.foreignKeys.length} in catalog`,
 );
 check(
   "captures table and column comments",
@@ -73,11 +77,27 @@ check(
   trailingComment.ok ? "" : trailingComment.error,
 );
 
+// Match on the guard's own distinctive wording, not merely `!ok`. If the
+// guard regressed completely, runReadOnly would still fail at the transaction
+// layer below and this check would keep passing with layer 2 fully broken —
+// the point here is to prove the guard itself fired, before the statement
+// ever reached the server.
+const GUARD_REJECTION = /only SELECT, WITH, and EXPLAIN are permitted|this connection is read-only/i;
 const blocked = await runReadOnly(url, "CREATE TABLE salurai_should_not_exist (id int)");
-check("guard rejects a write", !blocked.ok, blocked.ok ? "" : blocked.error);
+check(
+  "guard rejects a write",
+  !blocked.ok && GUARD_REJECTION.test(blocked.error),
+  blocked.ok ? "query succeeded — guard did not fire at all" : blocked.error,
+);
 
 // The guard is bypassed here on purpose: this is the only assertion that tests
-// the transaction layer rather than the string check in front of it.
+// the transaction layer rather than the string check in front of it, so it is
+// the single most important line in this script. A bare `catch` firing proves
+// nothing — closing the connection right after BEGIN, a typo'd table name, a
+// permissions error, or a network blip would all throw too and print `ok` for
+// the wrong reason. Only PostgreSQL's own read-only-transaction rejection
+// counts.
+const READ_ONLY_REJECTION = /read-only transaction/i;
 const sql = new Bun.SQL({ url, max: 1 });
 let engineBlocked = false;
 let engineDetail = "";
@@ -85,8 +105,8 @@ try {
   await sql.unsafe("BEGIN TRANSACTION READ ONLY");
   await sql.unsafe("CREATE TABLE salurai_should_not_exist (id int)");
 } catch (e: any) {
-  engineBlocked = true;
   engineDetail = e?.message ?? String(e);
+  engineBlocked = READ_ONLY_REJECTION.test(engineDetail);
 } finally {
   await sql.unsafe("ROLLBACK").catch(() => {});
   await sql.close().catch(() => {});
@@ -94,9 +114,11 @@ try {
 check("READ ONLY transaction rejects a write with the guard bypassed", engineBlocked, engineDetail);
 if (!engineBlocked) {
   console.error(
-    "\nBLOCKED: the READ ONLY transaction did not reject a write. This is the " +
+    "\nBLOCKED: the READ ONLY transaction did not reject a write with a " +
+      `read-only-transaction error (got: ${engineDetail || "no error at all"}). This is the ` +
       "primary defence — no amount of guard testing compensates for it being " +
-      "broken. Stopping here.",
+      "broken, and an unrelated error means this check did not run, which is " +
+      "not the same as passing. Stopping here.",
   );
   process.exit(1);
 }
@@ -127,8 +149,19 @@ check(
   `pid ${pidAtStart} -> ${pidAtEnd}`,
 );
 
+// `idleTimeout` and `statement_timeout` are both ~10s-scale settings that race
+// on a slow query, so `!timeout.ok` alone cannot tell you which layer
+// actually cancelled it. Only the server's own "statement timeout" wording
+// proves `SET LOCAL statement_timeout` is the thing enforcing the budget —
+// `client()` widens `idleTimeout` well past it specifically so this check
+// exercises the server-side bound deterministically rather than racing it.
+const STATEMENT_TIMEOUT_REJECTION = /statement timeout/i;
 const timeout = await runReadOnly(url, "SELECT pg_sleep(30)");
-check("cancels a slow statement", !timeout.ok, timeout.ok ? "" : timeout.error);
+check(
+  "cancels a slow statement via statement_timeout",
+  !timeout.ok && STATEMENT_TIMEOUT_REJECTION.test(timeout.error),
+  timeout.ok ? "query succeeded — nothing cancelled it" : timeout.error,
+);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

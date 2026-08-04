@@ -41,9 +41,16 @@ export type QueryOutcome =
  * `max: 1` is load-bearing everywhere below: `runReadOnly` issues BEGIN, the
  * query, and ROLLBACK as separate statements, which are only guaranteed to land
  * on the same backend when the pool holds exactly one connection.
+ *
+ * `idleTimeout` must stay comfortably above `STATEMENT_TIMEOUT_MS`, not equal
+ * to it: the two are a race, and the server's `statement_timeout` has to win
+ * it deterministically. It is the layer that also bounds a query the client
+ * would otherwise happily wait on — a client-side idle timeout firing first
+ * would cut the connection without ever proving the server-side budget works,
+ * and on a slow or congested network the race could go either way run to run.
  */
 function client(url: string): any {
-  return new Bun.SQL({ url, max: 1, idleTimeout: 10, connectionTimeout: 10 });
+  return new Bun.SQL({ url, max: 1, idleTimeout: 30, connectionTimeout: 10 });
 }
 
 /**
