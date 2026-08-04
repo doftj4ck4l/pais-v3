@@ -201,3 +201,115 @@ export type ChunkRow = {
   page: number;
   text: string;
 };
+
+// ---- context layer: connected databases and their schema snapshot ----
+
+/** Whether the last introspection of a connection succeeded. */
+export type DbConnectionStatus = "connected" | "error";
+
+/**
+ * One database a user has connected. `secret` holds the encrypted connection
+ * string and is never selected into anything that reaches the client or the
+ * model — `displayHost` / `displayDatabase` exist so the UI can identify a
+ * connection without it.
+ */
+export const dbConnections = sqliteTable(
+  "db_connections",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(), // how the agent refers to it
+    engine: text("engine").notNull().default("postgres"),
+    secret: text("secret").notNull(),
+    displayHost: text("display_host").notNull(),
+    displayDatabase: text("display_database").notNull(),
+    status: text("status").$type<DbConnectionStatus>().notNull().default("connected"),
+    error: text("error"),
+    tableCount: integer("table_count").notNull().default(0),
+    lastIntrospectedAt: integer("last_introspected_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_db_connections_user").on(t.userId, t.createdAt)],
+);
+export type DbConnectionRow = {
+  id: string;
+  userId: string;
+  name: string;
+  engine: string;
+  status: DbConnectionStatus;
+  error: string | null;
+  displayHost: string;
+  displayDatabase: string;
+  tableCount: number;
+  lastIntrospectedAt: number | null;
+  createdAt: number;
+};
+
+/** One table (or view) in a connection's snapshot. */
+export const dbTables = sqliteTable(
+  "db_tables",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => dbConnections.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    schemaName: text("schema_name").notNull(),
+    name: text("name").notNull(),
+    comment: text("comment"),
+    rowEstimate: integer("row_estimate").notNull().default(0),
+    columnCount: integer("column_count").notNull().default(0),
+    // JSON array of index definitions. Stored whole rather than in its own table
+    // because nothing searches or joins them — they are read back as a hint that
+    // a filter is cheap.
+    indexes: text("indexes"),
+  },
+  (t) => [index("idx_db_tables_connection").on(t.connectionId, t.schemaName, t.name)],
+);
+export type DbTableRow = {
+  id: string;
+  connectionId: string;
+  userId: string;
+  schemaName: string;
+  name: string;
+  comment: string | null;
+  rowEstimate: number;
+  columnCount: number;
+  indexes: string | null;
+};
+
+/** One column, with the foreign key that makes a correct join possible. */
+export const dbColumns = sqliteTable(
+  "db_columns",
+  {
+    id: text("id").primaryKey(),
+    tableId: text("table_id")
+      .notNull()
+      .references(() => dbTables.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").notNull(),
+    userId: text("user_id").notNull(),
+    seq: integer("seq").notNull(),
+    name: text("name").notNull(),
+    dataType: text("data_type").notNull(),
+    nullable: integer("nullable").notNull(), // 0 | 1
+    isPrimaryKey: integer("is_primary_key").notNull(), // 0 | 1
+    fkTable: text("fk_table"), // "schema.table"
+    fkColumn: text("fk_column"),
+    comment: text("comment"),
+  },
+  (t) => [index("idx_db_columns_table").on(t.tableId, t.seq)],
+);
+export type DbColumnRow = {
+  id: string;
+  tableId: string;
+  connectionId: string;
+  userId: string;
+  seq: number;
+  name: string;
+  dataType: string;
+  nullable: number;
+  isPrimaryKey: number;
+  fkTable: string | null;
+  fkColumn: string | null;
+  comment: string | null;
+};
