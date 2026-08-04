@@ -58,8 +58,15 @@ function client(url: string): any {
  * - A malformed URL can still carry credentials verbatim in its text (it
  *   just doesn't parse). Falling back to silence would leak them, so the
  *   catch branch strips any userinfo-shaped segment instead.
+ *
+ * Exported (not just used internally) so `db-tools.ts` can apply it again to
+ * `outcome.error` before rendering: `runReadOnly`'s own callers are expected
+ * to pass already-scrubbed errors, but the tool layer sits directly in front
+ * of the model and "the model must never see a connection string" cannot
+ * depend on every current and future executor implementation getting this
+ * right upstream.
  */
-function scrub(message: string, url: string): string {
+export function scrub(message: string, url: string): string {
   let out = message;
   try {
     const parsed = new URL(url);

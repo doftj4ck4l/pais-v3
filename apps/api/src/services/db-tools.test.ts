@@ -11,9 +11,14 @@ import { createDatabaseTools } from "./db-tools";
 /**
  * Exercises the three agent-facing database tools against a real SQLite-backed
  * store (schema/search metadata only — never a live Postgres) with `execute`
- * stubbed out. This is what proves, independent of the repository's own tests,
- * that a tool result never contains a raw connection string and that
- * `describe_table` truly never runs SQL.
+ * stubbed out. This proves, independent of the repository's own tests, that:
+ * `describe_table` truly never calls the executor; a tool result never
+ * contains the fixture connection's password, whether that password could
+ * only reach the output through unscrubbed driver error text (executor path)
+ * or through the store's own connection metadata (list/describe/search
+ * paths); `run_query`'s row cap is always clamped into [1, ROW_CAP] no matter
+ * what `limit` the agent passes; and `format()` never renders a real SQL NULL
+ * the same way it renders the literal string "NULL".
  */
 
 (env as { connectionSecret: string }).connectionSecret = "test-secret";
@@ -30,11 +35,13 @@ const snapshot: SnapshotTable[] = [
 
 let store: SqliteDatabaseConnectionStore;
 let lastSql: string | null;
+let lastCap: number | undefined;
 let outcome: QueryOutcome;
 
 const toolsFor = () =>
-  createDatabaseTools("u1", store, async (_url, sql) => {
+  createDatabaseTools("u1", store, async (_url, sql, cap) => {
     lastSql = sql;
+    lastCap = cap;
     return outcome;
   });
 
@@ -53,6 +60,7 @@ beforeEach(async () => {
   });
   await store.saveSnapshot("c1", "u1", snapshot);
   lastSql = null;
+  lastCap = undefined;
   outcome = { ok: true, columns: ["count"], rows: [{ count: 3 }], truncated: false };
 });
 
@@ -123,12 +131,32 @@ describe("createDatabaseTools", () => {
     expect(out.toLowerCase()).toContain("no rows");
   });
 
-  it("never leaks the connection string into a tool result", async () => {
-    outcome = { ok: false, error: "connection refused" };
+  it("never leaks the connection string into a tool result, even when the driver's own error text contains it", async () => {
+    // The error message here deliberately contains the fixture's password.
+    // A tool that interpolated driver error text verbatim (e.g. an
+    // implementation that logged/echoed the failing DSN on connection
+    // failure) would leak it right here — this is what makes the assertion
+    // below meaningful rather than vacuously true.
+    outcome = {
+      ok: false,
+      error: "connection to postgres://reader:hunter2@db.example.com:5432/sales failed",
+    };
     for (const t of toolsFor()) {
       const out = textOf(await t.execute("1", { connection: "sales", table: "orders", query: "orders", sql: "SELECT 1" }));
       expect(out).not.toContain("hunter2");
     }
+  });
+
+  it("never leaks the connection string on a successful describe_table or search_schema result", async () => {
+    // describe_table and search_schema never call the executor at all — any
+    // leak on their path would have to come from store.list()/resolve()
+    // metadata, not from driver error text, so this is a distinct code path
+    // from the executor-error case above.
+    const describeOut = textOf(await tool("describe_table").execute("1", { connection: "sales", table: "orders" }));
+    expect(describeOut).not.toContain("hunter2");
+
+    const searchOut = textOf(await tool("search_schema").execute("1", { query: "orders" }));
+    expect(searchOut).not.toContain("hunter2");
   });
 });
 
@@ -164,5 +192,78 @@ describe("describe_table with an ambiguous bare name", () => {
   it("omits the ambiguity warning once the name is schema-qualified", async () => {
     const out = textOf(await tool("describe_table").execute("1", { connection: "sales", table: "us.orders" }));
     expect(out.toLowerCase()).not.toContain("ambiguous");
+  });
+});
+
+describe("run_query cap forwarding", () => {
+  // `limit` may only ever LOWER the cap, never raise it — the forwarded cap
+  // must always land in [1, ROW_CAP]. `limit: 0` intentionally falls back to
+  // the max rather than meaning "zero rows" (deferred, not a bug being fixed
+  // here); documented here so the actual clamping behavior stays under test.
+  const cases: { label: string; limit: unknown; expected: number }[] = [
+    { label: "omitted", limit: undefined, expected: 100 },
+    { label: "1000 (above cap)", limit: 1000, expected: 100 },
+    { label: "0", limit: 0, expected: 100 },
+    { label: "-5", limit: -5, expected: 1 },
+    { label: "NaN", limit: NaN, expected: 100 },
+    { label: '"20" (numeric string)', limit: "20", expected: 20 },
+  ];
+
+  for (const { label, limit, expected } of cases) {
+    it(`forwards cap=${expected} when limit is ${label}`, async () => {
+      const params: any = { connection: "sales", sql: "SELECT count(*) FROM orders" };
+      if (limit !== undefined) params.limit = limit;
+      await tool("run_query").execute("1", params);
+      expect(lastCap).toBe(expected);
+      expect(lastCap!).toBeGreaterThanOrEqual(1);
+      expect(lastCap!).toBeLessThanOrEqual(100);
+    });
+  }
+});
+
+describe("run_query row rendering disambiguates NULL", () => {
+  it("renders an actual SQL null as the bare word NULL", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: null }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain("\nNULL");
+  });
+
+  it("quotes a string value that is literally the text NULL, so it reads differently from a real null", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: "NULL" }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain('"NULL"');
+    expect(out).not.toMatch(/\nNULL(?!\S)/); // not the bare-word form
+  });
+
+  it("quotes a lowercase 'null' string the same way, since the collision is case-insensitive", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: "null" }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain('"null"');
+  });
+
+  it("leaves an ordinary string unquoted", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: "hello" }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain("\nhello");
+    expect(out).not.toContain('"hello"');
+  });
+
+  it("renders a Date as an ISO string", async () => {
+    const d = new Date("2024-01-15T00:00:00.000Z");
+    outcome = { ok: true, columns: ["v"], rows: [{ v: d }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain("2024-01-15T00:00:00.000Z");
+  });
+
+  it("renders a nested object as JSON", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: { a: 1 } }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain('{"a":1}');
+  });
+
+  it("renders undefined the same as null", async () => {
+    outcome = { ok: true, columns: ["v"], rows: [{ v: undefined }], truncated: false };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT v" }));
+    expect(out).toContain("\nNULL");
   });
 });

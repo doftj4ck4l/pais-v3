@@ -4,7 +4,7 @@ import {
   type TableDetail,
 } from "../repositories/database-connection.repository";
 import { toFtsQuery } from "./search.service";
-import { ROW_CAP, runReadOnly, type QueryOutcome } from "./db/postgres.driver";
+import { ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./db/postgres.driver";
 
 /**
  * The agent's three database tools, bound to one user's connections.
@@ -157,7 +157,13 @@ export function createDatabaseTools(
 
         const cap = Math.max(1, Math.min(ROW_CAP, Number(params?.limit ?? ROW_CAP) || ROW_CAP));
         const outcome = await execute(found.url, statement, cap);
-        return text(renderOutcome(outcome, cap));
+        // `runReadOnly` already scrubs its own errors, but this is the last
+        // point before the text reaches the model — scrub again defensively
+        // rather than trust every executor implementation to have done it.
+        const safe: QueryOutcome = outcome.ok
+          ? outcome
+          : { ok: false, error: scrub(outcome.error, found.url) };
+        return text(renderOutcome(safe, cap));
       },
     },
   ];
@@ -221,7 +227,14 @@ function format(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  // A real SQL NULL renders as the bare word NULL above. A string value that
+  // happens to *be* the text "NULL" (any case) would otherwise render
+  // identically and be indistinguishable to the agent, so only that
+  // collision case gets quoted — every other string stays unquoted and
+  // readable.
+  const str = String(value);
+  if (str.toUpperCase() === "NULL") return `"${str}"`;
+  return str;
 }
 
 function text(out: string) {
