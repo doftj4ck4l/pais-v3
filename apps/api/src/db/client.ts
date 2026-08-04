@@ -2,9 +2,11 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "node:path";
 import fs from "node:fs";
+import { backfill, columnsOf, SCOPED_TABLES } from "./backfill";
 import {
   memoryNotes,
   users,
+  workspaces,
   conversations,
   messages,
   traces,
@@ -24,6 +26,7 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 export {
   memoryNotes,
   users,
+  workspaces,
   conversations,
   messages,
   traces,
@@ -35,6 +38,7 @@ export {
   dbColumns,
 };
 export type {
+  WorkspaceRow,
   SandboxRow,
   MemoryNoteRow,
   ConversationRow,
@@ -67,9 +71,16 @@ export function applySchema(target: Database) {
       id         TEXT PRIMARY KEY,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id         TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspaces_user ON workspaces (user_id, created_at);
     CREATE TABLE IF NOT EXISTS conversations (
       id          TEXT PRIMARY KEY,
-      user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id     TEXT REFERENCES users(id) ON DELETE CASCADE,
       title       TEXT NOT NULL,
       model_id    TEXT NOT NULL,
       harness_id  TEXT NOT NULL,
@@ -97,7 +108,7 @@ export function applySchema(target: Database) {
     CREATE INDEX IF NOT EXISTS idx_traces_conversation ON traces (conversation_id, ts);
     CREATE TABLE IF NOT EXISTS memory_notes (
       id       TEXT PRIMARY KEY,
-      user_id  TEXT NOT NULL,
+      user_id  TEXT,
       ts       INTEGER NOT NULL,
       content  TEXT NOT NULL,
       tags     TEXT,
@@ -115,7 +126,7 @@ export function applySchema(target: Database) {
     CREATE INDEX IF NOT EXISTS idx_sandboxes_last_used ON sandboxes (last_used_at);
     CREATE TABLE IF NOT EXISTS documents (
       id          TEXT PRIMARY KEY,
-      user_id     TEXT NOT NULL,
+      user_id     TEXT,
       title       TEXT NOT NULL,
       bytes       INTEGER NOT NULL,
       pages       INTEGER NOT NULL,
@@ -128,7 +139,7 @@ export function applySchema(target: Database) {
     CREATE TABLE IF NOT EXISTS chunks (
       id          TEXT PRIMARY KEY,
       document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-      user_id     TEXT NOT NULL,
+      user_id     TEXT,
       seq         INTEGER NOT NULL,
       page        INTEGER NOT NULL,
       text        TEXT NOT NULL
@@ -136,7 +147,7 @@ export function applySchema(target: Database) {
     CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id, seq);
     CREATE TABLE IF NOT EXISTS db_connections (
       id                   TEXT PRIMARY KEY,
-      user_id              TEXT NOT NULL,
+      user_id              TEXT,
       name                 TEXT NOT NULL,
       engine               TEXT NOT NULL DEFAULT 'postgres',
       secret               TEXT NOT NULL,
@@ -155,7 +166,7 @@ export function applySchema(target: Database) {
     CREATE TABLE IF NOT EXISTS db_tables (
       id            TEXT PRIMARY KEY,
       connection_id TEXT NOT NULL REFERENCES db_connections(id) ON DELETE CASCADE,
-      user_id       TEXT NOT NULL,
+      user_id       TEXT,
       schema_name   TEXT NOT NULL,
       name          TEXT NOT NULL,
       comment       TEXT,
@@ -168,7 +179,7 @@ export function applySchema(target: Database) {
       id             TEXT PRIMARY KEY,
       table_id       TEXT NOT NULL REFERENCES db_tables(id) ON DELETE CASCADE,
       connection_id  TEXT NOT NULL,
-      user_id        TEXT NOT NULL,
+      user_id        TEXT,
       seq            INTEGER NOT NULL,
       name           TEXT NOT NULL,
       data_type      TEXT NOT NULL,
@@ -179,6 +190,31 @@ export function applySchema(target: Database) {
       comment        TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_db_columns_table ON db_columns (table_id, seq);
+  `);
+
+  // Databases created before workspaces have none of the columns above, and
+  // ALTER TABLE has no IF NOT EXISTS in SQLite — so each one is added only when
+  // the table is missing it. Nullable throughout: a row's workspace is unknown
+  // until `backfill` places it.
+  for (const table of SCOPED_TABLES) {
+    if (!columnsOf(target, table).includes("workspace_id")) {
+      target.exec(`ALTER TABLE ${table} ADD COLUMN workspace_id TEXT`);
+    }
+  }
+  target.exec(`
+    CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations (workspace_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_documents_workspace     ON documents (workspace_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chunks_workspace        ON chunks (workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_db_connections_workspace ON db_connections (workspace_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_db_tables_workspace     ON db_tables (workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_db_columns_workspace    ON db_columns (workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_workspace_ts     ON memory_notes (workspace_id, ts);
+    CREATE INDEX IF NOT EXISTS idx_sandboxes_workspace     ON sandboxes (workspace_id);
+    -- The agent addresses a connection by name, so a duplicate name inside one
+    -- workspace would make "query the sales database" ambiguous. Two separate
+    -- workspaces may each have a connection called prod — that is the point.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_db_connections_workspace_name
+      ON db_connections (workspace_id, name);
   `);
 
   // FTS5 is a virtual table, which Drizzle cannot express — raw DDL only.
@@ -206,7 +242,15 @@ export function applySchema(target: Database) {
   `);
 }
 
-/** Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations). */
+/**
+ * Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations),
+ * then place any pre-workspace rows into a workspace.
+ *
+ * `dropLegacyUserId` is deliberately not called here yet — a table's `user_id`
+ * is only retired in the same commit that stops its repository reading it, so
+ * that every step of the upgrade leaves a working application behind.
+ */
 export function ensureSchema() {
   applySchema(sqlite);
+  backfill(sqlite);
 }

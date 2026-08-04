@@ -5,11 +5,35 @@ import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
  * Bun runtime and drizzle-kit (Node) can load it.
  */
 
-// A single app user. Owns many conversations.
+// A single app user. Owns many workspaces.
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   createdAt: integer("created_at").notNull(), // epoch ms
 });
+
+/**
+ * A container for one body of work: its agents, documents, databases and files.
+ *
+ * This is the scoping key for everything below. `user_id` lives here and only
+ * here — it is the ownership root, and every other table reaches a user by way
+ * of its workspace rather than carrying its own copy.
+ */
+export const workspaces = sqliteTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_workspaces_user").on(t.userId, t.createdAt)],
+);
+export type WorkspaceRow = {
+  id: string;
+  userId: string;
+  name: string;
+  createdAt: number;
+};
 
 /**
  * How a run ended. `running` is the state while it is in flight; a row left at
@@ -23,9 +47,8 @@ export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id"),
     title: text("title").notNull(), // the agent's task / first prompt
     modelId: text("model_id").notNull(),
     harnessId: text("harness_id").notNull(),
@@ -33,11 +56,15 @@ export const conversations = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("idx_conversations_user").on(t.userId, t.createdAt)],
+  (t) => [
+    index("idx_conversations_user").on(t.userId, t.createdAt),
+    index("idx_conversations_workspace").on(t.workspaceId, t.createdAt),
+  ],
 );
 export type ConversationRow = {
   id: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   title: string;
   modelId: string;
   harnessId: string;
@@ -94,18 +121,24 @@ export type TraceRow = {
 };
 
 // ---- memory (existing) ----
-export const memoryNotes = sqliteTable("memory_notes", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  ts: integer("ts").notNull(), // epoch ms
-  content: text("content").notNull(),
-  tags: text("tags"), // newline-separated, or NULL
-  source: text("source"), // user / conversation / agent
-});
+export const memoryNotes = sqliteTable(
+  "memory_notes",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id"),
+    workspaceId: text("workspace_id"),
+    ts: integer("ts").notNull(), // epoch ms
+    content: text("content").notNull(),
+    tags: text("tags"), // newline-separated, or NULL
+    source: text("source"), // user / conversation / agent
+  },
+  (t) => [index("idx_memory_workspace_ts").on(t.workspaceId, t.ts)],
+);
 
 export type MemoryNoteRow = {
   id: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   ts: number;
   content: string;
   tags: string | null;
@@ -117,6 +150,7 @@ export const sandboxes = sqliteTable(
   "sandboxes",
   {
     userId: text("user_id").primaryKey(),
+    workspaceId: text("workspace_id"),
     // Null when the container has been reaped. Normal, not an error state.
     containerId: text("container_id"),
     workspacePath: text("workspace_path").notNull(),
@@ -129,6 +163,7 @@ export const sandboxes = sqliteTable(
 
 export type SandboxRow = {
   userId: string;
+  workspaceId: string | null;
   containerId: string | null;
   workspacePath: string;
   image: string;
@@ -150,7 +185,8 @@ export const documents = sqliteTable(
   "documents",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id").notNull(),
+    userId: text("user_id"),
+    workspaceId: text("workspace_id"),
     title: text("title").notNull(), // original filename
     bytes: integer("bytes").notNull(),
     pages: integer("pages").notNull(),
@@ -159,11 +195,15 @@ export const documents = sqliteTable(
     error: text("error"), // why status is `empty` or `error`, for the UI
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_documents_user").on(t.userId, t.createdAt)],
+  (t) => [
+    index("idx_documents_user").on(t.userId, t.createdAt),
+    index("idx_documents_workspace").on(t.workspaceId, t.createdAt),
+  ],
 );
 export type DocumentRow = {
   id: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   title: string;
   bytes: number;
   pages: number;
@@ -186,17 +226,23 @@ export const chunks = sqliteTable(
     documentId: text("document_id")
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
-    userId: text("user_id").notNull(), // denormalised so search filters without a join
+    userId: text("user_id"),
+    // denormalised so search filters without a join
+    workspaceId: text("workspace_id"),
     seq: integer("seq").notNull(), // order within the document
     page: integer("page").notNull(), // 1-based, for citations
     text: text("text").notNull(),
   },
-  (t) => [index("idx_chunks_document").on(t.documentId, t.seq)],
+  (t) => [
+    index("idx_chunks_document").on(t.documentId, t.seq),
+    index("idx_chunks_workspace").on(t.workspaceId),
+  ],
 );
 export type ChunkRow = {
   id: string;
   documentId: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   seq: number;
   page: number;
   text: string;
@@ -217,7 +263,8 @@ export const dbConnections = sqliteTable(
   "db_connections",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id").notNull(),
+    userId: text("user_id"),
+    workspaceId: text("workspace_id"),
     name: text("name").notNull(), // how the agent refers to it
     engine: text("engine").notNull().default("postgres"),
     secret: text("secret").notNull(),
@@ -229,11 +276,15 @@ export const dbConnections = sqliteTable(
     lastIntrospectedAt: integer("last_introspected_at"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_db_connections_user").on(t.userId, t.createdAt)],
+  (t) => [
+    index("idx_db_connections_user").on(t.userId, t.createdAt),
+    index("idx_db_connections_workspace").on(t.workspaceId, t.createdAt),
+  ],
 );
 export type DbConnectionRow = {
   id: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   name: string;
   engine: string;
   status: DbConnectionStatus;
@@ -253,7 +304,8 @@ export const dbTables = sqliteTable(
     connectionId: text("connection_id")
       .notNull()
       .references(() => dbConnections.id, { onDelete: "cascade" }),
-    userId: text("user_id").notNull(),
+    userId: text("user_id"),
+    workspaceId: text("workspace_id"),
     schemaName: text("schema_name").notNull(),
     name: text("name").notNull(),
     comment: text("comment"),
@@ -269,7 +321,8 @@ export const dbTables = sqliteTable(
 export type DbTableRow = {
   id: string;
   connectionId: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   schemaName: string;
   name: string;
   comment: string | null;
@@ -287,7 +340,8 @@ export const dbColumns = sqliteTable(
       .notNull()
       .references(() => dbTables.id, { onDelete: "cascade" }),
     connectionId: text("connection_id").notNull(),
-    userId: text("user_id").notNull(),
+    userId: text("user_id"),
+    workspaceId: text("workspace_id"),
     seq: integer("seq").notNull(),
     name: text("name").notNull(),
     dataType: text("data_type").notNull(),
@@ -303,7 +357,8 @@ export type DbColumnRow = {
   id: string;
   tableId: string;
   connectionId: string;
-  userId: string;
+  userId: string | null;
+  workspaceId: string | null;
   seq: number;
   name: string;
   dataType: string;
