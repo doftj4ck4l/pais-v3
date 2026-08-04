@@ -123,12 +123,12 @@ export async function runPiAgent(opts: {
   let releaseSandbox: (() => Promise<void>) | undefined;
 
   if (appEnv.sandboxBackend === "docker") {
-    const sandbox = await sandboxService.acquire(userId);
+    const sandbox = await sandboxService.acquire(workspaceId);
     execEnv = new DockerExecutionEnv({
       containerId: sandbox.containerId,
       cwd: sandbox.workspacePath,
     });
-    releaseSandbox = () => sandboxService.release(userId);
+    releaseSandbox = () => sandboxService.release(workspaceId);
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
     fs.mkdirSync(workspaceDir, { recursive: true });

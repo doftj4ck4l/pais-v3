@@ -12,67 +12,67 @@ import {
 } from "./docker";
 
 /** Container names must survive Docker's charset rules and stay recognisable. */
-const containerNameFor = (userId: string) =>
-  `salurai-${userId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
+const containerNameFor = (workspaceId: string) =>
+  `salurai-${workspaceId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
 
 /**
- * Owns the container lifecycle behind a user's workspace.
+ * Owns the container lifecycle behind a workspace's directory.
  *
  * Containers are cattle: started on demand, reused while warm, removed when
- * idle. Workspaces are not — nothing here ever deletes one.
+ * idle. The directories are not — nothing here ever deletes one.
  *
  * `acquire` / `release` are also the seam where a future hosted backend would
  * sync a workspace down and back up.
  */
 export const sandboxService = {
-  /** A running container for this user, creating or restarting one as needed. */
-  async acquire(userId: string): Promise<{ containerId: string; workspacePath: string }> {
+  /** A running container for this workspace, creating or restarting one as needed. */
+  async acquire(workspaceId: string): Promise<{ containerId: string; workspacePath: string }> {
     if (!(await dockerAvailable())) {
       throw new Error(
         "Docker isn't reachable. Start Docker Desktop, or set SANDBOX_BACKEND=node to run tools on the API host.",
       );
     }
 
-    const existing = await sandboxRepository.get(userId);
-    const workspacePath = existing?.workspacePath ?? path.join(env.sandboxRoot, userId);
+    const existing = await sandboxRepository.get(workspaceId);
+    const workspacePath = existing?.workspacePath ?? path.join(env.sandboxRoot, workspaceId);
     fs.mkdirSync(workspacePath, { recursive: true });
 
     if (existing?.containerId && (await isRunning(existing.containerId))) {
-      await sandboxRepository.touch(userId);
+      await sandboxRepository.touch(workspaceId);
       return { containerId: existing.containerId, workspacePath };
     }
 
     // Either a first run or a stale row. Clear both the recorded container and
     // any orphan left behind by a previous process before starting fresh.
     if (existing?.containerId) await removeContainer(existing.containerId);
-    await removeContainer(containerNameFor(userId));
+    await removeContainer(containerNameFor(workspaceId));
 
     await ensureImage(env.sandboxImage);
     const containerId = await runDetached({
       image: env.sandboxImage,
       workspacePath,
-      name: containerNameFor(userId),
+      name: containerNameFor(workspaceId),
       skillsPath: env.skillsRoot,
     });
 
     await sandboxRepository.upsert({
-      userId,
+      workspaceId,
       containerId,
       workspacePath,
       image: env.sandboxImage,
     });
     logger.info("sandbox.started", {
-      user: userId,
+      workspace: workspaceId,
       container: containerId.slice(0, 12),
-      workspace: workspacePath,
+      path: workspacePath,
     });
 
     return { containerId, workspacePath };
   },
 
   /** Mark the sandbox idle. The container stays warm until reaped. */
-  async release(userId: string): Promise<void> {
-    await sandboxRepository.touch(userId);
+  async release(workspaceId: string): Promise<void> {
+    await sandboxRepository.touch(workspaceId);
   },
 
   /** Remove containers unused for longer than the window. Returns how many. */
@@ -80,18 +80,18 @@ export const sandboxService = {
     const idle = await sandboxRepository.listIdle(olderThanMs);
     for (const row of idle) {
       if (row.containerId) await removeContainer(row.containerId);
-      await sandboxRepository.clearContainer(row.userId);
-      logger.info("sandbox.reaped", { user: row.userId });
+      await sandboxRepository.clearContainer(row.workspaceId);
+      logger.info("sandbox.reaped", { workspace: row.workspaceId });
     }
     return idle.length;
   },
 
   /** Remove this user's container now. The workspace is left untouched. */
-  async destroy(userId: string): Promise<void> {
-    const row = await sandboxRepository.get(userId);
+  async destroy(workspaceId: string): Promise<void> {
+    const row = await sandboxRepository.get(workspaceId);
     if (row?.containerId) await removeContainer(row.containerId);
-    await removeContainer(containerNameFor(userId));
-    if (row) await sandboxRepository.clearContainer(userId);
+    await removeContainer(containerNameFor(workspaceId));
+    if (row) await sandboxRepository.clearContainer(workspaceId);
   },
 };
 

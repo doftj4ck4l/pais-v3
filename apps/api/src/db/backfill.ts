@@ -1,4 +1,7 @@
 import type { Database } from "bun:sqlite";
+import fs from "node:fs";
+import path from "node:path";
+import { env } from "../config/env";
 
 /**
  * Every table that a workspace scopes. `sandboxes` is here too, but it is the
@@ -75,6 +78,73 @@ export function backfill(target: Database): void {
       );
     }
   }
+}
+
+/**
+ * Sandbox directories were named by user; they are named by workspace now.
+ *
+ * Renamed rather than recreated — a workspace's files are meant to outlive
+ * everything, so losing them here would break the one promise the sandbox
+ * makes. The stored `workspace_path` moves with the directory: `acquire`
+ * prefers the recorded path, so leaving it behind would quietly keep mounting
+ * the old location.
+ */
+export function migrateSandboxDirs(target: Database): void {
+  if (!hasColumn(target, "sandboxes", "user_id")) return;
+
+  const rows = target
+    .query<{ user_id: string; workspace_id: string }, []>(
+      `SELECT user_id, workspace_id FROM sandboxes
+        WHERE workspace_id IS NOT NULL AND user_id IS NOT NULL`,
+    )
+    .all();
+
+  for (const { user_id, workspace_id } of rows) {
+    const from = path.join(env.sandboxRoot, user_id);
+    const to = path.join(env.sandboxRoot, workspace_id);
+    if (fs.existsSync(from) && !fs.existsSync(to)) fs.renameSync(from, to);
+    target.run(`UPDATE sandboxes SET workspace_path = ? WHERE user_id = ?`, [to, user_id]);
+  }
+}
+
+/**
+ * Rekey `sandboxes` from the user to the workspace.
+ *
+ * The other tables can simply drop `user_id`, but here it is the primary key,
+ * which SQLite will not drop — so the table is rebuilt around the new key.
+ * Runs after `migrateSandboxDirs`, which still needs the old column.
+ */
+export function rebuildSandboxes(target: Database): void {
+  if (!hasColumn(target, "sandboxes", "user_id")) return;
+  // A row that never got a workspace has nothing to be keyed by. That only
+  // happens if backfill could not place it, in which case dropping it would
+  // lose the path to a real directory — so it is left for the next boot.
+  const unplaced = target
+    .query<
+      { one: number },
+      []
+    >(`SELECT 1 one FROM sandboxes WHERE workspace_id IS NULL LIMIT 1`)
+    .get();
+  if (unplaced) return;
+
+  target.exec(`
+    CREATE TABLE sandboxes_rekeyed (
+      workspace_id   TEXT PRIMARY KEY,
+      container_id   TEXT,
+      workspace_path TEXT NOT NULL,
+      image          TEXT NOT NULL,
+      created_at     INTEGER NOT NULL,
+      last_used_at   INTEGER NOT NULL
+    );
+    -- Ordered so that if two users ever shared a workspace, the most recently
+    -- used row is the one that survives the primary key.
+    INSERT OR REPLACE INTO sandboxes_rekeyed
+      SELECT workspace_id, container_id, workspace_path, image, created_at, last_used_at
+        FROM sandboxes ORDER BY last_used_at ASC;
+    DROP TABLE sandboxes;
+    ALTER TABLE sandboxes_rekeyed RENAME TO sandboxes;
+    CREATE INDEX IF NOT EXISTS idx_sandboxes_last_used ON sandboxes (last_used_at);
+  `);
 }
 
 /**

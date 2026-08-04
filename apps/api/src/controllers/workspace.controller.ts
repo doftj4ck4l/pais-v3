@@ -3,12 +3,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { list, resolve } from "../repositories/workspace.repository";
 import { env } from "../config/env";
+import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 
-const userIdOf = (c: Context) => c.req.query("userId") ?? env.defaultUserId;
+/**
+ * The workspace whose files this request reads. `resolve` is the one place a
+ * client-supplied workspace id is checked against ownership — and here it also
+ * decides which directory under SANDBOX_ROOT is reachable at all.
+ */
+const workspaceIdOf = async (c: Context) => {
+  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
+  return workspace.id;
+};
 
 /** GET /api/workspace/files — what the agent has produced, newest first. */
 export async function index(c: Context) {
-  return c.json({ files: await list(userIdOf(c)) });
+  return c.json({ files: await list(await workspaceIdOf(c)) });
 }
 
 /**
@@ -23,7 +33,7 @@ export async function show(c: Context) {
   const decoded = safeDecode(requested);
   if (decoded === null) return c.json({ error: "File not found" }, 404);
 
-  const found = await resolve(userIdOf(c), decoded);
+  const found = await resolve(await workspaceIdOf(c), decoded);
   // Rejected and missing are one response: distinguishing them would let a
   // caller map the host's filesystem.
   if (!found.ok) return c.json({ error: "File not found" }, 404);

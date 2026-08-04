@@ -138,12 +138,13 @@ export type MemoryNoteRow = {
   source: string | null;
 };
 
-// One sandbox per user: a workspace that persists, and a container that does not.
+// One sandbox per workspace: a directory that persists, and a container that
+// does not. The directory is the workspace's file storage, which is why the two
+// meanings of the word collapse into one here.
 export const sandboxes = sqliteTable(
   "sandboxes",
   {
-    userId: text("user_id").primaryKey(),
-    workspaceId: text("workspace_id"),
+    workspaceId: text("workspace_id").primaryKey(),
     // Null when the container has been reaped. Normal, not an error state.
     containerId: text("container_id"),
     workspacePath: text("workspace_path").notNull(),
@@ -155,8 +156,7 @@ export const sandboxes = sqliteTable(
 );
 
 export type SandboxRow = {
-  userId: string;
-  workspaceId: string | null;
+  workspaceId: string;
   containerId: string | null;
   workspacePath: string;
   image: string;

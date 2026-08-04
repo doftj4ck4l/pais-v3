@@ -2,7 +2,14 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "node:path";
 import fs from "node:fs";
-import { backfill, columnsOf, dropLegacyUserId, SCOPED_TABLES } from "./backfill";
+import {
+  backfill,
+  columnsOf,
+  dropLegacyUserId,
+  migrateSandboxDirs,
+  rebuildSandboxes,
+  SCOPED_TABLES,
+} from "./backfill";
 import {
   memoryNotes,
   users,
@@ -114,7 +121,7 @@ export function applySchema(target: Database) {
       source   TEXT
     );
     CREATE TABLE IF NOT EXISTS sandboxes (
-      user_id        TEXT PRIMARY KEY,
+      workspace_id   TEXT PRIMARY KEY,
       container_id   TEXT,
       workspace_path TEXT NOT NULL,
       image          TEXT NOT NULL,
@@ -257,9 +264,14 @@ const RESCOPED_TABLES = [
  * Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations),
  * place any pre-workspace rows into a workspace, then retire the old scoping
  * key from the tables that have finished moving over.
+ *
+ * Order matters: the sandbox directories are moved while `user_id` still says
+ * who owned them, and only then is the column given up.
  */
 export function ensureSchema() {
   applySchema(sqlite);
   backfill(sqlite);
+  migrateSandboxDirs(sqlite);
   dropLegacyUserId(sqlite, RESCOPED_TABLES);
+  rebuildSandboxes(sqlite);
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { applySchema } from "./client";
-import { backfill, dropLegacyUserId } from "./backfill";
+import { backfill, dropLegacyUserId, rebuildSandboxes } from "./backfill";
 
 function seeded() {
   const db = new Database(":memory:");
@@ -124,6 +124,88 @@ describe("backfill", () => {
         >(`SELECT workspace_id FROM documents WHERE id = 'd1'`)
         .get()!.workspace_id,
     ).toBe(first);
+  });
+});
+
+describe("rebuildSandboxes", () => {
+  /** A database still shaped the way it was before workspaces existed. */
+  function legacySandboxes() {
+    const db = new Database(":memory:");
+    applySchema(db);
+    // applySchema builds the new shape, so the old one is recreated here to
+    // stand in for a database written before the rekey.
+    db.exec(`
+      DROP TABLE sandboxes;
+      CREATE TABLE sandboxes (
+        user_id        TEXT PRIMARY KEY,
+        container_id   TEXT,
+        workspace_path TEXT NOT NULL,
+        image          TEXT NOT NULL,
+        created_at     INTEGER NOT NULL,
+        last_used_at   INTEGER NOT NULL
+      );
+      ALTER TABLE sandboxes ADD COLUMN workspace_id TEXT;
+    `);
+    return db;
+  }
+
+  it("rekeys the table to the workspace, keeping the row", () => {
+    const db = legacySandboxes();
+    db.run(
+      `INSERT INTO sandboxes (user_id, workspace_id, container_id, workspace_path, image, created_at, last_used_at)
+       VALUES ('u1', 'ws1', 'c1', '/root/ws1', 'img', 1, 2)`,
+    );
+    rebuildSandboxes(db);
+
+    expect(columnsOf(db, "sandboxes")).not.toContain("user_id");
+    const row = db
+      .query<
+        { workspace_id: string; container_id: string; workspace_path: string },
+        []
+      >(`SELECT workspace_id, container_id, workspace_path FROM sandboxes`)
+      .get();
+    expect(row!.workspace_id).toBe("ws1");
+    expect(row!.container_id).toBe("c1");
+    expect(row!.workspace_path).toBe("/root/ws1");
+  });
+
+  it("makes the workspace the primary key", () => {
+    const db = legacySandboxes();
+    db.run(
+      `INSERT INTO sandboxes (user_id, workspace_id, container_id, workspace_path, image, created_at, last_used_at)
+       VALUES ('u1', 'ws1', 'c1', '/root/ws1', 'img', 1, 2)`,
+    );
+    rebuildSandboxes(db);
+    expect(() =>
+      db.run(
+        `INSERT INTO sandboxes (workspace_id, workspace_path, image, created_at, last_used_at)
+         VALUES ('ws1', '/root/ws1', 'img', 1, 2)`,
+      ),
+    ).toThrow();
+  });
+
+  it("leaves an unplaced row alone rather than losing its directory", () => {
+    const db = legacySandboxes();
+    db.run(
+      `INSERT INTO sandboxes (user_id, workspace_id, container_id, workspace_path, image, created_at, last_used_at)
+       VALUES ('u1', NULL, 'c1', '/root/u1', 'img', 1, 2)`,
+    );
+    rebuildSandboxes(db);
+    // Still the old shape, so the next boot can try again once it is placed.
+    expect(columnsOf(db, "sandboxes")).toContain("user_id");
+  });
+
+  it("is idempotent — a second run is a no-op", () => {
+    const db = legacySandboxes();
+    db.run(
+      `INSERT INTO sandboxes (user_id, workspace_id, container_id, workspace_path, image, created_at, last_used_at)
+       VALUES ('u1', 'ws1', 'c1', '/root/ws1', 'img', 1, 2)`,
+    );
+    rebuildSandboxes(db);
+    rebuildSandboxes(db);
+    expect(
+      db.query<{ n: number }, []>(`SELECT COUNT(*) n FROM sandboxes`).get()!.n,
+    ).toBe(1);
   });
 });
 

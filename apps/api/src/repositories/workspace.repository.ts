@@ -23,8 +23,8 @@ export type Resolved =
   /** Missing and rejected are one outcome on purpose — see `resolve`. */
   | { ok: false };
 
-export function workspaceRoot(userId: string): string {
-  return path.join(env.sandboxRoot, userId);
+export function workspaceRoot(workspaceId: string): string {
+  return path.join(env.sandboxRoot, workspaceId);
 }
 
 /**
@@ -43,8 +43,8 @@ export function workspaceRoot(userId: string): string {
  * Rejected and missing return the same value, so the endpoint cannot be used to
  * probe the host's filesystem layout.
  */
-export async function resolve(userId: string, requestPath: string): Promise<Resolved> {
-  const root = workspaceRoot(userId);
+export async function resolve(workspaceId: string, requestPath: string): Promise<Resolved> {
+  const root = workspaceRoot(workspaceId);
 
   if (!requestPath || path.isAbsolute(requestPath)) return { ok: false };
   const segments = requestPath.split(/[\\/]+/).filter(Boolean);
@@ -83,8 +83,8 @@ async function realRoot(root: string): Promise<string> {
 }
 
 /** Every file in the workspace, newest first. Directories are walked, not listed. */
-export async function list(userId: string, limit = 200): Promise<WorkspaceFile[]> {
-  const root = workspaceRoot(userId);
+export async function list(workspaceId: string, limit = 200): Promise<WorkspaceFile[]> {
+  const root = workspaceRoot(workspaceId);
   const out: WorkspaceFile[] = [];
 
   async function walk(dir: string, depth: number): Promise<void> {

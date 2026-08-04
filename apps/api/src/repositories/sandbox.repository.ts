@@ -3,19 +3,19 @@ import { db, sandboxes } from "../db/client";
 import type { SandboxRow } from "../models/schema";
 
 /**
- * One sandbox per user.
+ * One sandbox per workspace.
  *
- * The workspace path outlives every container, so `containerId` going null is
- * the normal cold state rather than a deletion.
+ * The directory outlives every container, so `containerId` going null is the
+ * normal cold state rather than a deletion.
  */
 export const sandboxRepository = {
-  async get(userId: string): Promise<SandboxRow | undefined> {
-    const rows = await db.select().from(sandboxes).where(eq(sandboxes.userId, userId)).limit(1);
+  async get(workspaceId: string): Promise<SandboxRow | undefined> {
+    const rows = await db.select().from(sandboxes).where(eq(sandboxes.workspaceId, workspaceId)).limit(1);
     return rows[0];
   },
 
   async upsert(input: {
-    userId: string;
+    workspaceId: string;
     containerId: string | null;
     workspacePath: string;
     image: string;
@@ -25,21 +25,21 @@ export const sandboxRepository = {
       .insert(sandboxes)
       .values({ ...input, createdAt: now, lastUsedAt: now })
       .onConflictDoUpdate({
-        target: sandboxes.userId,
+        target: sandboxes.workspaceId,
         set: { containerId: input.containerId, image: input.image, lastUsedAt: now },
       });
   },
 
   /** The container is gone; the workspace stays exactly where it is. */
-  async clearContainer(userId: string): Promise<void> {
+  async clearContainer(workspaceId: string): Promise<void> {
     await db
       .update(sandboxes)
       .set({ containerId: null, lastUsedAt: Date.now() })
-      .where(eq(sandboxes.userId, userId));
+      .where(eq(sandboxes.workspaceId, workspaceId));
   },
 
-  async touch(userId: string): Promise<void> {
-    await db.update(sandboxes).set({ lastUsedAt: Date.now() }).where(eq(sandboxes.userId, userId));
+  async touch(workspaceId: string): Promise<void> {
+    await db.update(sandboxes).set({ lastUsedAt: Date.now() }).where(eq(sandboxes.workspaceId, workspaceId));
   },
 
   /** Rows still holding a container that has gone unused for `olderThanMs`. */
