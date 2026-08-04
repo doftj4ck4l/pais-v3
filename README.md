@@ -76,6 +76,9 @@ console renders inline — the run is never silently swapped for another model.
 | `random_number`  | Random integer in a range                          |
 | `fetch_url`      | Fetch a URL and return the first ~1000 chars       |
 | `echo`           | Echo text back                                     |
+| `search_schema`  | Find tables/columns by keyword across connected databases (`db-analyst` harness only) |
+| `describe_table` | Columns, types, primary key, foreign keys, indexes for one table (`db-analyst` harness only) |
+| `run_query`      | Run one read-only SELECT against a connected database (`db-analyst` harness only) |
 
 ## Architecture
 
@@ -202,6 +205,50 @@ Prove the persistence mechanic independently of the app:
 ```bash
 cd apps/api && bun scripts/sandbox-persistence-check.ts
 ```
+
+### Connected databases
+
+The `db-analyst` harness can query a user's PostgreSQL databases, read-only. A
+connection is added in the console, encrypted with `CONNECTION_SECRET`, and
+introspected once into a schema snapshot the agent searches.
+
+```bash
+CONNECTION_SECRET=$(openssl rand -base64 32)   # required, else connections are refused
+```
+
+The agent works schema-first: `search_schema` finds candidate tables,
+`describe_table` returns exact columns and foreign keys, and only then does
+`run_query` execute a SELECT. Full schema is never pre-loaded — the system prompt
+carries table names only, so a thousand-table database costs the same as a
+ten-table one.
+
+Read-only is enforced in four layers:
+
+| Layer | Mechanism |
+| --- | --- |
+| Operator | Point the connection at a `GRANT SELECT`-only role |
+| Statement | Only `SELECT` / `WITH` / `EXPLAIN`; write keywords rejected anywhere in the statement |
+| Transaction | `BEGIN TRANSACTION READ ONLY`, always rolled back |
+| Budget | 10s `statement_timeout`, 100-row cap |
+
+The statement guard exists to give the model a correctable error message. The
+transaction is the actual guarantee — Postgres allows data-modifying CTEs, so
+`WITH x AS (DELETE ... RETURNING *) SELECT * FROM x` begins with `WITH` and
+writes, and only the transaction catches it unconditionally.
+
+The model never receives a connection string. Tools take a connection name and
+the credential is resolved server-side, so a prompt-injected document cannot ask
+the agent to reveal it.
+
+Prove the guarantee against your own server:
+
+```bash
+cd apps/api && DB_CHECK_URL=postgres://... bun scripts/db-connector-check.ts
+```
+
+**Not yet safe for production data.** Connections are stored against a `userId`
+the browser generates, with no authentication — anyone who forges one can use
+that user's connections. Encryption protects `app.db` at rest, not the API.
 
 ### Adding a model
 
