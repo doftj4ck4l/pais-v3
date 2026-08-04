@@ -1,3 +1,10 @@
+/**
+ * Encryption correctness and failure modes for stored database credentials.
+ *
+ * These cover the round-trips, wrong-key, and tamper cases: a credential that
+ * silently decrypts to garbage would be handed to a Postgres driver as a
+ * hostname, corrupting the connection silently. GCM ensures that does not happen.
+ */
 import { afterEach, describe, expect, it } from "bun:test";
 import { env } from "../config/env";
 import { decryptSecret, encryptSecret } from "./crypto";
@@ -40,6 +47,13 @@ describe("encryptSecret / decryptSecret", () => {
   it("refuses to encrypt with no secret configured", () => {
     setSecret("");
     expect(() => encryptSecret("postgres://a@b/c")).toThrow(/CONNECTION_SECRET/);
+  });
+
+  it("refuses to decrypt with no secret configured", () => {
+    setSecret("test-secret-one");
+    const payload = encryptSecret("postgres://a@b/c");
+    setSecret("");
+    expect(() => decryptSecret(payload)).toThrow(/CONNECTION_SECRET/);
   });
 
   it("rejects a malformed payload", () => {
