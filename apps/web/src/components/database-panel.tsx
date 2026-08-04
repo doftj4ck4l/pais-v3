@@ -44,12 +44,20 @@ export function DatabasePanel() {
       const out = await addConnection(getUserId(), name.trim(), url.trim())
       if (out.error) {
         setError(out.error)
+        // Drop the credential, keep the name: a rejection here is a bad
+        // name, a duplicate name, or a missing server config, so the user
+        // is more likely correcting the name than retyping the password.
+        // The url must not sit in a live input for as long as the panel
+        // stays mounted.
+        setUrl('')
         return
       }
       setName('')
       setUrl('')
       setAdding(false)
       await refresh()
+    } catch {
+      setError('Could not reach the API')
     } finally {
       setBusy(false)
     }
@@ -71,36 +79,48 @@ export function DatabasePanel() {
       </div>
 
       {adding ? (
-        <div className="flex flex-col gap-1.5">
+        <form
+          className="flex flex-col gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submit()
+          }}
+        >
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="name, e.g. sales"
+            aria-label="Connection name"
             className="rounded-md border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-foreground/30"
           />
           <input
+            type="password"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="postgres://readonly@host:5432/db"
+            aria-label="PostgreSQL connection URL"
             className="rounded-md border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-foreground/30"
           />
           {error ? <p className="text-[0.625rem] text-muted-foreground">{error}</p> : null}
           <div className="flex gap-1.5">
-            <Button size="sm" disabled={busy} onClick={() => void submit()} className="flex-1">
+            <Button type="submit" size="sm" disabled={busy} className="flex-1">
               {busy ? 'Connecting…' : 'Connect'}
             </Button>
             <Button
+              type="button"
               size="sm"
               variant="ghost"
               onClick={() => {
                 setAdding(false)
                 setError(null)
+                setName('')
+                setUrl('')
               }}
             >
               Cancel
             </Button>
           </div>
-        </div>
+        </form>
       ) : (
         <button
           type="button"
