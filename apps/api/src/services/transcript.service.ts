@@ -10,7 +10,7 @@ export type TranscriptItem =
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "iteration"; n: number }
-  | { kind: "tool"; name: string; args: unknown; result?: string };
+  | { kind: "tool"; name: string; args: unknown; result?: string; ms?: number; ok?: boolean };
 
 export type RecordedTrace = { step: string; fields: Record<string, unknown> };
 
@@ -35,7 +35,15 @@ export class TranscriptRecorder {
     text: null,
   };
 
-  constructor(history: ChatMessage[] = []) {
+  /**
+   * `seqOffset` is where this run's rows start in the stored transcript. A first
+   * run starts at 0; a follow-up starts after everything already written, so
+   * appended rows extend the conversation instead of colliding with it.
+   */
+  constructor(
+    history: ChatMessage[] = [],
+    private readonly seqOffset = 0,
+  ) {
     for (const message of history) {
       if (message.role === "user" && message.content) {
         this.items.push({ kind: "user", text: message.content });
@@ -76,7 +84,13 @@ export class TranscriptRecorder {
           (i) => i.kind === "tool" && i.name === event.name && i.result === undefined,
         );
         const pending = idx >= 0 ? this.items[idx] : undefined;
-        if (pending && pending.kind === "tool") pending.result = event.content;
+        if (pending && pending.kind === "tool") {
+          pending.result = event.content;
+          // Kept on the row so a reloaded transcript still shows what each call
+          // cost; the matching trace is the queryable copy.
+          pending.ms = event.ms;
+          pending.ok = event.ok;
+        }
         break;
       }
 
@@ -124,7 +138,7 @@ export class TranscriptRecorder {
   toMessageRows(): { kind: string; seq: number; text: string }[] {
     return this.items
       .filter((i) => i.kind !== "assistant" || i.text.trim() !== "")
-      .map((item, seq) => ({ kind: item.kind, seq, text: serialize(item) }));
+      .map((item, i) => ({ kind: item.kind, seq: this.seqOffset + i, text: serialize(item) }));
   }
 
   toTraceRows(): RecordedTrace[] {
@@ -135,7 +149,13 @@ export class TranscriptRecorder {
 function serialize(item: TranscriptItem): string {
   if (item.kind === "iteration") return String(item.n);
   if (item.kind === "tool") {
-    return JSON.stringify({ name: item.name, args: item.args, result: item.result });
+    return JSON.stringify({
+      name: item.name,
+      args: item.args,
+      result: item.result,
+      ms: item.ms,
+      ok: item.ok,
+    });
   }
   return item.text;
 }

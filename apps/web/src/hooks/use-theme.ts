@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 
 type Theme = 'light' | 'dark'
 
-const KEY = 'mixmatch-theme'
+const KEY = 'salurai-theme'
+const LEGACY_KEY = 'mixmatch-theme'
 
 function initial(): Theme {
-  const saved = localStorage.getItem(KEY)
+  const saved = localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   // White is the house style; dark is opt-in.
   return 'light'

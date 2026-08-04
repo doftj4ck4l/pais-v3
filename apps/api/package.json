@@ -1,12 +1,15 @@
 {
-  "name": "@mixmatch/api",
+  "name": "@salurai/api",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts"
+    "start": "bun src/index.ts",
+    "sandbox:build": "docker build -t ${SANDBOX_IMAGE:-salurai-sandbox:1} -f sandbox/Dockerfile sandbox/"
   },
   "dependencies": {
+    "@cline/sdk": "^0.0.69",
+    "@firecrawl/pdf-inspector": "^1.11.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0"
   },

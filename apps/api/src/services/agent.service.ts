@@ -17,7 +17,7 @@ export async function runAgent(
   model: ModelConfig,
   history: ChatMessage[],
   emit: (event: AgentEvent) => void,
-  { signal, runId = "-", template, workspace, userId }: AgentOptions = {},
+  { signal, runId = "-", template, workspace, workspaceId }: AgentOptions = {},
 ): Promise<number> {
   const messages: ChatMessage[] = [
     { role: "user", content: harness.systemPrompt },
@@ -35,13 +35,14 @@ export async function runAgent(
     return runPiAgent({
       model,
       systemPrompt: harness.systemPrompt,
+      harnessTools: harness.tools ?? [],
       history,
       emit,
       signal,
       runId,
       template,
       workspace,
-      userId,
+      workspaceId,
     });
   }
 

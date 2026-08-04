@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { ChevronRightIcon, WrenchIcon } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { NodeHead, NodeRing, NodeSquare, NodeTick, RailRow } from '@/components/loop-rail'
@@ -16,20 +15,17 @@ export function Transcript({
   running: boolean
   runSummary: string | null
 }) {
-  const endRef = useRef<HTMLDivElement>(null)
-
   // A model that goes straight to a tool call opens an empty text block first.
   // It has nothing to say, so it gets no node on the rail.
   const visible = items.filter((i) => i.kind !== 'assistant' || i.text.trim() !== '')
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [items, running])
-
+  // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
+  // not by this component. Following from in here would mean scrolling an
+  // ancestor it does not own, and would override the reader unconditionally.
   return (
     // Top-aligned: the agent header anchors the top of this column, so the rail
     // should start right under it rather than float above the composer.
-    <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-4 sm:px-6">
+    <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
       {visible.map((item, i) => {
         const last = i === visible.length - 1
         return (
@@ -48,8 +44,6 @@ export function Transcript({
           <p className="readout pt-0.5 text-muted-foreground">{runSummary ?? 'working…'}</p>
         </RailRow>
       ) : null}
-
-      <div ref={endRef} />
     </div>
   )
 }
@@ -114,7 +108,21 @@ function TranscriptRow({
           <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
             <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="readout truncate font-medium text-card-foreground">{item.name}</span>
-            {pending ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
+            {pending ? (
+              <Spinner className="ml-auto size-3.5 text-muted-foreground" />
+            ) : (
+              <span className="readout ml-auto flex shrink-0 items-center gap-1.5 text-[0.625rem]">
+                {item.ok === false ? (
+                  <span className="text-destructive">failed</span>
+                ) : null}
+                {/* Cost of the call, so a slow tool is visible without opening the trace. */}
+                {item.ms !== undefined ? (
+                  <span className="tabular-nums text-muted-foreground">
+                    {item.ms >= 1000 ? `${(item.ms / 1000).toFixed(1)}s` : `${item.ms}ms`}
+                  </span>
+                ) : null}
+              </span>
+            )}
           </div>
 
           {item.args !== '{}' ? (

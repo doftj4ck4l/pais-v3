@@ -1,5 +1,5 @@
 {
-  "name": "poc-mixmatch",
+  "name": "salurai",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -7,13 +7,14 @@
     "apps/web"
   ],
   "scripts": {
+    "setup": "bun run scripts/setup.ts",
+    "sandbox:build": "bun run --filter ./apps/api sandbox:build",
     "dev": "bun run --filter ./apps/api dev & bun run --filter ./apps/web dev",
     "dev:api": "bun run --filter ./apps/api dev",
     "dev:web": "bun run --filter ./apps/web dev"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.83.0",
-    "@earendil-works/pi-ai": "^0.83.0",
-    "@mixmatch/api": "./apps/api"
+    "@earendil-works/pi-ai": "^0.83.0"
   }
 }

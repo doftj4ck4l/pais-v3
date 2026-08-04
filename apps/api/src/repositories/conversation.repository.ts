@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { users, conversations, messages, traces, db } from "../db/client";
+import { conversations, messages, traces, db } from "../db/client";
 import type { ConversationRow } from "../db/client";
 import type { ConversationStatus } from "../models/schema";
 
@@ -9,33 +9,24 @@ const genId = (prefix: string) =>
 /**
  * Conversation repository: CRUD over users / conversations / messages / traces.
  *
- * Model: 1 user -> many conversations -> (many messages + many traces).
+ * Model: 1 workspace -> many conversations -> (many messages + many traces).
  * A conversation corresponds to one agent run: its title is the task, and its
  * status mirrors the agent's lifecycle.
  */
 export const conversationRepository = {
-  /** Ensure a user row exists (idempotent). */
-  async ensureUser(userId: string): Promise<void> {
-    await db
-      .insert(users)
-      .values({ id: userId, createdAt: Date.now() })
-      .onConflictDoNothing();
-  },
-
   /** Create a new conversation. Returns its id. */
   async create(input: {
-    userId: string;
+    workspaceId: string;
     title: string;
     modelId: string;
     harnessId: string;
     status?: ConversationStatus;
   }): Promise<string> {
-    await this.ensureUser(input.userId);
     const now = Date.now();
     const id = genId("conv");
     await db.insert(conversations).values({
       id,
-      userId: input.userId,
+      workspaceId: input.workspaceId,
       title: input.title,
       modelId: input.modelId,
       harnessId: input.harnessId,
@@ -46,12 +37,12 @@ export const conversationRepository = {
     return id;
   },
 
-  /** List a user's conversations, newest first. */
-  async list(userId: string): Promise<ConversationRow[]> {
+  /** List a workspace's conversations, newest first. */
+  async list(workspaceId: string): Promise<ConversationRow[]> {
     return db
       .select()
       .from(conversations)
-      .where(eq(conversations.userId, userId))
+      .where(eq(conversations.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
   },
 
@@ -63,6 +54,35 @@ export const conversationRepository = {
       .where(eq(conversations.id, conversationId))
       .limit(1);
     return rows[0];
+  },
+
+  /**
+   * The conversation to continue, or undefined when the id is unknown or held
+   * by another workspace. Ownership is checked here rather than by the caller
+   * so a forged id cannot append turns to someone else's thread — the
+   * workspace itself has already been proved to belong to the user by
+   * `workspaceRegistry.resolve`.
+   */
+  async getOwned(
+    conversationId: string,
+    workspaceId: string,
+  ): Promise<ConversationRow | undefined> {
+    const rows = await db
+      .select()
+      .from(conversations)
+      .where(
+        and(eq(conversations.id, conversationId), eq(conversations.workspaceId, workspaceId)),
+      )
+      .limit(1);
+    return rows[0];
+  },
+
+  /** Where the next run's rows start, so a follow-up extends the transcript. */
+  async nextSeq(conversationId: string): Promise<number> {
+    const rows = await db.all<{ next: number | null }>(
+      sql`SELECT MAX(seq) + 1 AS next FROM messages WHERE conversation_id = ${conversationId}`,
+    );
+    return rows[0]?.next ?? 0;
   },
 
   async setStatus(conversationId: string, status: ConversationStatus): Promise<void> {

@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 
+/** Fixed in-container path for the read-only skills mount. */
+export const SKILLS_MOUNT = "/skills";
+
 /**
  * Docker via its CLI rather than an SDK.
  *
@@ -126,6 +129,8 @@ export async function runDetached(options: {
   image: string;
   workspacePath: string;
   name: string;
+  /** Host skills directory, mounted read-only at {@link SKILLS_MOUNT}. */
+  skillsPath?: string;
 }): Promise<string> {
   const result = await plain([
     "run",
@@ -134,6 +139,10 @@ export async function runDetached(options: {
     options.name,
     "-v",
     `${options.workspacePath}:${options.workspacePath}`,
+    // Skills are mounted at a fixed path so a skill's `run` command does not
+    // depend on where the repository happens to sit on the host, and read-only
+    // so the agent cannot rewrite the code it is about to execute.
+    ...(options.skillsPath ? ["-v", `${options.skillsPath}:${SKILLS_MOUNT}:ro`] : []),
     "-w",
     options.workspacePath,
     options.image,

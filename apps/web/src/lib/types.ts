@@ -12,6 +12,8 @@ export type Model = {
   hint: string
   brand: string
   ready: boolean
+  /** Usable context window in tokens, as declared by the API catalog. */
+  contextWindow: number
 }
 
 export type Meta = {
@@ -25,7 +27,17 @@ export type Item =
   | { kind: 'assistant'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'iteration'; n: number }
-  | { kind: 'tool'; id: string; name: string; args: string; result?: string }
+  | {
+      kind: 'tool'
+      id: string
+      name: string
+      args: string
+      result?: string
+      /** Wall-clock duration, once the result arrives. */
+      ms?: number
+      /** False when the tool reported a failure. */
+      ok?: boolean
+    }
 
 export type TraceLine = { ts: number; step: string; fields: Record<string, unknown> }
 
@@ -69,4 +81,55 @@ export type ConversationDetail = {
   conversation: ConversationRow
   messages: MessageRow[]
   traces: TraceRow[]
+}
+
+export type DocumentStatus = 'indexed' | 'empty' | 'error'
+
+export type DocumentRow = {
+  id: string
+  userId: string
+  title: string
+  bytes: number
+  pages: number
+  chunkCount: number
+  status: DocumentStatus
+  error: string | null
+  createdAt: number
+}
+
+/** One file's outcome from an upload — the whole batch never fails as a unit. */
+export type IngestResult = {
+  documentId?: string
+  title: string
+  status: DocumentStatus
+  pages: number
+  chunks: number
+  error?: string
+}
+
+export type WorkspaceFile = {
+  path: string
+  bytes: number
+  modifiedAt: number
+}
+
+export type DbConnectionRow = {
+  id: string
+  name: string
+  engine: string
+  status: 'connected' | 'error'
+  error: string | null
+  displayHost: string
+  displayDatabase: string
+  tableCount: number
+  lastIntrospectedAt: number | null
+  createdAt: number
+}
+
+/** A container for one body of work: its agents, documents, databases, files. */
+export type WorkspaceRow = {
+  id: string
+  userId: string
+  name: string
+  createdAt: number
 }

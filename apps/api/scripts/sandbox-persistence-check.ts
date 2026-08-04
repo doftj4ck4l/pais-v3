@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 const IMAGE = "node:22-bookworm-slim";
-const WS = path.join(os.homedir(), "mixmatch-workspaces", "persistence-check");
+const WS = path.join(os.homedir(), "salurai-workspaces", "persistence-check");
 
 function sh(args: string[]): Promise<{ out: string; code: number }> {
   return new Promise((resolve) => {

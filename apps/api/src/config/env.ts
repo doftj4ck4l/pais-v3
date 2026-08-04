@@ -18,17 +18,38 @@ export const env = {
   /**
    * Where the agent's shell and file tools run.
    *
-   * `node` executes them on this API host — fine for a trusted developer, and
-   * the default so the sandbox work stays inert until switched on. `docker`
-   * gives each user an isolated container over a workspace that outlives it.
+   * `docker` gives each user an isolated container over a workspace that
+   * outlives it, and is the default because the alternative is not safe by
+   * default. `node` executes the same tools directly on this API host, as the
+   * user running the server: `cwd` is a starting directory, not a boundary, so
+   * the agent can read anything that user can — including this process's own
+   * environment and `.env`. Uploaded documents make that reachable by prompt
+   * injection, so `node` is for a trusted operator on a throwaway machine only.
+   *
+   * With `docker` selected and the daemon down, runs fail loudly rather than
+   * falling back to the host — a silent fallback would hand the model a shell.
    */
-  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "node") as "node" | "docker",
+  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "docker") as "node" | "docker",
 
-  sandboxImage: process.env.SANDBOX_IMAGE ?? "node:22-bookworm-slim",
+  sandboxImage: process.env.SANDBOX_IMAGE ?? "salurai-sandbox:1",
 
-  /** Workspaces live here, one directory per user, and are never deleted. */
-  sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "mixmatch-workspaces"),
+  /** Workspace directories live here, one per workspace, and are never deleted. */
+  sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "salurai-workspaces"),
 
   /** Remove a container after this long without a run. */
   sandboxIdleMs: Number(process.env.SANDBOX_IDLE_MS ?? 300_000),
+
+  /**
+   * Host directory holding SKILL.md skills, bind-mounted read-only into every
+   * sandbox container. Resolved from the package root, not the process cwd, so
+   * it does not depend on where the server was started from.
+   */
+  skillsRoot: process.env.SKILLS_ROOT ?? path.resolve(import.meta.dirname, "..", "..", "skills"),
+
+  /**
+   * Key material for encrypting stored database connection strings. Absent, the
+   * API refuses to store one rather than writing it in plaintext — the same
+   * stance the sandbox takes when Docker is down.
+   */
+  connectionSecret: process.env.CONNECTION_SECRET ?? "",
 } as const;

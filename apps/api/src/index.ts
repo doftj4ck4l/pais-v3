@@ -16,4 +16,17 @@ logger.info("api.listening", {
   sandbox: env.sandboxBackend,
 });
 
-export default { port: env.port, fetch: app.fetch };
+export default {
+  port: env.port,
+  fetch: app.fetch,
+  /**
+   * Bun closes an idle connection after 10s by default, which is wrong for this
+   * server: /api/chat is an SSE stream that goes quiet for as long as a tool
+   * takes. A single web fetch or skill invocation outlasts the default, and the
+   * dropped connection surfaces as a run mysteriously ending in `stopped`.
+   *
+   * 255 is Bun's maximum and comfortably exceeds the 120s cap on a skill run,
+   * so the tool timeout is what ends a slow call, not the transport.
+   */
+  idleTimeout: 255,
+};

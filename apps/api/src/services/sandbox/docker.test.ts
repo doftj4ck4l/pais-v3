@@ -12,7 +12,7 @@ import {
 } from "./docker";
 
 const IMAGE = "node:22-bookworm-slim";
-const WS = path.join(os.homedir(), "mixmatch-workspaces", "test-docker");
+const WS = path.join(os.homedir(), "salurai-workspaces", "test-docker");
 let id = "";
 
 beforeAll(async () => {

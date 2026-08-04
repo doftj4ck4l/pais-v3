@@ -4,16 +4,19 @@ import { memoryNotes } from "../models/schema";
 import type { MemoryNoteRow } from "../models/schema";
 
 /**
- * Agent memory: a per-user, append-only log of notes the agent persists between
- * sessions.
+ * Agent memory: a per-workspace, append-only log of notes the agent persists
+ * between sessions.
+ *
+ * Scoped to the workspace rather than the user, so a note taken while working
+ * on one body of work does not surface while working on another.
  *
  * Behind the MemoryStore interface so the implementation can be swapped
  * (Postgres, S3, ...) without touching the tools that call it.
  */
 export interface MemoryStore {
-  append(userId: string, entry: MemoryEntry): Promise<void>;
-  search(userId: string, query: string): Promise<MemoryEntry[]>;
-  all(userId: string): Promise<MemoryEntry[]>;
+  append(workspaceId: string, entry: MemoryEntry): Promise<void>;
+  search(workspaceId: string, query: string): Promise<MemoryEntry[]>;
+  all(workspaceId: string): Promise<MemoryEntry[]>;
 }
 
 export interface MemoryEntry {
@@ -41,12 +44,12 @@ function rowToEntry(row: MemoryNoteRow): MemoryEntry {
 export class SqliteMemoryStore implements MemoryStore {
   constructor(private dbImpl: typeof db = db) {}
 
-  async append(userId: string, entry: MemoryEntry): Promise<void> {
+  async append(workspaceId: string, entry: MemoryEntry): Promise<void> {
     await this.dbImpl
       .insert(memoryNotes)
       .values({
         id: entry.id,
-        userId,
+        workspaceId,
         ts: entry.ts,
         content: entry.content,
         tags: entry.tags?.join("\n") || null,
@@ -55,7 +58,7 @@ export class SqliteMemoryStore implements MemoryStore {
       .onConflictDoNothing();
   }
 
-  async search(userId: string, query: string): Promise<MemoryEntry[]> {
+  async search(workspaceId: string, query: string): Promise<MemoryEntry[]> {
     const q = query.trim().toLowerCase();
     const rows = q
       ? await this.dbImpl
@@ -63,7 +66,7 @@ export class SqliteMemoryStore implements MemoryStore {
           .from(memoryNotes)
           .where(
             and(
-              eq(memoryNotes.userId, userId),
+              eq(memoryNotes.workspaceId, workspaceId),
               sql`(lower(${memoryNotes.content}) like ${`%${q}%`} or coalesce(lower(${memoryNotes.tags}),'') like ${`%${q}%`})`,
             ),
           )
@@ -71,16 +74,16 @@ export class SqliteMemoryStore implements MemoryStore {
       : await this.dbImpl
           .select()
           .from(memoryNotes)
-          .where(eq(memoryNotes.userId, userId))
+          .where(eq(memoryNotes.workspaceId, workspaceId))
           .orderBy(sql`ts desc`);
     return rows.map(rowToEntry);
   }
 
-  async all(userId: string): Promise<MemoryEntry[]> {
+  async all(workspaceId: string): Promise<MemoryEntry[]> {
     const rows = await this.dbImpl
       .select()
       .from(memoryNotes)
-      .where(eq(memoryNotes.userId, userId))
+      .where(eq(memoryNotes.workspaceId, workspaceId))
       .orderBy(sql`ts desc`);
     return rows.map(rowToEntry);
   }

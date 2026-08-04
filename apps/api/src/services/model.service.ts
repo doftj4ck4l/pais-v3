@@ -11,6 +11,8 @@ export type MetaPayload = {
     hint: string;
     brand: string;
     ready: boolean;
+    /** Usable context window, so the console can meter a thread against it. */
+    contextWindow: number;
   }[];
 };
 
@@ -24,6 +26,7 @@ export function getMeta(): MetaPayload {
       hint: m.hint,
       brand: m.brand,
       ready: isLikelyConfigured(m),
+      contextWindow: m.contextWindow,
     })),
   };
 }

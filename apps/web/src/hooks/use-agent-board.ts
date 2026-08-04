@@ -6,7 +6,7 @@ import {
   listConversations,
 } from '@/lib/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/lib/transcript'
-import { getUserId } from '@/lib/user'
+import type { Scope } from '@/lib/api'
 import type { ConversationRow, Item, Meta, Slots, TraceLine } from '@/lib/types'
 
 export type AgentStatus = 'running' | 'done' | 'stopped' | 'error'
@@ -27,6 +27,34 @@ export type AgentRun = {
   startedAt: number
   /** False for a restored agent whose transcript hasn't been fetched yet. */
   hydrated: boolean
+  /** Context budget as of the last turn, once the server has reported it. */
+  context: ContextUsage | null
+}
+
+export type ContextUsage = {
+  used: number
+  window: number
+  estimated: boolean
+  compacted?: { fromTokens: number; toTokens: number; turnsSummarised: number }
+}
+
+/**
+ * Rebuild the wire history from a rendered transcript.
+ *
+ * Only user and assistant text crosses the wire: tool calls and their results
+ * are replayed server-side by the agent loop, and thinking is not part of the
+ * conversation the model is given. Sending them back would double-count context
+ * the server already accounts for.
+ */
+function historyFrom(items: Item[]): { role: 'user' | 'assistant'; content: string }[] {
+  const out: { role: 'user' | 'assistant'; content: string }[] = []
+  for (const item of items) {
+    if (item.kind === 'user') out.push({ role: 'user', content: item.text })
+    else if (item.kind === 'assistant' && item.text.trim()) {
+      out.push({ role: 'assistant', content: item.text })
+    }
+  }
+  return out
 }
 
 /**
@@ -43,14 +71,14 @@ export type AgentRun = {
  * single agent are processed sequentially, so mutating its own array is safe;
  * parallel agents touch disjoint arrays.
  */
-export function useAgentBoard() {
+export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [harnessId, setHarnessId] = useState('')
   const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
   const [agents, setAgents] = useState<AgentRun[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [runsCompleted, setRunsCompleted] = useState(0)
 
-  const userId = useRef(getUserId()).current
   const controllersRef = useRef<Map<string, AbortController>>(new Map())
   const itemsRef = useRef<Map<string, Item[]>>(new Map())
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
@@ -100,14 +128,34 @@ export function useAgentBoard() {
       })
   }, [])
 
-  // Bring back everything this browser has run before. Guarded because React
+  // Bring back everything this workspace has run before, and do it again when
+  // the workspace changes. Keyed by id rather than a boolean because React
   // StrictMode runs effects twice in dev, which would restore each run twice.
-  const restoredRef = useRef(false)
+  const restoredForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (restoredRef.current) return
-    restoredRef.current = true
+    const workspaceId = scope.workspaceId
+    // Null until the first workspace list arrives; restoring now would ask the
+    // server for a scope it would have to guess at.
+    if (!workspaceId) return
+    if (restoredForRef.current === workspaceId) return
+    const switching = restoredForRef.current !== null
+    restoredForRef.current = workspaceId
 
-    listConversations(userId)
+    if (switching) {
+      // The previous workspace's agents are not this workspace's agents, so the
+      // board starts empty. In-flight runs are deliberately left alone: the API
+      // ties the run to the request signal, so aborting here would kill a
+      // working agent merely because the user looked at something else. Their
+      // events land on ids the board no longer holds, which is a no-op, and
+      // switching back restores them from the transcript.
+      itemsRef.current.clear()
+      traceRef.current.clear()
+      streamRefs.current.clear()
+      setAgents([])
+      setSelectedId(null)
+    }
+
+    listConversations(scope)
       .then((rows) => {
         if (!rows.length) return
         const restored = rows.map(toRestoredAgent)
@@ -123,7 +171,7 @@ export function useAgentBoard() {
       .catch(() => {
         /* nothing stored, or API down */
       })
-  }, [userId])
+  }, [scope])
 
   // Live elapsed per running agent. Skipped entirely when nothing is running.
   useEffect(() => {
@@ -220,17 +268,49 @@ export function useAgentBoard() {
       elapsed: 0,
       startedAt: Date.now(),
       hydrated: true,
+      context: null,
     }
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
     streamRefs.current.set(id, { thinking: null, text: null })
     setAgents((prev) => [...prev, agent])
     setSelectedId(id)
-    void run(id, agent)
+    void run(id, agent, [{ role: 'user', content: agent.task }])
     return id
   }
 
-  async function run(id: string, seed: AgentRun) {
+  /**
+   * Append a turn to an existing agent and re-run it with the whole thread.
+   *
+   * The full transcript goes up so the model has the conversation, and the
+   * conversation id goes with it so the server extends that row instead of
+   * opening a new one.
+   */
+  function sendFollowUp(agentId: string, text: string) {
+    const agent = agentsRef.current.find((a) => a.id === agentId)
+    if (!agent || agent.status === 'running') return
+
+    const items = itemsRef.current.get(agentId)
+    if (!items) return
+
+    const history = [...historyFrom(items), { role: 'user' as const, content: text }]
+    items.push({ kind: 'user', text })
+    streamRefs.current.set(agentId, { thinking: null, text: null })
+    patchAgent(agentId, {
+      status: 'running',
+      notice: null,
+      items: [...items],
+      startedAt: Date.now(),
+      elapsed: 0,
+    })
+    void run(agentId, agent, history)
+  }
+
+  async function run(
+    id: string,
+    seed: AgentRun,
+    history: { role: 'user' | 'assistant'; content: string }[],
+  ) {
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
 
@@ -239,10 +319,12 @@ export function useAgentBoard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          conversationId: seed.conversationId ?? undefined,
           harnessId: harnessIdRef.current,
           modelId: seed.modelId,
-          userId,
-          messages: [{ role: 'user', content: seed.task }],
+          userId: scope.userId,
+          workspaceId: scope.workspaceId ?? undefined,
+          messages: history,
         }),
         signal: controller.signal,
       })
@@ -283,6 +365,9 @@ export function useAgentBoard() {
       setAgents((prev) =>
         prev.map((a) => (a.id === id && a.status === 'running' ? { ...a, status: 'done' } : a)),
       )
+      // A run is the only thing that writes to the workspace, so its end is the
+      // one moment worth re-listing files — cheaper and more accurate than polling.
+      setRunsCompleted((n) => n + 1)
     }
   }
 
@@ -295,6 +380,17 @@ export function useAgentBoard() {
     switch (event.type) {
       case 'conversation':
         patchAgent(id, { conversationId: event.id })
+        return
+
+      case 'context':
+        patchAgent(id, {
+          context: {
+            used: event.used,
+            window: event.window,
+            estimated: event.estimated,
+            compacted: event.compacted,
+          },
+        })
         return
 
       case 'iteration':
@@ -327,7 +423,12 @@ export function useAgentBoard() {
           (x) => x.kind === 'tool' && x.name === event.name && x.result === undefined,
         )
         if (idx >= 0) {
-          items[idx] = { ...(items[idx] as Extract<Item, { kind: 'tool' }>), result: event.content }
+          items[idx] = {
+            ...(items[idx] as Extract<Item, { kind: 'tool' }>),
+            result: event.content,
+            ms: event.ms,
+            ok: event.ok,
+          }
         }
         break
       }
@@ -395,7 +496,9 @@ export function useAgentBoard() {
     selected,
     selectedId,
     select,
+    runsCompleted,
     spawn,
+    sendFollowUp,
     stop,
     remove,
     dismissNotice,
@@ -423,5 +526,6 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     elapsed: Math.max(0, row.updatedAt - row.createdAt),
     startedAt: row.createdAt,
     hydrated: false,
+    context: null,
   }
 }
