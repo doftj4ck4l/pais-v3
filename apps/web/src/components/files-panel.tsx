@@ -16,7 +16,13 @@ const fmtBytes = (n: number) =>
  * files appear as a side effect of a run, and polling a filesystem to catch
  * that is more machinery than the payoff justifies.
  */
-export function FilesPanel({ refreshKey }: { refreshKey?: number }) {
+export function FilesPanel({
+  refreshKey,
+  onCountChange,
+}: {
+  refreshKey?: number
+  onCountChange?: (n: number) => void
+}) {
   const [files, setFiles] = useState<WorkspaceFile[]>([])
   const [busy, setBusy] = useState(false)
   const userId = getUserId()
@@ -35,6 +41,8 @@ export function FilesPanel({ refreshKey }: { refreshKey?: number }) {
   useEffect(() => {
     void refresh()
   }, [refresh, refreshKey])
+
+  useEffect(() => onCountChange?.(files.length), [files.length, onCountChange])
 
   return (
     <div className="flex flex-col">

@@ -22,13 +22,14 @@ import { cn } from '@/lib/utils'
  * for the same reason: an unreachable database looks exactly like an empty one
  * until the agent says it found nothing.
  */
-export function DatabasePanel() {
+export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) => void }) {
   const [connections, setConnections] = useState<DbConnectionRow[]>([])
   const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => onCountChange?.(connections.length), [connections.length, onCountChange])
   const [steps, setSteps] = useState<AttachPhase[]>([])
 
   const refresh = useCallback(async () => {

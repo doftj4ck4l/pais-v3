@@ -1,31 +1,26 @@
 import type { ReactNode } from 'react'
-import { MoonIcon, PlusIcon, SunIcon, TerminalIcon, Trash2Icon } from 'lucide-react'
+import { PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
-import { DatabasePanel } from '@/components/database-panel'
-import { DocumentPanel } from '@/components/document-panel'
-import { FilesPanel } from '@/components/files-panel'
-import { ModelLogo } from '@/components/model-logo'
 import { RunStats } from '@/components/run-stats'
 import type { AgentRun } from '@/hooks/use-agent-board'
 import type { Meta } from '@/lib/types'
 
+/**
+ * Navigation and run inspection: which agents exist, which one is open, and how
+ * it went.
+ *
+ * This also carried the model and harness pickers plus every resource panel —
+ * nine stacked sections in a 288px column. Those were three different kinds of
+ * thing sharing one space: configuration, resources the agent can reach, and
+ * navigation. Only the last belongs in a sidebar. Settings moved behind the
+ * gear; resources moved to the right-hand panel, where they can be tabbed as
+ * source types keep being added.
+ */
 export function ControlDeck({
   meta,
-  harnessId,
-  onHarnessChange,
-  modelId,
-  onModelChange,
   agents,
   selected,
   selectedId,
@@ -33,16 +28,9 @@ export function ControlDeck({
   onRemoveAgent,
   onNewAgent,
   onOpenTrace,
-  onClearAll,
-  theme,
-  onToggleTheme,
-  filesRefreshKey,
+  onOpenSettings,
 }: {
   meta: Meta | null
-  harnessId: string
-  onHarnessChange: (id: string) => void
-  modelId: string
-  onModelChange: (id: string) => void
   agents: AgentRun[]
   selected: AgentRun | null
   selectedId: string | null
@@ -50,82 +38,11 @@ export function ControlDeck({
   onRemoveAgent: (id: string) => void
   onNewAgent: () => void
   onOpenTrace: () => void
-  onClearAll: () => void
-  theme: 'light' | 'dark'
-  onToggleTheme: () => void
-  /** Bumped when a run finishes, so produced files show up without a manual refresh. */
-  filesRefreshKey?: number
+  onOpenSettings: () => void
 }) {
-  const model = meta?.models.find((m) => m.id === modelId)
-
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <Wordmark />
-
-      <div className="flex flex-col gap-3 px-4 py-4">
-        <Field label="Model">
-          <Select value={modelId} onValueChange={onModelChange}>
-            {/* No logo here: SelectValue already mirrors the chosen item's content. */}
-            <SelectTrigger className="h-9 w-full">
-              <SelectValue placeholder="Loading…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {meta?.models.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    <span className="flex items-center gap-2">
-                      <ModelLogo model={m} size={16} className="rounded-[4px]" />
-                      <span className="readout">{m.label}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          {model && !model.ready ? (
-            <p className="mt-1.5 text-xs text-muted-foreground">
-              Add an API key to use this model.
-            </p>
-          ) : null}
-        </Field>
-
-        <Field label="Harness">
-          <Select value={harnessId} onValueChange={onHarnessChange}>
-            <SelectTrigger className="h-9 w-full">
-              <SelectValue placeholder="Loading…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {meta?.harnesses.map((h) => (
-                  <SelectItem key={h.id} value={h.id}>
-                    {h.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-
-      <Separator />
-
-      <div className="px-4 py-4">
-        <DocumentPanel />
-      </div>
-
-      <Separator />
-
-      <div className="px-4 py-4">
-        <DatabasePanel />
-      </div>
-
-      <Separator />
-
-      <div className="px-4 py-4">
-        <FilesPanel refreshKey={filesRefreshKey} />
-      </div>
-
-      <Separator />
+      <Wordmark onOpenSettings={onOpenSettings} />
 
       <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
         <div className="mb-2 flex items-center gap-2">
@@ -174,28 +91,12 @@ export function ControlDeck({
           Trace
           <span className="readout text-[0.625rem] opacity-70">{selected?.trace.length ?? 0}</span>
         </Button>
-
-        <div className="ml-auto flex items-center">
-          <IconAction
-            label="Remove all agents"
-            onClick={onClearAll}
-            disabled={agents.length === 0}
-          >
-            <Trash2Icon />
-          </IconAction>
-          <IconAction
-            label={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-            onClick={onToggleTheme}
-          >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </IconAction>
-        </div>
       </div>
     </div>
   )
 }
 
-function Wordmark() {
+function Wordmark({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <div className="flex items-center gap-2.5 border-b px-4 py-3.5">
       <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
@@ -204,15 +105,10 @@ function Wordmark() {
         </span>
       </span>
       <span className="text-[0.9375rem] font-extrabold tracking-[-0.02em]">SalurAI</span>
-    </div>
-  )
-}
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <h2 className="label mb-1.5 text-muted-foreground">{label}</h2>
-      {children}
+      <IconAction label="Settings" onClick={onOpenSettings}>
+        <SettingsIcon />
+      </IconAction>
     </div>
   )
 }
@@ -220,12 +116,10 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function IconAction({
   label,
   onClick,
-  disabled,
   children,
 }: {
   label: string
   onClick: () => void
-  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -235,9 +129,8 @@ function IconAction({
           variant="ghost"
           size="icon-sm"
           onClick={onClick}
-          disabled={disabled}
           aria-label={label}
-          className="text-muted-foreground"
+          className="ml-auto text-muted-foreground"
         >
           {children}
         </Button>

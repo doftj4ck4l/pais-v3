@@ -6,11 +6,14 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { AgentHeader } from '@/components/agent-header'
 import { Composer } from '@/components/composer'
 import { ControlDeck } from '@/components/control-deck'
+import { ResourcesPanel } from '@/components/resources-panel'
+import { SettingsModal } from '@/components/settings-modal'
 import { EmptyState, type Suggestion } from '@/components/empty-state'
 import { TraceSheet } from '@/components/trace-sheet'
 import { Transcript } from '@/components/transcript'
 import { useAgentBoard } from '@/hooks/use-agent-board'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
+import { useResourcePanel } from '@/hooks/use-resource-panel'
 import { useTheme } from '@/hooks/use-theme'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +30,8 @@ export default function App() {
   const { theme, toggle } = useTheme()
   const [deckOpen, setDeckOpen] = useState(false)
   const [traceOpen, setTraceOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const panel = useResourcePanel()
 
   const { selected } = board
   // Keyed on the agent, so switching to another transcript starts at its end
@@ -55,10 +60,6 @@ export default function App() {
   const deck = (
     <ControlDeck
       meta={board.meta}
-      harnessId={board.harnessId}
-      onHarnessChange={board.setHarnessId}
-      modelId={board.modelIdForNew}
-      onModelChange={board.setModelIdForNew}
       agents={board.agents}
       selected={selected}
       selectedId={board.selectedId}
@@ -75,11 +76,15 @@ export default function App() {
         setDeckOpen(false)
         setTraceOpen(true)
       }}
-      onClearAll={board.clearAll}
-      theme={theme}
-      onToggleTheme={toggle}
-      filesRefreshKey={board.runsCompleted}
+      onOpenSettings={() => {
+        setDeckOpen(false)
+        setSettingsOpen(true)
+      }}
     />
+  )
+
+  const resources = (
+    <ResourcesPanel onClose={() => panel.setOpen(false)} filesRefreshKey={board.runsCompleted} />
   )
 
   return (
@@ -108,6 +113,7 @@ export default function App() {
               agent={selected}
               model={selectedModel}
               onStop={() => board.stop(selected.id)}
+              onToggleResources={panel.toggle}
             />
           ) : null}
 
@@ -148,6 +154,10 @@ export default function App() {
             onSend={send}
           />
         </div>
+
+        {panel.open ? (
+          <aside className="hidden w-72 shrink-0 border-l xl:block">{resources}</aside>
+        ) : null}
       </div>
 
       <Sheet open={deckOpen} onOpenChange={setDeckOpen}>
@@ -156,6 +166,29 @@ export default function App() {
           {deck}
         </SheetContent>
       </Sheet>
+
+      {/* Under xl the third column would leave no room to read, so the same
+          panel opens as a sheet instead. */}
+      <Sheet open={panel.open} onOpenChange={panel.setOpen}>
+        <SheetContent side="right" className="w-80 gap-0 p-0 sm:max-w-80 xl:hidden">
+          <SheetTitle className="sr-only">Documents, databases and files</SheetTitle>
+          {resources}
+        </SheetContent>
+      </Sheet>
+
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        meta={board.meta}
+        harnessId={board.harnessId}
+        onHarnessChange={board.setHarnessId}
+        modelId={board.modelIdForNew}
+        onModelChange={board.setModelIdForNew}
+        agentCount={board.agents.length}
+        onClearAll={board.clearAll}
+        theme={theme}
+        onToggleTheme={toggle}
+      />
 
       <TraceSheet open={traceOpen} onOpenChange={setTraceOpen} trace={selected?.trace ?? []} />
     </TooltipProvider>

@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
  * to search it, so the panel says so at upload time rather than leaving the user
  * to conclude that retrieval is broken.
  */
-export function DocumentPanel() {
+export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) => void }) {
   const [docs, setDocs] = useState<DocumentRow[]>([])
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -58,6 +58,7 @@ export function DocumentPanel() {
   )
 
   const indexed = docs.filter((d) => d.status === 'indexed')
+  useEffect(() => onCountChange?.(indexed.length), [indexed.length, onCountChange])
   const chunkTotal = indexed.reduce((n, d) => n + d.chunkCount, 0)
 
   return (
