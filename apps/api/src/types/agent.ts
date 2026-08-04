@@ -50,12 +50,14 @@ export type AgentOptions = {
   template?: { name: string; args?: string[] };
   /** Workspace dir for the built-in file/shell tools. */
   workspace?: string;
-  /** User id for per-user long-term memory. */
-  userId?: string;
   /**
    * Which workspace this run belongs to. Its documents, databases, memory and
-   * sandbox are the ones the agent can reach — resolved server-side, never
-   * taken from the client unchecked.
+   * sandbox are the ones the agent can reach.
+   *
+   * This is the run's only scope. It is always a value that
+   * `workspaceRegistry.resolve` has already checked against ownership — there
+   * is deliberately no user id here to fall back on, because falling back
+   * would mean running against a scope nobody owns.
    */
   workspaceId?: string;
 };

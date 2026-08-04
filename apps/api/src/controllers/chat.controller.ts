@@ -126,7 +126,6 @@ export function stream(c: Context) {
           runId,
           template: body.template,
           workspace: body.workspace,
-          userId,
           workspaceId: workspace.id,
         });
       } catch (e) {

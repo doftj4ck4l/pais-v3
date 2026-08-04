@@ -54,7 +54,6 @@ export async function runPiAgent(opts: {
   runId?: string;
   template?: { name: string; args?: string[] };
   workspace?: string;
-  userId?: string;
   workspaceId?: string;
 }): Promise<number> {
   const {
@@ -67,8 +66,7 @@ export async function runPiAgent(opts: {
     runId = "-",
     template,
     workspace,
-    userId = "default",
-    workspaceId = userId,
+    workspaceId = "default",
   } = opts;
 
   const key = effectiveApiKey(model);
