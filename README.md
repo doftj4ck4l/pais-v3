@@ -124,9 +124,17 @@ Flow in `services/agent.service.ts`:
 | ------ | ------------------------ | ----------------------------------------- |
 | GET    | `/api/meta`              | Harness + model catalog, with readiness    |
 | POST   | `/api/chat`              | Run one agent turn, streamed over SSE      |
-| GET    | `/api/conversations`     | List a user's stored conversations         |
+| GET    | `/api/conversations`     | List a workspace's stored conversations    |
 | GET    | `/api/conversations/:id` | One conversation + its messages and traces |
 | DELETE | `/api/conversations/:id` | Delete a conversation (cascades)           |
+| GET    | `/api/workspaces`        | List the user's workspaces                 |
+| POST   | `/api/workspaces`        | Create one                                 |
+| PATCH  | `/api/workspaces/:id`    | Rename one                                 |
+| DELETE | `/api/workspaces/:id`    | Delete one and everything it holds         |
+
+Every scoped endpoint takes `?userId=&workspaceId=`. An absent, unknown, or
+unowned `workspaceId` falls back to the user's first workspace rather than
+erroring — a client may be holding an id that was deleted in another tab.
 
 ### Persistence
 
@@ -140,9 +148,31 @@ On load, the console lists this browser's conversations and rebuilds them as
 agents. Transcripts are fetched lazily, the first time you open one. Removing an
 agent deletes its conversation, and messages + traces cascade with it.
 
-Conversations are scoped by a `userId` the browser generates and keeps in
-localStorage, so the `users -> conversations -> messages/traces` chain in the
-schema is actually exercised.
+#### Workspaces
+
+A workspace is the container for one body of work: its agents, uploaded
+documents, database connections, and the sandbox directory its agents write to.
+Everything the console shows belongs to the selected workspace, chosen in the
+switcher under the wordmark.
+
+Users own workspaces; **nothing else is scoped by user**. A workspace's sandbox
+lives at `SANDBOX_ROOT/<workspaceId>` and its container is
+`salurai-<workspaceId>`, so two workspaces never share a filesystem. The browser
+still generates a `userId` and keeps it in localStorage — it is the ownership
+root, and the only thing it now selects is which workspaces you can reach.
+
+`workspaceRegistry.resolve(userId, requested)` is the single gate: it is the one
+place a client-supplied workspace id is checked against ownership, and every
+repository below it trusts the id it is handed. Adding a second path that
+accepts a workspace id without going through it would bypass the only check
+there is.
+
+Existing data was moved into a `Default` workspace per user on first boot after
+the upgrade, and the pre-workspace `user_id` column was then dropped from each
+scoped table. The backfill is idempotent and still runs, so a database from
+before the change can be opened at any time. Removing a workspace deletes its
+rows — including the FTS mirrors, which no foreign key reaches — but
+deliberately leaves its sandbox directory on disk.
 
 #### Run status
 
@@ -165,11 +195,14 @@ error rather than a success.
 
 ### Sandboxed workspaces
 
-The agent's `bash` / `read` / `write` / `edit` tools run inside a per-user
-Docker container, not on the API host. The user's workspace lives at
-`SANDBOX_ROOT/<userId>` and is bind-mounted into the container **at the same
-absolute path**, so host and container share one path namespace and no
+The agent's `bash` / `read` / `write` / `edit` tools run inside a per-workspace
+Docker container, not on the API host. The workspace's directory lives at
+`SANDBOX_ROOT/<workspaceId>` and is bind-mounted into the container **at the
+same absolute path**, so host and container share one path namespace and no
 translation is ever needed.
+
+This is also why "workspace" means one thing here: the sandbox directory *is*
+the workspace's file storage, rather than a second, unrelated use of the word.
 
 This is the default, and deliberately so. Under `SANDBOX_BACKEND=node` the same
 tools run directly on the API host as whoever started the server: the working
@@ -180,15 +213,16 @@ model's context, a prompt-injected PDF would inherit all of it. Use `node` only
 as a trusted operator on a machine you would not mind losing.
 
 Containers are started on demand, reused while warm, and removed after
-`SANDBOX_IDLE_MS` of inactivity by a reaper started at boot. **Workspaces are
-never deleted** — that is the whole point: a file an agent writes today is still
-there for a different agent next week.
+`SANDBOX_IDLE_MS` of inactivity by a reaper started at boot. **Workspace
+directories are never deleted** — that is the whole point: a file an agent
+writes today is still there for a different agent next week. Deleting a
+workspace in the console clears its rows and leaves its directory alone.
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `SANDBOX_BACKEND` | `docker` | `docker` (per-user container, default) or `node` (API host — unsandboxed) |
+| `SANDBOX_BACKEND` | `docker` | `docker` (per-workspace container, default) or `node` (API host — unsandboxed) |
 | `SANDBOX_IMAGE` | `node:22-bookworm-slim` | Image the agent works inside |
-| `SANDBOX_ROOT` | `~/salurai-workspaces` | Where workspaces live on the host |
+| `SANDBOX_ROOT` | `~/salurai-workspaces` | Where workspace directories live on the host |
 | `SANDBOX_IDLE_MS` | `300000` | Remove a container after this much idle time |
 
 Needs a running Docker daemon — `bun run dev` is enough, no env var required.
@@ -208,9 +242,11 @@ cd apps/api && bun scripts/sandbox-persistence-check.ts
 
 ### Connected databases
 
-The `db-analyst` harness can query a user's PostgreSQL databases, read-only. A
-connection is added in the console, encrypted with `CONNECTION_SECRET`, and
-introspected once into a schema snapshot the agent searches.
+The `db-analyst` harness can query a workspace's PostgreSQL databases,
+read-only. A connection is added in the console, encrypted with
+`CONNECTION_SECRET`, and introspected once into a schema snapshot the agent
+searches. Connection names are unique per workspace, so two workspaces may each
+have a `prod` without the agent being unable to tell them apart.
 
 ```bash
 CONNECTION_SECRET=$(openssl rand -base64 32)   # required, else connections are refused

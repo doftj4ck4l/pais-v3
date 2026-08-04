@@ -71,6 +71,13 @@ export const db = drizzle(sqlite);
  * parameter is what lets tests build a real in-memory database with the exact
  * production schema — including the FTS5 table, whose behaviour cannot be
  * meaningfully faked.
+ *
+ * The scoped tables below still declare a nullable `user_id`. Nothing reads or
+ * writes it — the Drizzle models have dropped it, and `ensureSchema` drops the
+ * column outright once a table's rows are placed. It survives here only so that
+ * `backfill` has somewhere to read an old row's owner from, and so a database
+ * written before workspaces existed still matches this DDL on the one boot
+ * where that matters. Scope by `workspace_id`.
  */
 export function applySchema(target: Database) {
   target.exec(`

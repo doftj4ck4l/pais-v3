@@ -173,7 +173,7 @@ export type SandboxRow = {
  */
 export type DocumentStatus = "indexed" | "empty" | "error";
 
-// One uploaded file per row, scoped to a user like conversations and memory.
+// One uploaded file per row, scoped to a workspace like conversations and memory.
 export const documents = sqliteTable(
   "documents",
   {

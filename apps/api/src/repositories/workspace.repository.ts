@@ -3,7 +3,7 @@ import path from "node:path";
 import { env } from "../config/env";
 
 /**
- * Read access to a user's sandbox workspace.
+ * Read access to a workspace's sandbox directory.
  *
  * The only module that turns a client-supplied path into a real one. That is
  * the whole point: this directory is written by an agent, so every path is

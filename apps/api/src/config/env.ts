@@ -33,7 +33,7 @@ export const env = {
 
   sandboxImage: process.env.SANDBOX_IMAGE ?? "salurai-sandbox:1",
 
-  /** Workspaces live here, one directory per user, and are never deleted. */
+  /** Workspace directories live here, one per workspace, and are never deleted. */
   sandboxRoot: process.env.SANDBOX_ROOT ?? path.join(os.homedir(), "salurai-workspaces"),
 
   /** Remove a container after this long without a run. */

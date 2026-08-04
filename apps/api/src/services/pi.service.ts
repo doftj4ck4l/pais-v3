@@ -113,7 +113,7 @@ export async function runPiAgent(opts: {
   const m = models.getModel("gw", model.model);
   if (!m) throw new Error(`model not found: ${model.model}`);
 
-  // --- the agent's world: this host, or a per-user container ---
+  // --- the agent's world: this host, or the workspace's container ---
   // `docker` isolates the run and gives the user a workspace that outlives the
   // container. `node` keeps tools on the API host and is the default, so this
   // stays inert until SANDBOX_BACKEND is switched.
@@ -153,7 +153,7 @@ export async function runPiAgent(opts: {
     },
   }));
 
-  // --- long-term memory tools (remember/recall), scoped per user ---
+  // --- long-term memory tools (remember/recall), scoped to the workspace ---
   for (const mt of createMemoryTools(workspaceId)) {
     agentTools.push({
       name: mt.name,
