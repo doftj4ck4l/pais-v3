@@ -1015,6 +1015,15 @@ No test file. Every function here requires a live Postgres; the logic that *can*
 
 - [ ] **Step 1: Implement the driver**
 
+> **Superseded — do not copy this code block.** Review found six defects in it,
+> fixed in commit `18fb9b6`: the client was constructed outside `try` (a
+> constructor throw leaked the raw URL); `scrub()` missed percent-encoded
+> passwords because `URL.password` returns the encoded form; `scrub()` no-opped
+> entirely on an unparseable URL; a trailing `--` comment commented out the
+> row-cap wrap's closing paren and `LIMIT`; `bounded` propagated `NaN` into
+> `LIMIT`; and the `indexes` query did not exclude `pg_toast`. Read the shipped
+> `postgres.driver.ts`, not this listing.
+
 Create `apps/api/src/services/db/postgres.driver.ts`:
 
 ```ts
