@@ -4,6 +4,7 @@ import { runAgent } from "../services/agent.service";
 import { resolveRun } from "../services/model.service";
 import { TranscriptRecorder } from "../services/transcript.service";
 import { conversationRepository } from "../repositories/conversation.repository";
+import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { fitToWindow } from "../services/context-budget.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { logger, startTimer } from "../lib/logger";
@@ -47,6 +48,10 @@ export function stream(c: Context) {
 
       const { harness, model } = resolved;
       const userId = body.userId ?? env.defaultUserId;
+      // Resolved here, once. Every tool and repository below takes the
+      // workspace id rather than the user id, so this is the single place a
+      // client-supplied value is checked against ownership.
+      const workspace = await workspaceRegistry.resolve(userId, body.workspaceId);
       const history = body.messages ?? [];
       const runId = newRunId();
       const timer = startTimer();
@@ -122,6 +127,7 @@ export function stream(c: Context) {
           template: body.template,
           workspace: body.workspace,
           userId,
+          workspaceId: workspace.id,
         });
       } catch (e) {
         // The loop reports failures as events; a throw here means it broke outright.

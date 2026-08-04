@@ -17,7 +17,7 @@ export async function runAgent(
   model: ModelConfig,
   history: ChatMessage[],
   emit: (event: AgentEvent) => void,
-  { signal, runId = "-", template, workspace, userId }: AgentOptions = {},
+  { signal, runId = "-", template, workspace, userId, workspaceId }: AgentOptions = {},
 ): Promise<number> {
   const messages: ChatMessage[] = [
     { role: "user", content: harness.systemPrompt },
@@ -43,6 +43,7 @@ export async function runAgent(
       template,
       workspace,
       userId,
+      workspaceId,
     });
   }
 

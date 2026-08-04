@@ -17,7 +17,7 @@ export type ScoredChunk = {
 
 export type NewDocument = {
   id: string;
-  userId: string;
+  workspaceId: string;
   title: string;
   bytes: number;
   pages: number;
@@ -27,9 +27,9 @@ export type NewDocument = {
 
 export interface DocumentStore {
   save(doc: NewDocument, docChunks: Chunk[]): Promise<void>;
-  list(userId: string): Promise<DocumentRow[]>;
-  remove(userId: string, documentId: string): Promise<boolean>;
-  search(userId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]>;
+  list(workspaceId: string): Promise<DocumentRow[]>;
+  remove(workspaceId: string, documentId: string): Promise<boolean>;
+  search(workspaceId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]>;
 }
 
 /**
@@ -47,7 +47,7 @@ export class SqliteDocumentStore implements DocumentStore {
       tx.insert(documents)
         .values({
           id: doc.id,
-          userId: doc.userId,
+          workspaceId: doc.workspaceId,
           title: doc.title,
           bytes: doc.bytes,
           pages: doc.pages,
@@ -64,7 +64,7 @@ export class SqliteDocumentStore implements DocumentStore {
           .values({
             id: chunkId,
             documentId: doc.id,
-            userId: doc.userId,
+            workspaceId: doc.workspaceId,
             seq: c.seq,
             page: c.page,
             text: c.text,
@@ -78,20 +78,20 @@ export class SqliteDocumentStore implements DocumentStore {
     });
   }
 
-  async list(userId: string): Promise<DocumentRow[]> {
+  async list(workspaceId: string): Promise<DocumentRow[]> {
     const rows = await this.dbImpl
       .select()
       .from(documents)
-      .where(eq(documents.userId, userId))
+      .where(eq(documents.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
     return rows as DocumentRow[];
   }
 
-  async remove(userId: string, documentId: string): Promise<boolean> {
+  async remove(workspaceId: string, documentId: string): Promise<boolean> {
     const owned = await this.dbImpl
       .select({ id: documents.id })
       .from(documents)
-      .where(and(eq(documents.userId, userId), eq(documents.id, documentId)));
+      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.id, documentId)));
     if (!owned.length) return false;
 
     this.dbImpl.transaction((tx) => {
@@ -110,7 +110,7 @@ export class SqliteDocumentStore implements DocumentStore {
    * negated here so callers can treat "higher is better" as the only convention
    * they need to know.
    */
-  async search(userId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]> {
+  async search(workspaceId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]> {
     const rows = (await this.dbImpl.all(sql`
       SELECT
         c.id           AS chunkId,
@@ -125,7 +125,7 @@ export class SqliteDocumentStore implements DocumentStore {
       JOIN chunks    c ON c.id = chunks_fts.chunk_id
       JOIN documents d ON d.id = c.document_id
       WHERE chunks_fts MATCH ${ftsQuery}
-        AND c.user_id = ${userId}
+        AND c.workspace_id = ${workspaceId}
         AND d.status = 'indexed'
       ORDER BY score DESC
       LIMIT ${limit}

@@ -52,6 +52,12 @@ export type AgentOptions = {
   workspace?: string;
   /** User id for per-user long-term memory. */
   userId?: string;
+  /**
+   * Which workspace this run belongs to. Its documents, databases, memory and
+   * sandbox are the ones the agent can reach — resolved server-side, never
+   * taken from the client unchecked.
+   */
+  workspaceId?: string;
 };
 
 /** Body accepted by POST /api/chat. */
@@ -69,4 +75,6 @@ export type ChatRequest = {
   template?: { name: string; args?: string[] };
   workspace?: string;
   userId?: string;
+  /** Which workspace this run belongs to. Resolved server-side when absent. */
+  workspaceId?: string;
 };

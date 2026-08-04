@@ -17,16 +17,16 @@ function freshStore() {
   return new SqliteDocumentStore(drizzle(sqlite) as any);
 }
 
-const seed = async (store: ReturnType<typeof freshStore>, userId = "u1") => {
+const seed = async (store: ReturnType<typeof freshStore>, workspaceId = "ws1") => {
   await store.save(
-    { id: "d1", userId, title: "policy.pdf", bytes: 100, pages: 2, status: "indexed" },
+    { id: "d1", workspaceId, title: "policy.pdf", bytes: 100, pages: 2, status: "indexed" },
     [
       { seq: 0, page: 4, text: "Enterprise customers may cancel within 30 days of renewal for a full refund." },
       { seq: 1, page: 2, text: "Standard plans are billed monthly and are non-refundable after seven days." },
     ],
   );
   await store.save(
-    { id: "d2", userId, title: "handbook.pdf", bytes: 50, pages: 1, status: "indexed" },
+    { id: "d2", workspaceId, title: "handbook.pdf", bytes: 50, pages: 1, status: "indexed" },
     [{ seq: 0, page: 1, text: "The office is closed on public holidays." }],
   );
 };
@@ -67,7 +67,7 @@ describe("searchDocuments", () => {
   it("ranks the best passage first and cites its page", async () => {
     const store = freshStore();
     await seed(store);
-    const res = await searchDocuments("u1", "enterprise refund window", 5, store);
+    const res = await searchDocuments("ws1", "enterprise refund window", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits[0]!.docTitle).toBe("policy.pdf");
@@ -78,7 +78,7 @@ describe("searchDocuments", () => {
   it("matches refundable when asked about refund (porter stemming)", async () => {
     const store = freshStore();
     await seed(store);
-    const res = await searchDocuments("u1", "refund", 5, store);
+    const res = await searchDocuments("ws1", "refund", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits.map((h) => h.page).sort()).toEqual([2, 4]);
@@ -93,15 +93,15 @@ describe("searchDocuments", () => {
       "50% off -- really?",
       "a * b ^ c",
     ]) {
-      const res = await searchDocuments("u1", q, 5, store);
+      const res = await searchDocuments("ws1", q, 5, store);
       expect(res.ok).toBe(true);
     }
   });
 
-  it("never returns another user's chunks", async () => {
+  it("never returns another workspace's chunks", async () => {
     const store = freshStore();
-    await seed(store, "u1");
-    const res = await searchDocuments("u2", "refund", 5, store);
+    await seed(store, "ws1");
+    const res = await searchDocuments("ws2", "refund", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits).toEqual([]);
@@ -110,17 +110,17 @@ describe("searchDocuments", () => {
   it("reports no-terms instead of throwing on an unsearchable query", async () => {
     const store = freshStore();
     await seed(store);
-    const res = await searchDocuments("u1", "!!!", 5, store);
+    const res = await searchDocuments("ws1", "!!!", 5, store);
     expect(res).toEqual({ ok: false, reason: "no-terms" });
   });
 
   it("excludes documents that produced no text layer", async () => {
     const store = freshStore();
     await store.save(
-      { id: "d3", userId: "u1", title: "scan.pdf", bytes: 9, pages: 3, status: "empty", error: "no text layer" },
+      { id: "d3", workspaceId: "ws1", title: "scan.pdf", bytes: 9, pages: 3, status: "empty", error: "no text layer" },
       [],
     );
-    const res = await searchDocuments("u1", "anything", 5, store);
+    const res = await searchDocuments("ws1", "anything", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits).toEqual([]);
@@ -129,7 +129,7 @@ describe("searchDocuments", () => {
   it("honours the limit", async () => {
     const store = freshStore();
     await seed(store);
-    const res = await searchDocuments("u1", "refund days plans", 1, store);
+    const res = await searchDocuments("ws1", "refund days plans", 1, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits).toHaveLength(1);
@@ -138,8 +138,8 @@ describe("searchDocuments", () => {
   it("drops a deleted document out of the index", async () => {
     const store = freshStore();
     await seed(store);
-    expect(await store.remove("u1", "d1")).toBe(true);
-    const res = await searchDocuments("u1", "refund", 5, store);
+    expect(await store.remove("ws1", "d1")).toBe(true);
+    const res = await searchDocuments("ws1", "refund", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits).toEqual([]);
@@ -147,9 +147,9 @@ describe("searchDocuments", () => {
 
   it("refuses to delete a document owned by someone else", async () => {
     const store = freshStore();
-    await seed(store, "u1");
-    expect(await store.remove("u2", "d1")).toBe(false);
-    const res = await searchDocuments("u1", "refund", 5, store);
+    await seed(store, "ws1");
+    expect(await store.remove("ws2", "d1")).toBe(false);
+    const res = await searchDocuments("ws1", "refund", 5, store);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.hits.length).toBeGreaterThan(0);

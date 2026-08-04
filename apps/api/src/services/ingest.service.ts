@@ -24,7 +24,7 @@ export type IngestResult = {
  * a failed upload indistinguishable from one that never arrived.
  */
 export async function ingestPdf(
-  userId: string,
+  workspaceId: string,
   title: string,
   bytes: Uint8Array,
   store: DocumentStore = documentStore,
@@ -39,7 +39,7 @@ export async function ingestPdf(
   if (!extracted.ok) {
     const status: DocumentStatus = extracted.reason === "no-text" ? "empty" : "error";
     await store.save(
-      { id: documentId, userId, title, bytes: byteLength, pages: extracted.pageCount, status, error: extracted.message },
+      { id: documentId, workspaceId, title, bytes: byteLength, pages: extracted.pageCount, status, error: extracted.message },
       [],
     );
     logger.warn("ingest.rejected", { documentId, title, status, reason: extracted.reason });
@@ -50,7 +50,7 @@ export async function ingestPdf(
   await store.save(
     {
       id: documentId,
-      userId,
+      workspaceId,
       title,
       bytes: byteLength,
       pages: extracted.pageCount,

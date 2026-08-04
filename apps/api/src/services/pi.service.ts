@@ -55,6 +55,7 @@ export async function runPiAgent(opts: {
   template?: { name: string; args?: string[] };
   workspace?: string;
   userId?: string;
+  workspaceId?: string;
 }): Promise<number> {
   const {
     model,
@@ -67,6 +68,7 @@ export async function runPiAgent(opts: {
     template,
     workspace,
     userId = "default",
+    workspaceId = userId,
   } = opts;
 
   const key = effectiveApiKey(model);
@@ -165,7 +167,7 @@ export async function runPiAgent(opts: {
   }
 
   // --- context layer: search the user's uploaded documents ---
-  for (const dt of createDocumentTools(userId)) {
+  for (const dt of createDocumentTools(workspaceId)) {
     agentTools.push({
       name: dt.name,
       description: dt.description,
@@ -224,7 +226,7 @@ export async function runPiAgent(opts: {
   // is actually indexed — advertising an empty corpus invites fruitless searches.
   let docsPrompt = "";
   try {
-    const indexed = (await documentStore.list(userId)).filter((d) => d.status === "indexed");
+    const indexed = (await documentStore.list(workspaceId)).filter((d) => d.status === "indexed");
     if (indexed.length) {
       docsPrompt =
         `\n\nThe user has uploaded ${indexed.length} document(s) you can search with the ` +
@@ -236,7 +238,7 @@ export async function runPiAgent(opts: {
         `through "search_docs". Do not try to open them with the read tool.`;
     }
   } catch (e: any) {
-    logger.warn("context.list_failed", { userId, message: e?.message ?? String(e) });
+    logger.warn("context.list_failed", { workspaceId, message: e?.message ?? String(e) });
   }
 
   // Table names, not table structures. Naming the corpus is what turns the

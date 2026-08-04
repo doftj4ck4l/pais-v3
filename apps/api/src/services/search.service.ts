@@ -52,9 +52,9 @@ export type SearchResult =
   | { ok: true; hits: ScoredChunk[]; query: string }
   | { ok: false; reason: "no-terms" };
 
-/** Search one user's indexed documents. */
+/** Search one workspace's indexed documents. */
 export async function searchDocuments(
-  userId: string,
+  workspaceId: string,
   rawQuery: string,
   limit = 5,
   store: DocumentStore = documentStore,
@@ -62,6 +62,6 @@ export async function searchDocuments(
   const query = toFtsQuery(rawQuery);
   if (!query) return { ok: false, reason: "no-terms" };
   const bounded = Math.max(1, Math.min(20, limit || 5));
-  const hits = await store.search(userId, query, bounded);
+  const hits = await store.search(workspaceId, query, bounded);
   return { ok: true, hits, query };
 }

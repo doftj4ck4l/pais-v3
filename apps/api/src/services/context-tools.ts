@@ -2,14 +2,17 @@ import { searchDocuments } from "./search.service";
 import { documentStore, type DocumentStore } from "../repositories/document.repository";
 
 /**
- * The `search_docs` tool, bound to one user's uploaded documents.
+ * The `search_docs` tool, bound to one workspace's uploaded documents.
  *
  * Retrieval is a tool rather than a pre-flight injection so the agent can refine:
  * a first search for "refund" that returns nothing can become "cancellation
  * policy" on the next iteration. Every attempt lands on the loop rail, so a bad
  * answer can be traced to the passages that produced it.
  */
-export function createDocumentTools(userId: string, store: DocumentStore = documentStore): any[] {
+export function createDocumentTools(
+  workspaceId: string,
+  store: DocumentStore = documentStore,
+): any[] {
   return [
     {
       name: "search_docs",
@@ -33,14 +36,14 @@ export function createDocumentTools(userId: string, store: DocumentStore = docum
         if (!query) return text("error: query required");
 
         const limit = Number(params?.limit ?? 5) || 5;
-        const result = await searchDocuments(userId, query, limit, store);
+        const result = await searchDocuments(workspaceId, query, limit, store);
 
         if (!result.ok) {
           return text(`no searchable terms in "${query}" — try different wording`);
         }
 
         if (!result.hits.length) {
-          const docs = await store.list(userId);
+          const docs = await store.list(workspaceId);
           const indexed = docs.filter((d) => d.status === "indexed");
           if (!indexed.length) {
             const pending = docs.length
