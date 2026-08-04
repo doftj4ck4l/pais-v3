@@ -300,6 +300,13 @@ Expected: FAIL — cannot resolve module `./sql-guard`.
 
 - [ ] **Step 3: Implement**
 
+> **Superseded — do not copy this code block.** Review found a critical defect in
+> it: the single-quote scanner desyncs on Postgres `E'...'` escape strings, so
+> `SELECT E'\'' ; SET statement_timeout = 1 --'` passed as safe with a stacked
+> `SET` intact — and `SET` is *not* blocked by the `READ ONLY` transaction behind
+> the guard. Fixed in commit `6fd0664`, which also makes unterminated literals
+> fail closed. Read the shipped `sql-guard.ts`, not this listing.
+
 Create `apps/api/src/services/db/sql-guard.ts`:
 
 ```ts
