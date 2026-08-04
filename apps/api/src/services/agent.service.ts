@@ -35,6 +35,7 @@ export async function runAgent(
     return runPiAgent({
       model,
       systemPrompt: harness.systemPrompt,
+      harnessTools: harness.tools ?? [],
       history,
       emit,
       signal,

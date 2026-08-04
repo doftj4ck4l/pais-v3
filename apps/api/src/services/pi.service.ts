@@ -32,6 +32,8 @@ import { getSkills, skillsBlock, invokeSkill } from "./skill.service";
 import { createMemoryTools } from "./memory.service";
 import { createDocumentTools } from "./context-tools";
 import { documentStore } from "../repositories/document.repository";
+import { createDatabaseTools } from "./db-tools";
+import { databaseConnectionStore } from "../repositories/database-connection.repository";
 import { logger, startTimer } from "../lib/logger";
 
 type Emit = (event: AgentEvent) => void;
@@ -44,6 +46,8 @@ type Emit = (event: AgentEvent) => void;
 export async function runPiAgent(opts: {
   model: ModelConfig;
   systemPrompt: string;
+  /** Capability gates from the harness (e.g. "db"). Empty for harnesses that named none. */
+  harnessTools?: string[];
   history: ChatMessage[];
   emit: Emit;
   signal?: AbortSignal;
@@ -52,7 +56,18 @@ export async function runPiAgent(opts: {
   workspace?: string;
   userId?: string;
 }): Promise<number> {
-  const { model, systemPrompt, history, emit, signal, runId = "-", template, workspace, userId = "default" } = opts;
+  const {
+    model,
+    systemPrompt,
+    harnessTools = [],
+    history,
+    emit,
+    signal,
+    runId = "-",
+    template,
+    workspace,
+    userId = "default",
+  } = opts;
 
   const key = effectiveApiKey(model);
   if (!key) throw new Error(`No API key for ${model.id} (${model.apiKeyEnv})`);
@@ -160,6 +175,21 @@ export async function runPiAgent(opts: {
     });
   }
 
+  // --- context layer: read-only database access, only where a harness asks ---
+  // Gated rather than always-on: the inventory prompt and three extra tools are
+  // dead weight on a run that will never touch a database.
+  if (harnessTools.includes("db")) {
+    for (const dbt of createDatabaseTools(userId)) {
+      agentTools.push({
+        name: dbt.name,
+        description: dbt.description,
+        parameters: JSON_SCHEMA_TO_TYPEBOX(dbt.parameters as Record<string, unknown>),
+        label: dbt.name,
+        execute: dbt.execute,
+      });
+    }
+  }
+
   // --- pi-native skills (SKILL.md) loaded from apps/api/skills ---
   const { skills } = await getSkills();
   agentTools.push({
@@ -209,12 +239,43 @@ export async function runPiAgent(opts: {
     logger.warn("context.list_failed", { userId, message: e?.message ?? String(e) });
   }
 
+  // Table names, not table structures. Naming the corpus is what turns the
+  // schema tools from ones the model *could* call into ones it knows are worth
+  // calling; loading full structure here would not survive a real schema.
+  let dbPrompt = "";
+  if (harnessTools.includes("db")) {
+    try {
+      const inventory = await databaseConnectionStore.inventory(userId);
+      if (inventory.length) {
+        dbPrompt =
+          `\n\nConnected databases:\n` +
+          inventory
+            .map(
+              (c) =>
+                `- "${c.name}" — ${c.tableCount} table(s): ` +
+                (c.tables.length > 60
+                  ? `${c.tables.slice(0, 60).join(", ")}, … (${c.tables.length - 60} more — use search_schema)`
+                  : c.tables.join(", ")),
+            )
+            .join("\n") +
+          `\nThese are table names only. Call "describe_table" for columns and foreign keys ` +
+          `before writing SQL against any of them.`;
+      } else {
+        dbPrompt =
+          `\n\nNo databases are connected yet. Say so if the user asks you to query one.`;
+      }
+    } catch (e: any) {
+      logger.warn("db.inventory_failed", { userId, message: e?.message ?? String(e) });
+    }
+  }
+
   // #2: systemPrompt as a function that adapts to the active tool set/model.
   const systemPromptFn = (ctx: any): string => {
     const activeTools = (ctx?.activeTools ?? []).map((t: any) => t.name).join(", ");
     let out = systemPrompt;
     if (activeTools) out += `\n\nAvailable tools: ${activeTools}.`;
     if (docsPrompt) out += docsPrompt;
+    if (dbPrompt) out += dbPrompt;
     if (skillsPrompt)
       out += `\n\nThe following skills are available. Invoke them via the "call_skill" tool when they'd help, instead of guessing or fetching by hand:\n${skillsPrompt}`;
     return out;
