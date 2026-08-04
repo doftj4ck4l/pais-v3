@@ -176,8 +176,9 @@ distinguishable from one that never arrived.
   real Postgres message.
 - Timeout → a distinct message telling the agent to aggregate rather than re-run
   the same query.
-- Truncation → `showing 100 of ~14,203 rows`, so the agent aggregates instead of
-  paginating.
+- Truncation → `showing the first 100 rows — more exist`, so the agent aggregates
+  instead of paginating. The total is deliberately not reported: knowing it would
+  cost a second `COUNT(*)` over the same query.
 - `CONNECTION_SECRET` missing → refuse to store a connection, loudly. No
   plaintext fallback, for the same reason the sandbox refuses to fall back to the
   host when Docker is down.
@@ -189,7 +190,7 @@ distinguishable from one that never arrived.
 | --- | --- |
 | `sql-guard.test.ts` | Pure. Allows `SELECT`/`WITH`/`EXPLAIN`; rejects multi-statement, data-modifying CTE, and comment-obfuscated writes (`SELECT 1; /**/DROP TABLE t`) |
 | `crypto.test.ts` | Roundtrip; decryption under the wrong key fails |
-| `introspect.service.test.ts` | Against a fake driver returning fixed catalog rows |
+| `introspect.service.test.ts` | Pure. `buildSnapshot` merges flat catalog rows (tables, columns, PKs, FKs, indexes) into the snapshot; fixture rows in, snapshot out, no driver involved |
 | `database-connection.repository.test.ts` | Real SQLite, matching the existing repository tests |
 | `scripts/db-connector-check.ts` | Manual, needs a real Postgres: proves a write is refused at the transaction layer with the guard disabled |
 
