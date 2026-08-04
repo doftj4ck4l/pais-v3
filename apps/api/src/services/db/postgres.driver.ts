@@ -46,16 +46,48 @@ function client(url: string): any {
   return new Bun.SQL({ url, max: 1, idleTimeout: 10, connectionTimeout: 10 });
 }
 
-/** Never let a driver error carry the credential into a log or a tool result. */
+/**
+ * Never let a driver error carry the credential into a log or a tool result.
+ *
+ * Two things make this harder than a single string replace:
+ *
+ * - `URL.password` is percent-encoded (WHATWG URL semantics), but a driver
+ *   error may quote the connection string with the password decoded — a
+ *   generated password containing `@`, `%`, `#`, or `/` will not match the
+ *   encoded form. Both forms are scrubbed.
+ * - A malformed URL can still carry credentials verbatim in its text (it
+ *   just doesn't parse). Falling back to silence would leak them, so the
+ *   catch branch strips any userinfo-shaped segment instead.
+ */
 function scrub(message: string, url: string): string {
   let out = message;
   try {
     const parsed = new URL(url);
-    if (parsed.password) out = out.split(parsed.password).join("***");
+    if (parsed.password) {
+      out = out.split(parsed.password).join("***");
+      try {
+        const decoded = decodeURIComponent(parsed.password);
+        if (decoded && decoded !== parsed.password) out = out.split(decoded).join("***");
+      } catch {
+        // A malformed percent-escape must not throw inside an error handler.
+      }
+    }
   } catch {
-    // A malformed URL has no password to leak.
+    // Fail safe, not silent: strip any "//user:pass@" userinfo segment even
+    // though the URL itself didn't parse.
+    out = out.replace(/\/\/[^/@\s]*@/g, "//***@");
   }
   return out;
+}
+
+/**
+ * Coerce and clamp the caller-supplied cap. The only invariant that matters:
+ * for every input — negative, zero, fractional, NaN, Infinity, or absurdly
+ * large — the result can only ever LOWER ROW_CAP, never raise it.
+ */
+function boundCap(cap: number): number {
+  const finite = Number.isFinite(cap) ? Math.floor(cap) : ROW_CAP;
+  return Math.max(1, Math.min(ROW_CAP, finite));
 }
 
 export async function probe(url: string): Promise<Probe> {
@@ -69,8 +101,11 @@ export async function probe(url: string): Promise<Probe> {
     return { ok: false, error: `only postgres:// URLs are supported, got ${parsed.protocol}//` };
   }
 
-  const sql = client(url);
+  // Constructed inside the try: `new Bun.SQL(...)` can throw synchronously on
+  // a malformed connection string, and that error must be scrubbed too.
+  let sql: any;
   try {
+    sql = client(url);
     await sql`SELECT 1`;
     return {
       ok: true,
@@ -80,13 +115,15 @@ export async function probe(url: string): Promise<Probe> {
   } catch (e: any) {
     return { ok: false, error: scrub(e?.message ?? String(e), url) };
   } finally {
-    await sql.close().catch(() => {});
+    if (sql) await sql.close().catch(() => {});
   }
 }
 
 export async function fetchCatalog(url: string): Promise<RawCatalog> {
-  const sql = client(url);
+  // Constructed inside the try: see `probe` for why.
+  let sql: any;
   try {
+    sql = client(url);
     const tables = await sql.unsafe(`
       SELECT n.nspname AS "schemaName",
              c.relname AS "name",
@@ -153,6 +190,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
              indexdef   AS "definition"
       FROM pg_indexes
       WHERE schemaname NOT IN ${SYSTEM_SCHEMAS}
+        AND schemaname NOT LIKE 'pg_toast%'
     `);
 
     return {
@@ -165,7 +203,7 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
   } catch (e: any) {
     throw new Error(scrub(e?.message ?? String(e), url));
   } finally {
-    await sql.close().catch(() => {});
+    if (sql) await sql.close().catch(() => {});
   }
 }
 
@@ -180,6 +218,9 @@ export async function fetchCatalog(url: string): Promise<RawCatalog> {
  * The cap is applied by wrapping the statement in a subquery rather than by
  * appending LIMIT, which would attach to the wrong clause in a compound query.
  * One extra row is fetched so truncation can be reported without a COUNT.
+ * `guardReadOnly` returns the statement with comments intact, so the closing
+ * paren and LIMIT go on their own line — otherwise a trailing `-- comment` in
+ * agent-written SQL (routine in LLM output) would comment out both.
  */
 export async function runReadOnly(
   url: string,
@@ -189,15 +230,17 @@ export async function runReadOnly(
   const guarded = guardReadOnly(rawSql);
   if (!guarded.ok) return { ok: false, error: guarded.reason };
 
-  const bounded = Math.max(1, Math.min(ROW_CAP, cap));
+  const bounded = boundCap(cap);
   const isExplain = /^\s*explain\b/i.test(guarded.sql);
   const statement = isExplain
     ? guarded.sql
-    : `SELECT * FROM (${guarded.sql}) AS _capped LIMIT ${bounded + 1}`;
+    : `SELECT * FROM (\n${guarded.sql}\n) AS _capped LIMIT ${bounded + 1}`;
 
-  const sql = client(url);
+  // Constructed inside the try: see `probe` for why.
+  let sql: any;
   let inTransaction = false;
   try {
+    sql = client(url);
     await sql.unsafe("BEGIN TRANSACTION READ ONLY");
     inTransaction = true;
     await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
@@ -216,6 +259,6 @@ export async function runReadOnly(
     return { ok: false, error: scrub(e?.message ?? String(e), url) };
   } finally {
     if (inTransaction) await sql.unsafe("ROLLBACK").catch(() => {});
-    await sql.close().catch(() => {});
+    if (sql) await sql.close().catch(() => {});
   }
 }
