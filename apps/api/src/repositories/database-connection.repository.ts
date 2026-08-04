@@ -20,7 +20,41 @@ export type NewConnection = {
   url: string;
   displayHost: string;
   displayDatabase: string;
+  // Lets a caller that already knows the outcome of a reachability probe (see
+  // database.controller.ts) store the row as already-correct, rather than
+  // inserting "connected" and immediately correcting it — the gap between
+  // those two writes is otherwise visible to a concurrent read.
+  status?: DbConnectionStatus;
+  error?: string | null;
 };
+
+/**
+ * Thrown by `create()` when the DB-level unique index on (user_id, name) is
+ * hit by a request that slipped past the caller's own pre-check — two inserts
+ * for the same name racing each other. Lets the controller map the race to
+ * the same 409 the pre-check returns, instead of a bare 500.
+ */
+export class DuplicateConnectionNameError extends Error {
+  constructor(public readonly connectionName: string) {
+    super(`A connection named "${connectionName}" already exists`);
+    this.name = "DuplicateConnectionNameError";
+  }
+}
+
+/**
+ * bun:sqlite reports a violated UNIQUE index via `error.code`, not by message
+ * text alone, so this checks the code first. The table also has a PRIMARY KEY
+ * uniqueness on `id`; the message-text check narrows this to the (user_id,
+ * name) index specifically, so an id collision (which should never happen —
+ * ids are randomly generated) is not misreported as a duplicate name.
+ */
+function isDuplicateNameViolation(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    (e as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE" &&
+    e.message.includes("db_connections.name")
+  );
+}
 
 export type ConnectionInventoryEntry = { name: string; tableCount: number; tables: string[] };
 
@@ -53,7 +87,12 @@ export interface DatabaseConnectionStore {
   list(userId: string): Promise<DbConnectionRow[]>;
   findByName(userId: string, name: string): Promise<DbConnectionRow | null>;
   resolveUrl(userId: string, connectionId: string): Promise<string | null>;
-  markStatus(id: string, status: DbConnectionStatus, error: string | null): Promise<void>;
+  markStatus(
+    userId: string,
+    id: string,
+    status: DbConnectionStatus,
+    error: string | null,
+  ): Promise<void>;
   remove(userId: string, id: string): Promise<boolean>;
   saveSnapshot(connectionId: string, userId: string, tables: SnapshotTable[]): Promise<void>;
   inventory(userId: string): Promise<ConnectionInventoryEntry[]>;
@@ -81,20 +120,25 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
   constructor(private readonly dbImpl: typeof db = db) {}
 
   async create(conn: NewConnection): Promise<void> {
-    await this.dbImpl.insert(dbConnections).values({
-      id: conn.id,
-      userId: conn.userId,
-      name: conn.name,
-      engine: "postgres",
-      secret: encryptSecret(conn.url),
-      displayHost: conn.displayHost,
-      displayDatabase: conn.displayDatabase,
-      status: "connected",
-      error: null,
-      tableCount: 0,
-      lastIntrospectedAt: null,
-      createdAt: Date.now(),
-    });
+    try {
+      await this.dbImpl.insert(dbConnections).values({
+        id: conn.id,
+        userId: conn.userId,
+        name: conn.name,
+        engine: "postgres",
+        secret: encryptSecret(conn.url),
+        displayHost: conn.displayHost,
+        displayDatabase: conn.displayDatabase,
+        status: conn.status ?? "connected",
+        error: conn.error ?? null,
+        tableCount: 0,
+        lastIntrospectedAt: null,
+        createdAt: Date.now(),
+      });
+    } catch (e) {
+      if (isDuplicateNameViolation(e)) throw new DuplicateConnectionNameError(conn.name);
+      throw e;
+    }
   }
 
   async list(userId: string): Promise<DbConnectionRow[]> {
@@ -125,6 +169,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
   }
 
   async markStatus(
+    userId: string,
     id: string,
     status: DbConnectionStatus,
     error: string | null,
@@ -132,7 +177,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     await this.dbImpl
       .update(dbConnections)
       .set({ status, error })
-      .where(eq(dbConnections.id, id));
+      .where(and(eq(dbConnections.userId, userId), eq(dbConnections.id, id)));
   }
 
   async remove(userId: string, id: string): Promise<boolean> {

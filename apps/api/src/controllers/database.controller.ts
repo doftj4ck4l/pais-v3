@@ -1,5 +1,8 @@
 import type { Context } from "hono";
-import { databaseConnectionStore } from "../repositories/database-connection.repository";
+import {
+  databaseConnectionStore,
+  DuplicateConnectionNameError,
+} from "../repositories/database-connection.repository";
 import { introspectConnection } from "../services/db/introspect.service";
 import { probe } from "../services/db/postgres.driver";
 import { env } from "../config/env";
@@ -53,6 +56,10 @@ export async function create(c: Context) {
     return c.json({ error: `A connection named "${name}" already exists` }, 409);
   }
 
+  // Probed BEFORE the row is written, so the single insert below already
+  // carries the correct status and error. Inserting "connected" and correcting
+  // it afterward would leave a window where a concurrent GET sees the wrong
+  // status for a connection that never worked.
   const reached = await probe(url);
   const id = newConnectionId();
 
@@ -68,16 +75,39 @@ export async function create(c: Context) {
     // probe() already reported this; the placeholders stand.
   }
 
-  await databaseConnectionStore.create({ id, userId, name, url, displayHost, displayDatabase });
+  try {
+    await databaseConnectionStore.create({
+      id,
+      userId,
+      name,
+      url,
+      displayHost,
+      displayDatabase,
+      status: reached.ok ? "connected" : "error",
+      error: reached.ok ? null : reached.error,
+    });
+  } catch (e) {
+    // The findByName check above is check-then-act: a second request for the
+    // same name can race past it and hit the DB's unique index instead. That
+    // must still surface as the same 409, not an unhandled 500.
+    if (e instanceof DuplicateConnectionNameError) {
+      return c.json({ error: e.message }, 409);
+    }
+    throw e;
+  }
 
   if (!reached.ok) {
-    await databaseConnectionStore.markStatus(id, "error", reached.error);
     logger.warn("db.connect_failed", { id, name, error: reached.error });
-    return c.json({ connection: (await databaseConnectionStore.list(userId))[0] }, 201);
+    const connection = (await databaseConnectionStore.list(userId)).find((r) => r.id === id);
+    // Re-reading the row we just wrote should never miss; if it does, saying so
+    // beats silently returning an undefined body.
+    if (!connection) return c.json({ error: "Connection was stored but could not be re-read" }, 500);
+    return c.json({ connection }, 201);
   }
 
   await introspectConnection(id, userId, url);
   const connection = (await databaseConnectionStore.list(userId)).find((r) => r.id === id);
+  if (!connection) return c.json({ error: "Connection was stored but could not be re-read" }, 500);
   return c.json({ connection }, 201);
 }
 

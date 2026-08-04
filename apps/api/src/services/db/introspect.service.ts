@@ -111,7 +111,7 @@ export async function introspectConnection(
     return { ok: true, tableCount: tables.length };
   } catch (e: any) {
     const error = e?.message ?? String(e);
-    await store.markStatus(connectionId, "error", error);
+    await store.markStatus(userId, connectionId, "error", error);
     logger.warn("db.introspect_failed", { connectionId, error });
     return { ok: false, error };
   }

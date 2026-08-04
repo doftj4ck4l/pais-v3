@@ -89,7 +89,7 @@ describe("SqliteDatabaseConnectionStore", () => {
 
   it("records an introspection failure without discarding the connection", async () => {
     await store.create(conn());
-    await store.markStatus("c1", "error", "could not connect: timeout");
+    await store.markStatus("u1", "c1", "error", "could not connect: timeout");
     const row = (await store.list("u1"))[0]!;
     expect(row.status).toBe("error");
     expect(row.error).toBe("could not connect: timeout");
@@ -204,7 +204,7 @@ describe("snapshot", () => {
     // inventory() already excludes a non-connected connection; describeTable
     // and searchSchema must match, or a re-introspection failure leaves a
     // stale — possibly wrong — snapshot fully queryable by name.
-    await store.markStatus("c1", "error", "could not connect: timeout");
+    await store.markStatus("u1", "c1", "error", "could not connect: timeout");
     expect(await store.describeTable("u1", "sales", "orders")).toBeNull();
     expect(await store.searchSchema("u1", '"orders"', null, 5)).toHaveLength(0);
   });
