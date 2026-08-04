@@ -228,6 +228,9 @@ const ALLOWED = [
   ["an escaped quote in a literal", "SELECT * FROM t WHERE note = 'it''s deleted'"],
   ["OFFSET, which contains SET", "SELECT * FROM orders OFFSET 10"],
   ["a column whose name contains a keyword", "SELECT updated_at, created_at FROM orders"],
+  ["a column literally named close", "SELECT open, high, low, close FROM prices"],
+  ["a column literally named comment", "SELECT comment FROM reviews"],
+  ["a column named start", "SELECT start, duration FROM sessions"],
   ["leading whitespace and newlines", "\n\n  SELECT 1\n"],
 ] as const;
 
@@ -243,6 +246,8 @@ const REJECTED = [
   ["a temp table", "CREATE TEMP TABLE t AS SELECT 1"],
   ["a session variable change", "SET statement_timeout = 0"],
   ["a transaction control statement", "COMMIT"],
+  ["COMMENT ON, caught by the prefix check", "COMMENT ON TABLE orders IS 'x'"],
+  ["a cursor declaration, caught by the prefix check", "DECLARE c CURSOR FOR SELECT 1"],
   ["an empty statement", "   "],
   ["a bare non-select", "TRUNCATE orders"],
 ] as const;
@@ -318,14 +323,21 @@ Create `apps/api/src/services/db/sql-guard.ts`:
 
 export type GuardResult = { ok: true; sql: string } | { ok: false; reason: string };
 
-/** Anything that can change state, acquire a lock, or alter the session. */
+/**
+ * Words that can write from *inside* a statement — within a CTE, a subquery, or
+ * after a stacked semicolon the multi-statement check somehow let through.
+ *
+ * Deliberately narrow. Words that can only ever begin a statement (COMMENT,
+ * CLOSE, FETCH, DECLARE, EXECUTE, PREPARE, CALL, DO, RELEASE, START, MOVE) are
+ * already blocked by the SELECT/WITH/EXPLAIN prefix check, and several of them
+ * are common column names — a price table has a `close`, a review table has a
+ * `comment`. Listing them here would reject ordinary reads, and the READ ONLY
+ * transaction catches anything this scan misses regardless.
+ */
 const FORBIDDEN = [
   "insert", "update", "delete", "truncate", "drop", "alter", "create", "grant",
-  "revoke", "comment", "copy", "merge", "call", "do", "vacuum", "analyze",
-  "reindex", "refresh", "cluster", "lock", "set", "reset", "begin", "start",
-  "commit", "rollback", "savepoint", "release", "listen", "notify", "unlisten",
-  "prepare", "execute", "deallocate", "discard", "import", "security", "close",
-  "fetch", "move", "declare",
+  "revoke", "merge", "copy", "vacuum", "reindex", "refresh", "cluster", "lock",
+  "set", "reset", "commit", "rollback", "savepoint", "discard",
 ];
 
 /**
@@ -441,9 +453,6 @@ export function guardReadOnly(raw: string): GuardResult {
   // EXPLAIN's own body is scanned by the keyword pass below, so `EXPLAIN DELETE`
   // is caught there rather than needing a case here.
   for (const word of FORBIDDEN) {
-    // `analyze` is only forbidden alongside EXPLAIN, handled above; as a bare
-    // statement it is caught by the SELECT/WITH/EXPLAIN prefix check.
-    if (word === "analyze") continue;
     if (new RegExp(`\\b${word}\\b`, "i").test(withoutTrailing)) {
       return {
         ok: false,
@@ -459,9 +468,9 @@ export function guardReadOnly(raw: string): GuardResult {
 - [ ] **Step 4: Run the tests**
 
 Run: `cd apps/api && bun test src/services/db/sql-guard.test.ts`
-Expected: PASS, 26 tests.
+Expected: PASS, 31 tests.
 
-If `allows a CTE` fails, check the `FORBIDDEN` scan — `WITH recent AS (SELECT ...)` must not trip any word in the list. If it does, the failing word is over-broad and should be removed from the list rather than special-cased in the test.
+If an `allows` case fails, the `FORBIDDEN` word that tripped it is over-broad — remove it from the list rather than special-casing the test. The list is intentionally narrow, and the `READ ONLY` transaction is what makes that safe.
 
 - [ ] **Step 5: Type-check and commit**
 
@@ -1855,7 +1864,7 @@ describe("snapshot", () => {
 - [ ] **Step 7: Run everything**
 
 Run: `cd apps/api && bun test src/repositories/database-connection.repository.test.ts src/services/db/`
-Expected: PASS — 10 original + 12 snapshot + 8 introspect + 26 guard.
+Expected: PASS — 10 original + 12 snapshot + 8 introspect + 31 guard.
 
 - [ ] **Step 8: Type-check and commit**
 
