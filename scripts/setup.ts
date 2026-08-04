@@ -9,6 +9,7 @@
  * checkout that looks fine is worse than one that says what is missing.
  */
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -59,11 +60,29 @@ if (!fs.existsSync(envPath)) {
   fs.copyFileSync(examplePath, envPath);
   console.log("  created apps/api/.env from .env.example");
   problems.push("apps/api/.env has no API key yet — set CUSTOM_BASE_URL and CUSTOM_API_KEY.");
+}
+
+const body = fs.readFileSync(envPath, "utf8");
+
+const key = body.match(/^CUSTOM_API_KEY=(.*)$/m)?.[1]?.trim();
+if (key) console.log("  CUSTOM_API_KEY is set");
+else problems.push("apps/api/.env is missing CUSTOM_API_KEY — models will show unavailable.");
+
+// Generated rather than asked for: it protects stored database credentials, has
+// no correct value a human could supply, and a connection cannot be saved
+// without it. Only ever added when absent, since regenerating it would make
+// every stored credential undecryptable.
+if (body.match(/^CONNECTION_SECRET=(.+)$/m)) {
+  console.log("  CONNECTION_SECRET is set");
 } else {
-  const body = fs.readFileSync(envPath, "utf8");
-  const key = body.match(/^CUSTOM_API_KEY=(.*)$/m)?.[1]?.trim();
-  if (key) console.log("  CUSTOM_API_KEY is set");
-  else problems.push("apps/api/.env exists but CUSTOM_API_KEY is empty — models will show unavailable.");
+  const secret = crypto.randomBytes(32).toString("base64");
+  // Strip any empty placeholder line from .env.example first, then append with
+  // a leading newline guard — a file with no trailing newline would otherwise
+  // glue this onto the previous variable's value.
+  const stripped = body.replace(/^CONNECTION_SECRET=\s*$/m, "").replace(/\n{3,}/g, "\n\n");
+  const separator = stripped.endsWith("\n") || stripped === "" ? "" : "\n";
+  fs.writeFileSync(envPath, `${stripped}${separator}CONNECTION_SECRET=${secret}\n`);
+  console.log("  generated CONNECTION_SECRET");
 }
 
 // ---- 3. docker --------------------------------------------------------------
