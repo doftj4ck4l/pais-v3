@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { applySchema } from "../db/client";
 import { env } from "../config/env";
 import { SqliteDatabaseConnectionStore } from "./database-connection.repository";
+import type { SnapshotTable } from "../services/db/introspect.service";
 
 /**
  * Runs against a real in-memory database built from the production schema
@@ -99,5 +100,103 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(await store.remove("someone-else", "c1")).toBe(false);
     expect(await store.remove("u1", "c1")).toBe(true);
     expect(await store.list("u1")).toHaveLength(0);
+  });
+});
+
+const snapshot: SnapshotTable[] = [
+  {
+    schemaName: "public",
+    name: "orders",
+    comment: "Customer orders",
+    rowEstimate: 1200,
+    indexes: ["CREATE INDEX idx_orders_status ON public.orders USING btree (status)"],
+    columns: [
+      { seq: 1, name: "id", dataType: "integer", nullable: false, isPrimaryKey: true, fkTable: null, fkColumn: null, comment: null },
+      { seq: 2, name: "customer_id", dataType: "integer", nullable: false, isPrimaryKey: false, fkTable: "public.customers", fkColumn: "id", comment: null },
+    ],
+  },
+  {
+    schemaName: "public",
+    name: "refunds",
+    comment: null,
+    rowEstimate: 8,
+    indexes: [],
+    columns: [
+      { seq: 1, name: "reason", dataType: "text", nullable: true, isPrimaryKey: false, fkTable: null, fkColumn: null, comment: null },
+    ],
+  },
+];
+
+describe("snapshot", () => {
+  beforeEach(async () => {
+    await store.create(conn());
+    await store.saveSnapshot("c1", "u1", snapshot);
+  });
+
+  it("records the table count and clears any prior error", async () => {
+    const row = (await store.list("u1"))[0]!;
+    expect(row.tableCount).toBe(2);
+    expect(row.status).toBe("connected");
+    expect(row.lastIntrospectedAt).toBeGreaterThan(0);
+  });
+
+  it("builds an inventory the system prompt can use", async () => {
+    const inv = await store.inventory("u1");
+    expect(inv).toHaveLength(1);
+    expect(inv[0]!.name).toBe("sales");
+    expect(inv[0]!.tables).toEqual(["orders", "refunds"]);
+  });
+
+  it("describes a table by its bare name", async () => {
+    const detail = await store.describeTable("u1", "sales", "orders");
+    expect(detail?.comment).toBe("Customer orders");
+    expect(detail?.columns.map((c) => c.name)).toEqual(["id", "customer_id"]);
+    expect(detail?.indexes).toHaveLength(1);
+  });
+
+  it("describes a table by its qualified name", async () => {
+    expect((await store.describeTable("u1", "sales", "public.orders"))?.name).toBe("orders");
+  });
+
+  it("preserves the foreign key that makes a join correct", async () => {
+    const detail = await store.describeTable("u1", "sales", "orders");
+    const fk = detail!.columns.find((c) => c.name === "customer_id")!;
+    expect(fk.fkTable).toBe("public.customers");
+    expect(fk.fkColumn).toBe("id");
+  });
+
+  it("returns null for an unknown table", async () => {
+    expect(await store.describeTable("u1", "sales", "ghost")).toBeNull();
+  });
+
+  it("does not describe a table belonging to another user", async () => {
+    expect(await store.describeTable("u2", "sales", "orders")).toBeNull();
+  });
+
+  it("finds a table by a stemmed term", async () => {
+    const hits = await store.searchSchema("u1", '"refund"', null, 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.some((h) => h.tableName === "refunds")).toBe(true);
+  });
+
+  it("finds a column and reports the table that holds it", async () => {
+    const hits = await store.searchSchema("u1", '"customer_id"', null, 5);
+    const hit = hits.find((h) => h.columnName === "customer_id");
+    expect(hit?.tableName).toBe("orders");
+  });
+
+  it("scopes search to one connection when asked", async () => {
+    expect(await store.searchSchema("u1", '"orders"', "nonexistent", 5)).toHaveLength(0);
+  });
+
+  it("replaces the previous snapshot rather than appending to it", async () => {
+    await store.saveSnapshot("c1", "u1", [snapshot[0]!]);
+    expect((await store.inventory("u1"))[0]!.tables).toEqual(["orders"]);
+    expect(await store.searchSchema("u1", '"refund"', null, 5)).toHaveLength(0);
+  });
+
+  it("drops the snapshot and its search index when the connection is removed", async () => {
+    await store.remove("u1", "c1");
+    expect(await store.searchSchema("u1", '"orders"', null, 5)).toHaveLength(0);
   });
 });
