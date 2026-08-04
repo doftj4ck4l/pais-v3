@@ -60,7 +60,7 @@ export function stream(c: Context) {
       // not-owned id starts a new conversation rather than erroring — the client
       // may simply be holding a row that was deleted in another tab.
       const existing = body.conversationId
-        ? await conversationRepository.getOwned(body.conversationId, userId)
+        ? await conversationRepository.getOwned(body.conversationId, workspace.id)
         : undefined;
 
       let conversationId: string;
@@ -76,7 +76,7 @@ export function stream(c: Context) {
       } else {
         recorder = new TranscriptRecorder(history);
         conversationId = await conversationRepository.create({
-          userId,
+          workspaceId: workspace.id,
           title: recorder.title(),
           modelId: model.id,
           harnessId: harness.id,

@@ -156,7 +156,7 @@ export async function runPiAgent(opts: {
   }));
 
   // --- long-term memory tools (remember/recall), scoped per user ---
-  for (const mt of createMemoryTools(userId)) {
+  for (const mt of createMemoryTools(workspaceId)) {
     agentTools.push({
       name: mt.name,
       description: mt.description,

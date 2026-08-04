@@ -1,12 +1,21 @@
 import type { Context } from "hono";
 import { conversationRepository } from "../repositories/conversation.repository";
 import { env } from "../config/env";
+import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 
-const userIdOf = (c: Context) => c.req.query("userId") ?? env.defaultUserId;
+/**
+ * The workspace this request applies to. `resolve` is the one place a
+ * client-supplied workspace id is checked against ownership.
+ */
+const workspaceIdOf = async (c: Context) => {
+  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
+  return workspace.id;
+};
 
-/** GET /api/conversations — a user's conversations, newest first. */
+/** GET /api/conversations — a workspace's conversations, newest first. */
 export async function index(c: Context) {
-  const conversations = await conversationRepository.list(userIdOf(c));
+  const conversations = await conversationRepository.list(await workspaceIdOf(c));
   return c.json({ conversations });
 }
 

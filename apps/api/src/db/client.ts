@@ -88,7 +88,6 @@ export function applySchema(target: Database) {
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations (user_id, created_at);
     CREATE TABLE IF NOT EXISTS messages (
       id              TEXT PRIMARY KEY,
       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -114,7 +113,6 @@ export function applySchema(target: Database) {
       tags     TEXT,
       source   TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_memory_user_ts ON memory_notes (user_id, ts);
     CREATE TABLE IF NOT EXISTS sandboxes (
       user_id        TEXT PRIMARY KEY,
       container_id   TEXT,
@@ -251,6 +249,8 @@ const RESCOPED_TABLES = [
   "db_connections",
   "db_tables",
   "db_columns",
+  "memory_notes",
+  "conversations",
 ];
 
 /**

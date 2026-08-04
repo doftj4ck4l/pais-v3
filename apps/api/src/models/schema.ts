@@ -41,13 +41,12 @@ export type WorkspaceRow = {
  */
 export type ConversationStatus = "running" | "done" | "stopped" | "error";
 
-// One conversation per user. Each conversation holds the agent run + traces
-// (1 user -> many conversations -> many messages/traces).
+// One conversation per agent run, held by a workspace alongside its traces
+// (1 workspace -> many conversations -> many messages/traces).
 export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     workspaceId: text("workspace_id"),
     title: text("title").notNull(), // the agent's task / first prompt
     modelId: text("model_id").notNull(),
@@ -56,14 +55,10 @@ export const conversations = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [
-    index("idx_conversations_user").on(t.userId, t.createdAt),
-    index("idx_conversations_workspace").on(t.workspaceId, t.createdAt),
-  ],
+  (t) => [index("idx_conversations_workspace").on(t.workspaceId, t.createdAt)],
 );
 export type ConversationRow = {
   id: string;
-  userId: string | null;
   workspaceId: string | null;
   title: string;
   modelId: string;
@@ -120,12 +115,11 @@ export type TraceRow = {
   ts: number;
 };
 
-// ---- memory (existing) ----
+// ---- memory: notes the agent keeps for one workspace between runs ----
 export const memoryNotes = sqliteTable(
   "memory_notes",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id"),
     workspaceId: text("workspace_id"),
     ts: integer("ts").notNull(), // epoch ms
     content: text("content").notNull(),
@@ -137,7 +131,6 @@ export const memoryNotes = sqliteTable(
 
 export type MemoryNoteRow = {
   id: string;
-  userId: string | null;
   workspaceId: string | null;
   ts: number;
   content: string;

@@ -23,6 +23,13 @@ describe("workspace registry", () => {
     expect(await registry.list("u1")).toHaveLength(1);
   });
 
+  it("writes the user row, since nothing else does now", async () => {
+    await registry.create("u1", "Research");
+    await registry.create("u1", "Second");
+    // Idempotent: a second workspace for the same user must not collide.
+    expect(countOf("users")).toBe(1);
+  });
+
   it("keeps users apart", async () => {
     await registry.create("u1", "Mine");
     expect(await registry.list("u2")).toEqual([]);
@@ -158,7 +165,6 @@ describe("workspace registry", () => {
   it("takes the conversation's transcript with it", async () => {
     const a = await registry.create("u1", "A");
     await registry.create("u1", "B");
-    sqlite.run(`INSERT INTO users (id, created_at) VALUES ('u1', 1)`);
     sqlite.run(
       `INSERT INTO conversations (id, user_id, workspace_id, title, model_id, harness_id, status, created_at, updated_at)
        VALUES ('c1', 'u1', ?, 't', 'm', 'h', 'done', 1, 1)`,

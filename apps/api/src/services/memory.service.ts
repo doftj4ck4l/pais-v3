@@ -6,7 +6,7 @@ const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).sli
  * The `remember` / `recall` tools, bound to one user's memory. Handed to the pi
  * runtime alongside the built-in tools.
  */
-export function createMemoryTools(userId: string, store: MemoryStore = memoryStore): any[] {
+export function createMemoryTools(workspaceId: string, store: MemoryStore = memoryStore): any[] {
   return [
     {
       name: "remember",
@@ -32,7 +32,7 @@ export function createMemoryTools(userId: string, store: MemoryStore = memorySto
           content,
           tags: Array.isArray(params?.tags) ? params.tags.map(String) : undefined,
         };
-        await store.append(userId, entry);
+        await store.append(workspaceId, entry);
         return { content: [{ type: "text" as const, text: `remembered: ${content}` }] };
       },
     },
@@ -51,7 +51,7 @@ export function createMemoryTools(userId: string, store: MemoryStore = memorySto
       async execute(_id: string, params: any) {
         const query = String(params?.query ?? "");
         const limit = Math.max(1, Math.min(20, Number(params?.limit ?? 5) || 5));
-        const matches = await store.search(userId, query);
+        const matches = await store.search(workspaceId, query);
         const recent = matches.slice(0, limit); // already newest-first
         if (!recent.length) {
           return {

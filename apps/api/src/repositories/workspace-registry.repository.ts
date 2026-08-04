@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { db, workspaces } from "../db/client";
+import { db, users, workspaces } from "../db/client";
 import type { WorkspaceRow } from "../db/client";
 
 const genId = () =>
@@ -37,6 +37,13 @@ export class SqliteWorkspaceRegistry implements WorkspaceRegistry {
   constructor(private readonly dbImpl: typeof db = db) {}
 
   async create(userId: string, name: string): Promise<WorkspaceRow> {
+    // Workspaces are now the only thing a user directly owns, so this is where
+    // the user row gets written. Nothing else creates one.
+    await this.dbImpl
+      .insert(users)
+      .values({ id: userId, createdAt: Date.now() })
+      .onConflictDoNothing();
+
     const row: WorkspaceRow = {
       id: genId(),
       userId,
