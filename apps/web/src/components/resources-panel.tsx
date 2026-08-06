@@ -1,40 +1,39 @@
 import { useState } from 'react'
-import { DatabaseIcon, FileIcon, FileTextIcon, PanelRightCloseIcon } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { DatabaseIcon, FileIcon, FileTextIcon, PlugIcon } from 'lucide-react'
 import { DocumentPanel } from '@/components/document-panel'
 import { DatabasePanel } from '@/components/database-panel'
 import { FilesPanel } from '@/components/files-panel'
+import { McpPanel } from '@/components/mcp-panel'
 import { cn } from '@/lib/utils'
 
-type TabId = 'documents' | 'databases' | 'files'
+type TabId = 'documents' | 'databases' | 'mcp' | 'files'
 
 const TABS: { id: TabId; label: string; icon: typeof FileTextIcon }[] = [
   { id: 'documents', label: 'Docs', icon: FileTextIcon },
   { id: 'databases', label: 'Data', icon: DatabaseIcon },
+  { id: 'mcp', label: 'MCP', icon: PlugIcon },
   { id: 'files', label: 'Files', icon: FileIcon },
 ]
 
 /**
- * What the agent can reach: uploaded documents, connected databases, and files
- * it has produced.
+ * What the agent can reach: uploaded documents, connected databases, MCP
+ * servers, and files it has produced.
  *
- * Tabbed rather than stacked because the list of source types grows — three
+ * Tabbed rather than stacked because the list of source types grows — four
  * today, more later — and a sidebar that grows with it eventually pushes the
  * agent list off screen. Counts stay on the inactive tabs so switching is never
  * needed just to see whether something is attached.
  *
- * All three stay mounted. Each fetches on mount and on its own refresh, so
+ * All four stay mounted. Each fetches on mount and on its own refresh, so
  * unmounting would re-fetch on every tab switch and lose the panels' local
  * state (a half-typed connection string, for one).
  */
-export function ResourcesPanel({ onClose, filesRefreshKey }: {
-  onClose: () => void
-  filesRefreshKey?: number
-}) {
+export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }) {
   const [tab, setTab] = useState<TabId>('documents')
   const [counts, setCounts] = useState<Record<TabId, number>>({
     documents: 0,
     databases: 0,
+    mcp: 0,
     files: 0,
   })
 
@@ -64,16 +63,6 @@ export function ResourcesPanel({ onClose, filesRefreshKey }: {
             ) : null}
           </button>
         ))}
-
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          aria-label="Hide resources"
-          className="shrink-0 text-muted-foreground"
-        >
-          <PanelRightCloseIcon />
-        </Button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -82,6 +71,9 @@ export function ResourcesPanel({ onClose, filesRefreshKey }: {
         </Pane>
         <Pane active={tab === 'databases'}>
           <DatabasePanel onCountChange={setCount('databases')} />
+        </Pane>
+        <Pane active={tab === 'mcp'}>
+          <McpPanel onCountChange={setCount('mcp')} />
         </Pane>
         <Pane active={tab === 'files'}>
           <FilesPanel refreshKey={filesRefreshKey} onCountChange={setCount('files')} />

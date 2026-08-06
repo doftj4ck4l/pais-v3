@@ -1,0 +1,28 @@
+# Serves the built console and puts the API behind the same origin.
+#
+# Same-origin is the point: the browser calls `/api/...` with no host and no
+# CORS, exactly as it does behind vite's dev proxy, so the client code is
+# identical in development and deployment.
+:8080 {
+	encode zstd gzip
+
+	# Streaming, not buffered. /api/chat is Server-Sent Events, and a proxy that
+	# buffers turns a live transcript into one block of text at the end.
+	handle /api/* {
+		reverse_proxy api:4000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv
+		# Single-page app: every unknown path is a client route, not a 404.
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,25 @@
+# Build context hygiene. node_modules is the big one: the image installs its
+# own from the lockfile, and shipping the host's would both bloat the context
+# and risk platform-specific binaries leaking in.
+node_modules
+**/node_modules
+dist
+**/dist
+
+.git
+.gitignore
+
+# Secrets never enter an image layer. They arrive at run time, through
+# docker-compose's env_file.
+.env
+.env.*
+!.env.example
+
+# Local state, not application code.
+apps/api/data
+apps/api/workspace
+workspaces
+docs
+pic
+*.md
+!README.md

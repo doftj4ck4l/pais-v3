@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { AlertCircleIcon, XIcon } from 'lucide-react'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ModelLogo } from '@/components/model-logo'
 import { STATUS_LABEL, statusEmphasis } from '@/lib/status'
 import { cn } from '@/lib/utils'
@@ -18,6 +20,10 @@ export function AgentList({
   onSelect: (id: string) => void
   onRemove: (id: string) => void
 }) {
+  // Which agent the X was pressed on. Deleting a conversation removes it from
+  // the server too, so there is nothing to undo it with.
+  const [pending, setPending] = useState<AgentRun | null>(null)
+
   if (agents.length === 0) {
     return (
       <p className="px-1 text-xs leading-relaxed text-muted-foreground">
@@ -27,7 +33,8 @@ export function AgentList({
   }
 
   return (
-    <ul className="flex flex-col gap-1">
+    <>
+      <ul className="flex flex-col gap-1">
       {agents.map((agent) => {
         const model = meta?.models.find((m) => m.id === agent.modelId)
         const active = agent.id === selectedId
@@ -72,7 +79,7 @@ export function AgentList({
 
             <button
               type="button"
-              onClick={() => onRemove(agent.id)}
+              onClick={() => setPending(agent)}
               aria-label={`Remove agent: ${agent.task || 'Untitled'}`}
               className="absolute top-1.5 right-1.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none group-hover:opacity-100"
             >
@@ -82,6 +89,19 @@ export function AgentList({
         )
       })}
     </ul>
+
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(open) => !open && setPending(null)}
+        title="Delete this agent?"
+        description={
+          pending?.status === 'running'
+            ? `"${pending.task || 'Untitled'}" is still running. Deleting it stops the run and removes its transcript for good.`
+            : `"${pending?.task || 'Untitled'}" and its whole transcript will be removed. This cannot be undone.`
+        }
+        onConfirm={() => pending && onRemove(pending.id)}
+      />
+    </>
   )
 }
 

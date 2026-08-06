@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { PanelRightIcon, PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
+import { ActivityIcon, PanelRightIcon, PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -103,6 +104,15 @@ export function ControlDeck({
           <TerminalIcon data-icon="inline-start" />
           Trace
           <span className="readout text-[0.625rem] opacity-70">{selected?.trace.length ?? 0}</span>
+        </Button>
+
+        {/* Trace is this run; Runs is every run. Sat next to each other because
+            the question "why was that slow" starts at one and ends at the other. */}
+        <Button asChild variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
+          <Link to="/admin">
+            <ActivityIcon data-icon="inline-start" />
+            Runs
+          </Link>
         </Button>
 
         {/* Also on the agent header, but that only exists once a run is open —

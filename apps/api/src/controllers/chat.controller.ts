@@ -4,6 +4,7 @@ import { runAgent } from "../services/agent.service";
 import { resolveRun } from "../services/model.service";
 import { TranscriptRecorder } from "../services/transcript.service";
 import { conversationRepository } from "../repositories/conversation.repository";
+import { runRepository } from "../repositories/run.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { fitToWindow } from "../services/context-budget.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
@@ -83,6 +84,17 @@ export function stream(c: Context) {
         });
       }
 
+      // Opened before the agent runs, so a run that crashes mid-answer still
+      // appears on the timeline as `running` rather than vanishing.
+      await runRepository.start({
+        id: runId,
+        conversationId,
+        workspaceId: workspace.id,
+        harnessId: harness.id,
+        modelId: model.id,
+        prompt: newTurnOf(history)[0]?.content ?? "",
+      });
+
       // Let the client bind its local agent to the stored row straight away.
       emit({ type: "conversation", id: conversationId });
 
@@ -110,7 +122,13 @@ export function stream(c: Context) {
       // Fit the thread to the model's window before the run, summarising older
       // turns if it no longer fits. Emitted (not recorded) — the meter is live
       // state, not part of the transcript.
-      const budget = await fitToWindow(model, history, signal);
+      // What the previous turn of THIS conversation actually cost the provider.
+      // Null on the first turn, where the estimate is all there is — and where
+      // the thread is far too small to need compacting anyway.
+      const occupiedTokens =
+        (await conversationRepository.lastContextTokens(conversationId)) ?? undefined;
+
+      const budget = await fitToWindow(model, history, signal, occupiedTokens);
       emit(budget.event);
       if (budget.event.compacted) {
         record({
@@ -146,7 +164,8 @@ export function stream(c: Context) {
       const status = runStatus(signal.aborted, recorder.error());
       record({ type: "trace", step: "run.end", fields: { ms: timer.elapsed(), turns, status } });
 
-      await persist(conversationId, recorder, status);
+      await persist(conversationId, recorder, status, runId);
+      await closeRun(runId, status, turns, recorder);
 
       logger.info("run.end", {
         run: runId,
@@ -196,15 +215,61 @@ async function persist(
   conversationId: string,
   recorder: TranscriptRecorder,
   status: ConversationStatus,
+  runId: string,
 ): Promise<void> {
   try {
     await conversationRepository.appendMessages(conversationId, recorder.toMessageRows());
-    await conversationRepository.appendTraces(conversationId, recorder.toTraceRows());
+    await conversationRepository.appendTraces(conversationId, recorder.toTraceRows(), runId);
     await conversationRepository.setStatus(conversationId, status);
   } catch (e) {
     logger.error("conversation.persist_failed", {
       conversation: conversationId,
       error: (e as Error).message,
     });
+  }
+}
+
+/**
+ * Close the run row.
+ *
+ * Token totals come from the `context.usage` spans the agent recorded, which
+ * carry the provider's own counts — the only figures here that are measured
+ * rather than estimated. Failing to close a run must not fail the response the
+ * client already has, so this is logged, not thrown.
+ */
+async function closeRun(
+  runId: string,
+  status: ConversationStatus,
+  turns: number,
+  recorder: TranscriptRecorder,
+): Promise<void> {
+  try {
+    let tokensIn = 0;
+    let tokensOut = 0;
+    let toolCalls = 0;
+    let toolErrors = 0;
+    for (const trace of recorder.toTraceRows()) {
+      if (trace.step === "run.tools") {
+        toolCalls = Number(trace.fields.toolCalls ?? 0) || 0;
+        toolErrors = Number(trace.fields.toolErrors ?? 0) || 0;
+        continue;
+      }
+      if (trace.step !== "context.usage") continue;
+      // `used` is the whole prompt for that turn, so the largest is the run's
+      // peak occupancy. Summing would double-count the history each turn resends.
+      tokensIn = Math.max(tokensIn, Number(trace.fields.used ?? 0) || 0);
+      tokensOut += Number(trace.fields.output ?? 0) || 0;
+    }
+    await runRepository.finish(runId, {
+      status,
+      turns,
+      tokensIn,
+      tokensOut,
+      toolCalls,
+      toolErrors,
+      error: recorder.error(),
+    });
+  } catch (e) {
+    logger.error("run.close_failed", { run: runId, error: (e as Error).message });
   }
 }
