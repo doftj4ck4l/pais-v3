@@ -111,20 +111,30 @@ export const conversationRepository = {
     );
   },
 
-  /** Append a whole trace in one statement. No-op when empty. */
+  /**
+   * Append a run's spans in one statement. No-op when empty.
+   *
+   * Each row carries the timestamp it was recorded with. This used to stamp the
+   * whole batch with a single `Date.now()` at flush time, which put every span
+   * in a run at the same instant — fine for a flat list, useless for a
+   * timeline, and the reason the waterfall needed this fixed first.
+   */
   async appendTraces(
     conversationId: string,
-    rows: { step: string; fields: unknown }[],
+    rows: { step: string; fields: unknown; ts?: number; durationMs?: number }[],
+    runId?: string,
   ): Promise<void> {
     if (!rows.length) return;
-    const ts = Date.now();
+    const fallbackTs = Date.now();
     await db.insert(traces).values(
       rows.map((row) => ({
         id: genId("trc"),
         conversationId,
+        runId: runId ?? null,
         step: row.step,
         fields: JSON.stringify(row.fields ?? {}),
-        ts,
+        ts: row.ts ?? fallbackTs,
+        durationMs: row.durationMs ?? 0,
       })),
     );
   },
@@ -145,6 +155,34 @@ export const conversationRepository = {
       .from(traces)
       .where(eq(traces.conversationId, conversationId))
       .orderBy(sql`ts asc`);
+  },
+
+  /**
+   * The provider-reported prompt size of this conversation's most recent turn.
+   *
+   * Recorded by `pi.service` as a `context.usage` trace. Read back here because
+   * it is the only honest measure of how full the window is: the pre-run
+   * estimate sees the chat history but not the system prompt or the tool
+   * schemas, which for a workspace with an MCP server are the larger half.
+   *
+   * Null for a conversation that has not completed a turn yet.
+   */
+  async lastContextTokens(conversationId: string): Promise<number | null> {
+    const rows = await db
+      .select({ fields: traces.fields })
+      .from(traces)
+      .where(and(eq(traces.conversationId, conversationId), eq(traces.step, "context.usage")))
+      .orderBy(sql`ts desc`)
+      .limit(1);
+
+    const raw = rows[0]?.fields;
+    if (!raw) return null;
+    try {
+      const used = (JSON.parse(raw) as { used?: unknown }).used;
+      return typeof used === "number" && used > 0 ? used : null;
+    } catch {
+      return null;
+    }
   },
 
   /** Delete a conversation and its children (FK cascade). */

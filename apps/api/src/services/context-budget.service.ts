@@ -5,8 +5,10 @@ import { chatOnce } from "./provider.service";
 import { logger } from "../lib/logger";
 import {
   applyCompaction,
+  COMPACT_AT,
   estimateHistoryTokens,
   planCompaction,
+  pruneToolResults,
   usableWindow,
 } from "./context-window.service";
 
@@ -38,18 +40,51 @@ export async function fitToWindow(
   model: ModelConfig,
   history: ChatMessage[],
   signal?: AbortSignal,
+  /** Provider-reported prompt size of this conversation's last turn, if any. */
+  occupiedTokens?: number,
 ): Promise<BudgetOutcome> {
   const window = usableWindow(model.contextWindow);
-  const plan = planCompaction(history, model.contextWindow);
+  const occupancy = Math.max(estimateHistoryTokens(history), occupiedTokens ?? 0);
+
+  // Prune before summarising. Dropping stale tool output is free and nearly
+  // lossless; summarising costs a model call and blurs detail permanently. A
+  // thread almost always goes over because of tool results, so this alone is
+  // frequently enough — and when it is not, the summariser has less to read.
+  let working = history;
+  let pruned = { pruned: 0, saved: 0 };
+  if (occupancy > window * COMPACT_AT) {
+    const outcome = pruneToolResults(history);
+    if (outcome.pruned) {
+      working = outcome.history;
+      pruned = { pruned: outcome.pruned, saved: outcome.saved };
+      logger.info("context.pruned", {
+        model: model.id,
+        results: outcome.pruned,
+        savedTokens: outcome.saved,
+      });
+    }
+  }
+
+  const afterPrune = Math.max(0, occupancy - pruned.saved);
+  const plan = planCompaction(working, model.contextWindow, afterPrune);
 
   if (!plan) {
     return {
-      history,
+      history: working,
       event: {
         type: "context",
-        used: estimateHistoryTokens(history),
+        used: afterPrune,
         window,
-        estimated: true,
+        estimated: occupiedTokens === undefined,
+        ...(pruned.pruned
+          ? {
+              compacted: {
+                fromTokens: occupancy,
+                toTokens: afterPrune,
+                turnsSummarised: 0,
+              },
+            }
+          : {}),
       },
     };
   }

@@ -12,7 +12,22 @@ export type TranscriptItem =
   | { kind: "iteration"; n: number }
   | { kind: "tool"; name: string; args: unknown; result?: string; ms?: number; ok?: boolean };
 
-export type RecordedTrace = { step: string; fields: Record<string, unknown> };
+/**
+ * One recorded span.
+ *
+ * `ts` is stamped here, as the event arrives, not when the batch is flushed.
+ * The two used to be the same moment — every trace in a run carried the flush
+ * timestamp — which collapsed the whole run onto one instant and made a
+ * timeline impossible to draw.
+ */
+export type RecordedTrace = {
+  step: string;
+  fields: Record<string, unknown>;
+  /** When the span ended, epoch ms. */
+  ts: number;
+  /** Span length; 0 for instantaneous events. Start is `ts - durationMs`. */
+  durationMs: number;
+};
 
 /**
  * Folds the agent's event stream into a transcript worth saving.
@@ -94,9 +109,19 @@ export class TranscriptRecorder {
         break;
       }
 
-      case "trace":
-        this.traces.push({ step: event.step, fields: event.fields });
+      case "trace": {
+        // `ms` is the convention every span already uses for its duration, so
+        // it is lifted onto the row rather than left for the reader to dig out
+        // of the JSON on every timeline render.
+        const ms = Number((event.fields as { ms?: unknown } | undefined)?.ms ?? 0);
+        this.traces.push({
+          step: event.step,
+          fields: event.fields,
+          ts: Date.now(),
+          durationMs: Number.isFinite(ms) && ms > 0 ? Math.round(ms) : 0,
+        });
         break;
+      }
 
       case "error":
         this.failure = event.message;

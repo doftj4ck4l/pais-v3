@@ -4,7 +4,10 @@ import type {
   DbConnectionRow,
   DocumentRow,
   IngestResult,
+  McpServerRow,
   Meta,
+  RunDetail,
+  RunRow,
   WorkspaceFile,
   WorkspaceRow,
 } from '@/lib/types'
@@ -240,4 +243,79 @@ export async function refreshConnection(scope: Scope, id: string): Promise<void>
 
 export async function deleteConnection(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+}
+
+export async function listMcpServers(scope: Scope): Promise<McpServerRow[]> {
+  const { servers } = await json<{ servers: McpServerRow[] }>(
+    await fetch(`/api/mcp?${scoped(scope)}`),
+  )
+  return servers
+}
+
+/** What the add form collects, before it becomes a request body. */
+export type NewMcpServerInput = {
+  name: string
+  transport: 'http' | 'stdio'
+  url?: string
+  headers?: Record<string, string>
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+/**
+ * Add an MCP server.
+ *
+ * An unreachable server is not a form error: the API returns 201 with a row
+ * whose status is 'error', which the panel lists like any other. `error` here
+ * is only for a rejected request — a bad name, a duplicate, a disallowed stdio
+ * command, or a missing server config.
+ */
+export async function addMcpServer(
+  scope: Scope,
+  input: NewMcpServerInput,
+): Promise<{ server?: McpServerRow; error?: string }> {
+  const res = await fetch(`/api/mcp?${scoped(scope)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as { server?: McpServerRow; error?: string }
+  if (!res.ok) return { error: body.error ?? `HTTP ${res.status}` }
+  return { server: body.server }
+}
+
+export async function refreshMcpServer(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/mcp/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, { method: 'POST' })
+}
+
+export async function setMcpServerEnabled(
+  scope: Scope,
+  id: string,
+  enabled: boolean,
+): Promise<void> {
+  await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+export async function deleteMcpServer(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+}
+
+/** Recent runs in this workspace, newest first. */
+export async function listRuns(scope: Scope, limit = 50): Promise<RunRow[]> {
+  const { runs } = await json<{ runs: RunRow[] }>(
+    await fetch(`/api/admin/runs?${scoped(scope, { limit: String(limit) })}`),
+  )
+  return runs
+}
+
+/** One run and its spans, already positioned relative to the run's start. */
+export async function getRun(scope: Scope, id: string): Promise<RunDetail> {
+  return json<RunDetail>(
+    await fetch(`/api/admin/runs/${encodeURIComponent(id)}?${scoped(scope)}`),
+  )
 }

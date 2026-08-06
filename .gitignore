@@ -6,6 +6,10 @@ dist/
 
 # SQLite database files (never commit)
 apps/api/data/
+# The same database, as resolved when the API is started from the repo root
+# rather than from apps/api. `cwd/data/app.db` is relative, so both paths are
+# real and both hold conversations and encrypted credentials.
+apps/api/src/data/
 
 # Agent sandbox workspaces
 workspaces/

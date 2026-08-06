@@ -126,6 +126,72 @@ export type DbConnectionRow = {
   createdAt: number
 }
 
+export type RunStatus = 'running' | 'done' | 'error' | 'stopped'
+
+/** One agent run: a single prompt turned into an answer. */
+export type RunRow = {
+  id: string
+  conversationId: string
+  harnessId: string
+  modelId: string
+  prompt: string | null
+  startedAt: number
+  endedAt: number | null
+  status: RunStatus
+  turns: number
+  tokensIn: number
+  tokensOut: number
+  toolCalls: number
+  toolErrors: number
+  error: string | null
+  /** Null while the run is still in flight. */
+  durationMs: number | null
+}
+
+/** One bar on the waterfall, already positioned relative to the run's start. */
+export type RunSpan = {
+  id: string
+  step: string
+  startedAt: number
+  endedAt: number
+  durationMs: number
+  offsetMs: number
+  fields: Record<string, unknown>
+}
+
+export type RunDetail = {
+  run: RunRow & { endedAt: number; durationMs: number }
+  spans: RunSpan[]
+}
+
+/** What one MCP server advertised the last time it was probed. */
+export type McpCapability = {
+  kind: 'tool' | 'resource' | 'prompt'
+  name: string
+  description: string | null
+  uri: string | null
+}
+
+/**
+ * One connected MCP server. Credentials never appear here — the API omits the
+ * encrypted header and env columns from every response.
+ */
+export type McpServerRow = {
+  id: string
+  name: string
+  transport: 'http' | 'stdio'
+  url: string | null
+  command: string | null
+  args: string[]
+  enabled: number
+  status: 'connected' | 'error'
+  error: string | null
+  toolCount: number
+  lastProbedAt: number | null
+  createdAt: number
+  capabilities: McpCapability[]
+}
+
 /** A container for one body of work: its agents, documents, databases, files. */
 export type WorkspaceRow = {
   id: string

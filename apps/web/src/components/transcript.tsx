@@ -104,18 +104,32 @@ function TranscriptRow({
     const pending = item.result === undefined
     return (
       <RailRow glyph={<NodeSquare filled={!pending} />} stub={stub}>
-        <div className="overflow-hidden rounded-lg border bg-card">
-          <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
+        {/*
+          Collapsed by default. A tool call's arguments and result are often
+          hundreds of lines of JSON, and a transcript that shows every one of
+          them in full buries the answer the run was actually for. The header
+          keeps what you need to skim — which tool, how long, did it fail — and
+          the payload is one click away.
+        */}
+        <Collapsible className="overflow-hidden rounded-lg border bg-card">
+          <CollapsibleTrigger
+            className={cn(
+              'group flex w-full items-center gap-2 bg-muted/40 px-3 py-2 text-left',
+              'transition-colors hover:bg-muted/70',
+              'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+            )}
+          >
+            <ChevronRightIcon
+              className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
+            />
             <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="readout truncate font-medium text-card-foreground">{item.name}</span>
             {pending ? (
               <Spinner className="ml-auto size-3.5 text-muted-foreground" />
             ) : (
               <span className="readout ml-auto flex shrink-0 items-center gap-1.5 text-[0.625rem]">
-                {item.ok === false ? (
-                  <span className="text-destructive">failed</span>
-                ) : null}
-                {/* Cost of the call, so a slow tool is visible without opening the trace. */}
+                {item.ok === false ? <span className="text-destructive">failed</span> : null}
+                {/* Cost of the call, so a slow tool is visible without opening it. */}
                 {item.ms !== undefined ? (
                   <span className="tabular-nums text-muted-foreground">
                     {item.ms >= 1000 ? `${(item.ms / 1000).toFixed(1)}s` : `${item.ms}ms`}
@@ -123,21 +137,28 @@ function TranscriptRow({
                 ) : null}
               </span>
             )}
-          </div>
+          </CollapsibleTrigger>
 
-          {item.args !== '{}' ? (
-            <pre className="readout overflow-x-auto px-3 py-2 leading-relaxed text-muted-foreground">
-              {item.args}
-            </pre>
-          ) : null}
+          <CollapsibleContent>
+            {item.args !== '{}' ? (
+              <pre className="readout overflow-x-auto border-t px-3 py-2 leading-relaxed text-muted-foreground">
+                {item.args}
+              </pre>
+            ) : null}
 
-          {!pending ? (
-            <div className="readout flex gap-2 border-t px-3 py-2 leading-relaxed">
-              <span className="shrink-0 text-muted-foreground">→</span>
-              <span className="min-w-0 break-words whitespace-pre-wrap">{item.result}</span>
-            </div>
-          ) : null}
-        </div>
+            {!pending ? (
+              <div className="readout flex gap-2 border-t px-3 py-2 leading-relaxed">
+                <span className="shrink-0 text-muted-foreground">→</span>
+                {/* Capped and scrollable: a single MCP result can run to tens of
+                    thousands of characters, and an expanded card should not push
+                    the rest of the transcript off screen. */}
+                <span className="max-h-72 min-w-0 overflow-auto break-words whitespace-pre-wrap">
+                  {item.result}
+                </span>
+              </div>
+            ) : null}
+          </CollapsibleContent>
+        </Collapsible>
       </RailRow>
     )
   }

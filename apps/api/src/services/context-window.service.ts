@@ -44,6 +44,60 @@ export function usableWindow(contextWindow: number): number {
   return Math.max(1, contextWindow - RESERVE_TOKENS);
 }
 
+/**
+ * Tool results kept in full. Older ones are pruned before anything is
+ * summarised.
+ *
+ * Pruning first is what opencode does, and the reason is economic: dropping a
+ * stale tool result costs nothing and loses almost nothing, while summarising
+ * costs a model call and permanently blurs the detail. A thread usually goes
+ * over budget because of tool output, not because of what anyone said, so the
+ * cheap lever is very often the only one needed.
+ */
+export const KEEP_TOOL_RESULTS = 6;
+
+/** What one tool result becomes once it is pruned away. */
+const PRUNED_PLACEHOLDER = "[earlier tool output removed to fit the context window]";
+
+export type PruneOutcome = {
+  history: ChatMessage[];
+  /** How many tool results were replaced by the placeholder. */
+  pruned: number;
+  /** Estimated tokens reclaimed. */
+  saved: number;
+};
+
+/**
+ * Replace the content of all but the most recent tool results.
+ *
+ * The messages stay in place rather than being deleted: a tool result whose
+ * `tool_call_id` disappears leaves a dangling tool call, which providers reject
+ * outright. Only the payload goes.
+ */
+export function pruneToolResults(
+  history: ChatMessage[],
+  keepRecent = KEEP_TOOL_RESULTS,
+): PruneOutcome {
+  const toolIndexes = history
+    .map((m, i) => (m.role === "tool" ? i : -1))
+    .filter((i) => i >= 0);
+
+  const prunable = toolIndexes.slice(0, Math.max(0, toolIndexes.length - keepRecent));
+  if (!prunable.length) return { history, pruned: 0, saved: 0 };
+
+  const drop = new Set(prunable);
+  let saved = 0;
+  const next = history.map((m, i) => {
+    if (!drop.has(i)) return m;
+    const before = estimateTokens(m);
+    const pruned = { ...m, content: PRUNED_PLACEHOLDER };
+    saved += before - estimateTokens(pruned);
+    return pruned;
+  });
+
+  return { history: next, pruned: prunable.length, saved };
+}
+
 export type CompactionPlan = {
   /** Messages to summarise away. */
   summarise: ChatMessage[];
@@ -62,9 +116,21 @@ export type CompactionPlan = {
 export function planCompaction(
   history: ChatMessage[],
   contextWindow: number,
+  /**
+   * True occupancy, when the provider has reported one.
+   *
+   * The estimate below measures the chat history and nothing else — not the
+   * system prompt, not the tool schemas. A workspace with an MCP server
+   * advertising 151 tools spends ~36k tokens before a word is typed, so the
+   * estimate alone said "1% full" while the window was a third gone, and
+   * compaction never fired. When a real figure is available it decides; the
+   * estimate stays as the fallback for the first turn of a conversation.
+   */
+  occupiedTokens?: number,
 ): CompactionPlan | null {
   const usable = usableWindow(contextWindow);
-  const tokensBefore = estimateHistoryTokens(history);
+  const estimated = estimateHistoryTokens(history);
+  const tokensBefore = Math.max(estimated, occupiedTokens ?? 0);
   if (tokensBefore <= usable * COMPACT_AT) return null;
 
   const keepBudget = Math.floor(usable * KEEP_RECENT);

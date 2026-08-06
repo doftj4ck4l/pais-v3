@@ -23,6 +23,9 @@ import {
   dbConnections,
   dbTables,
   dbColumns,
+  mcpServers,
+  mcpCapabilities,
+  runs,
 } from "../models/schema";
 
 /** Where the SQLite database file lives (ignored by git). */
@@ -43,6 +46,9 @@ export {
   dbConnections,
   dbTables,
   dbColumns,
+  mcpServers,
+  mcpCapabilities,
+  runs,
 };
 export type {
   WorkspaceRow,
@@ -58,6 +64,13 @@ export type {
   DbConnectionStatus,
   DbTableRow,
   DbColumnRow,
+  McpServerRow,
+  McpServerStatus,
+  McpTransport,
+  McpCapabilityRow,
+  McpCapabilityKind,
+  RunRow,
+  RunStatus,
 } from "../models/schema";
 
 const sqlite = new Database(DB_PATH, { create: true });
@@ -119,6 +132,25 @@ export function applySchema(target: Database) {
       ts              INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_traces_conversation ON traces (conversation_id, ts);
+    CREATE TABLE IF NOT EXISTS runs (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      workspace_id    TEXT,
+      harness_id      TEXT NOT NULL,
+      model_id        TEXT NOT NULL,
+      prompt          TEXT,
+      started_at      INTEGER NOT NULL,
+      ended_at        INTEGER,
+      status          TEXT NOT NULL DEFAULT 'running',
+      turns           INTEGER NOT NULL DEFAULT 0,
+      tokens_in       INTEGER NOT NULL DEFAULT 0,
+      tokens_out      INTEGER NOT NULL DEFAULT 0,
+      tool_calls      INTEGER NOT NULL DEFAULT 0,
+      tool_errors     INTEGER NOT NULL DEFAULT 0,
+      error           TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_runs_workspace    ON runs (workspace_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_runs_conversation ON runs (conversation_id, started_at);
     CREATE TABLE IF NOT EXISTS memory_notes (
       id       TEXT PRIMARY KEY,
       user_id  TEXT,
@@ -197,6 +229,47 @@ export function applySchema(target: Database) {
       comment        TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_db_columns_table ON db_columns (table_id, seq);
+    -- MCP tables are declared with workspace_id inline: they were born after
+    -- workspaces existed, so they never carried a user_id and are not in
+    -- SCOPED_TABLES. Their indexes can therefore be created here rather than
+    -- after the ALTER pass below.
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id             TEXT PRIMARY KEY,
+      workspace_id   TEXT,
+      name           TEXT NOT NULL,
+      transport      TEXT NOT NULL,
+      url            TEXT,
+      headers_enc    TEXT,
+      command        TEXT,
+      args_json      TEXT,
+      env_enc        TEXT,
+      enabled        INTEGER NOT NULL DEFAULT 1,
+      status         TEXT NOT NULL DEFAULT 'connected',
+      error          TEXT,
+      tool_count     INTEGER NOT NULL DEFAULT 0,
+      last_probed_at INTEGER,
+      created_at     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_servers_workspace ON mcp_servers (workspace_id, created_at);
+    -- Same reasoning as db_connections: the agent addresses a server by name,
+    -- so two servers called "github" in one workspace would make github__search
+    -- ambiguous. Two separate workspaces may each have one.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_workspace_name
+      ON mcp_servers (workspace_id, name);
+    CREATE TABLE IF NOT EXISTS mcp_capabilities (
+      id           TEXT PRIMARY KEY,
+      server_id    TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+      workspace_id TEXT,
+      kind         TEXT NOT NULL,
+      name         TEXT NOT NULL,
+      description  TEXT,
+      schema_json  TEXT,
+      uri          TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_capabilities_server
+      ON mcp_capabilities (server_id, kind, name);
+    CREATE INDEX IF NOT EXISTS idx_mcp_capabilities_workspace
+      ON mcp_capabilities (workspace_id, kind);
   `);
 
   // Databases created before workspaces have none of the columns above, and
@@ -206,6 +279,30 @@ export function applySchema(target: Database) {
   for (const table of SCOPED_TABLES) {
     if (!columnsOf(target, table).includes("workspace_id")) {
       target.exec(`ALTER TABLE ${table} ADD COLUMN workspace_id TEXT`);
+    }
+  }
+
+  // `traces` predates runs and per-span timing. SQLite has no ALTER TABLE ...
+  // IF NOT EXISTS, so each column is added only when it is missing. Existing
+  // rows keep run_id NULL and duration_ms 0 — they are point events from before
+  // the timeline existed, and the admin page skips runs it cannot lay out.
+  const traceColumns = columnsOf(target, "traces");
+  if (!traceColumns.includes("run_id")) {
+    target.exec(`ALTER TABLE traces ADD COLUMN run_id TEXT`);
+  }
+  if (!traceColumns.includes("duration_ms")) {
+    target.exec(`ALTER TABLE traces ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`);
+  }
+  target.exec(`CREATE INDEX IF NOT EXISTS idx_traces_run ON traces (run_id, ts)`);
+
+  // Same story for `runs`: the columns above only apply to a table being
+  // created for the first time. A database that already has `runs` needs them
+  // added, or every select against the Drizzle model asks for a column SQLite
+  // does not have.
+  const runColumns = columnsOf(target, "runs");
+  for (const column of ["tool_calls", "tool_errors"]) {
+    if (!runColumns.includes(column)) {
+      target.exec(`ALTER TABLE runs ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     }
   }
   target.exec(`

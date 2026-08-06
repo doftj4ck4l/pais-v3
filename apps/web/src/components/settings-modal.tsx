@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { MoonIcon, SunIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   Dialog,
   DialogContent,
@@ -55,6 +57,7 @@ export function SettingsModal({
   theme: 'light' | 'dark'
   onToggleTheme: () => void
 }) {
+  const [confirmClear, setConfirmClear] = useState(false)
   const model = meta?.models.find((m) => m.id === modelId)
 
   return (
@@ -133,7 +136,7 @@ export function SettingsModal({
           <Button
             variant="outline"
             size="sm"
-            onClick={onClearAll}
+            onClick={() => setConfirmClear(true)}
             disabled={agentCount === 0}
             className="ml-auto gap-1.5 text-destructive hover:text-destructive"
           >
@@ -142,6 +145,18 @@ export function SettingsModal({
           </Button>
         </div>
       </DialogContent>
+
+      {/* Removes every agent and every stored transcript in this workspace —
+          the most destructive button in the app, and previously the only one
+          that fired on a single click. */}
+      <ConfirmDialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title="Remove all agents?"
+        description={`All ${agentCount} agent${agentCount === 1 ? '' : 's'} and their transcripts will be deleted from this workspace. This cannot be undone.`}
+        confirmLabel="Remove all"
+        onConfirm={onClearAll}
+      />
     </Dialog>
   )
 }

@@ -10,6 +10,7 @@
   "dependencies": {
     "@cline/sdk": "^0.0.69",
     "@firecrawl/pdf-inspector": "^1.11.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0"
   },

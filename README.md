@@ -131,6 +131,11 @@ Flow in `services/agent.service.ts`:
 | POST   | `/api/workspaces`        | Create one                                 |
 | PATCH  | `/api/workspaces/:id`    | Rename one                                 |
 | DELETE | `/api/workspaces/:id`    | Delete one and everything it holds         |
+| GET    | `/api/mcp`               | A workspace's MCP servers + cached capabilities |
+| POST   | `/api/mcp`               | Add a server and probe it                  |
+| POST   | `/api/mcp/:id/refresh`   | Reconnect and re-read what it offers       |
+| PATCH  | `/api/mcp/:id`           | Enable or disable it                       |
+| DELETE | `/api/mcp/:id`           | Remove it and its cached capabilities      |
 
 Every scoped endpoint takes `?userId=&workspaceId=`. An absent, unknown, or
 unowned `workspaceId` falls back to the user's first workspace rather than
@@ -285,6 +290,105 @@ cd apps/api && DB_CHECK_URL=postgres://... bun scripts/db-connector-check.ts
 **Not yet safe for production data.** Connections are stored against a `userId`
 the browser generates, with no authentication — anyone who forges one can use
 that user's connections. Encryption protects `app.db` at rest, not the API.
+
+### MCP servers
+
+A workspace can connect Model Context Protocol servers, and the agent gains
+their tools, resources, and prompts without a code change here. Servers are
+added in the console's **MCP** tab, over either transport:
+
+| Transport | Configured with | Reached by |
+| --- | --- | --- |
+| `http` | URL + optional `Authorization` header | Streamable HTTP, falling back to SSE |
+| `stdio` | Command + args + env | A child process on the API host |
+
+Credentials — headers and env vars — are encrypted with `CONNECTION_SECRET`,
+the same key the database connector uses, and are never selected into a
+response, a prompt, or a transcript.
+
+What the agent gets:
+
+- **Tools** as `<server>__<tool>`, so two servers can both expose `search`.
+- **Resources** through two flat tools, `mcp_list_resources` and
+  `mcp_read_resource` — one tool per resource would put an unbounded list in
+  every system prompt.
+- **Prompts** as pi prompt templates. Argument-free ones are pre-rendered; the
+  rest map positional placeholders onto named arguments via `mcp_get_prompt`.
+
+Unlike the database tools, MCP is not gated behind a harness capability: a
+workspace only has a server because someone added it, so the opt-in already
+happened.
+
+Connections last exactly one run and are closed in the same `finally` that
+cleans up the execution environment, so a stdio server's child process cannot
+outlive the run that spawned it. A server that will not connect is recorded
+with its reason, skipped, and the remaining servers still contribute.
+
+stdio commands are checked against an allowlist — `npx`, `uvx`, `node`,
+`python`, `python3`, `bun`, `deno` — as a bare command name, with no shell and
+no inline-code flags (`node -e`, `python -c`). The child is given the SDK's
+safe-to-inherit environment plus what you configured, not the API process's
+own, which holds model keys and `CONNECTION_SECRET`.
+
+The allowlist says what is *permitted*; the launcher still has to exist where
+the API runs. The deployed image ships `npx`, `uvx`, `node`, and `bun` — the
+`apps/api/Dockerfile` copies them in for exactly this reason. `python` and
+`python3` are permitted but absent; use `uvx`, which brings its own.
+
+First contact with a new stdio server is a package download, not a handshake,
+so stdio gets a 180s connect budget against HTTP's 10s. The download is cached
+in the `mcp-cache` volume, so it is paid once, not once per deploy.
+
+**Two things the allowlist does not do.** It narrows the entry point; it does
+not isolate what runs — an allowlisted launcher can still fetch and execute an
+arbitrary package, and it runs on the API host rather than inside the workspace
+sandbox. And MCP tool results are model-visible by definition, so a malicious
+server can attempt prompt injection through them. Connect servers you trust.
+
+### Deploying
+
+Two containers, one published port:
+
+```bash
+cp .env.example .env      # fill in CONNECTION_SECRET and model keys
+bun run sandbox:build     # the agent's sandbox image
+docker compose up -d --build
+```
+
+The console is then on `http://localhost:8080`. `web` is Caddy serving the
+built console and proxying `/api` to `api` over the compose network — the API
+has no host port, because it has no authentication either.
+
+Ask Claude Code to **"deploy"** and the `deploy` skill in `.claude/skills/`
+runs this: tests, build, start, then verifies `/api/meta` answers through the
+proxy.
+
+**Docker-out-of-Docker.** The API reaches the host daemon through a
+bind-mounted `/var/run/docker.sock` and starts each workspace's sandbox as a
+*sibling* container. That is why three paths in `docker-compose.yml` are
+mounted at identical host and container paths: `docker run -v <p>:<p>` is
+resolved by the daemon on the host, so a path the API container names has to
+mean the same thing there.
+
+| `.env` key | Why it exists |
+| --- | --- |
+| `REPO_ROOT` | Absolute path to this checkout; skills are mounted from it at the same path on both sides |
+| `SANDBOX_ROOT` | Workspace directories, mounted identically for the same reason |
+| `HOST_UID` / `HOST_GID` | The API runs as your uid, so files it writes into those mounts belong to you |
+| `DOCKER_GID` | The host `docker` group, which is what makes the mounted socket readable |
+| `WEB_PORT` | The only published port |
+
+Socket access is root-equivalent on the host — a deliberate trade for real
+per-workspace isolation. The alternative, `SANDBOX_BACKEND=node`, would put the
+agent's shell inside the API container with the model keys and
+`CONNECTION_SECRET`.
+
+SQLite is bind-mounted from `apps/api/data`, so a rebuild keeps conversations,
+workspaces, documents, and MCP servers. Rolling code back does not roll data
+back.
+
+**Not production.** No authentication, no TLS, no zero-downtime replace, no
+automatic backup. Do not publish `WEB_PORT` beyond a trusted network.
 
 ### Adding a model
 

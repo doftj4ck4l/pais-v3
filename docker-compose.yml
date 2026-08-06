@@ -1,0 +1,79 @@
+# Salur, deployed on this host.
+#
+# Two services. `web` is the only one published: Caddy serves the built console
+# and proxies /api to `api` over the compose network, so the API has no host
+# port at all. It has no authentication, and a port is an invitation.
+#
+# The API talks to the host's Docker daemon through a bind-mounted socket, and
+# starts each workspace's sandbox as a *sibling* container. That is why three
+# paths below are mounted at identical host and container paths: `docker run -v
+# <p>:<p>` is resolved by the daemon on the host, so a path this container names
+# has to mean the same thing there.
+#
+# Socket access is root-equivalent on the host. This is a deliberate trade for
+# real per-workspace isolation; see README under "Deploying".
+
+name: salurai
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    # uid 1000 so files written into the workspace and data mounts belong to the
+    # host user, not root. The supplementary group is the host's `docker` group,
+    # which is what makes the bind-mounted socket readable.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    # Two files, in precedence order. The root `.env` carries deployment
+    # config; `apps/api/.env` carries the application's own secrets and is the
+    # same file `bun dev` reads, so a key added for development is not silently
+    # absent from the deployment. Later file wins, and it is optional — a fresh
+    # checkout that has only the root `.env` still boots.
+    env_file:
+      - path: .env
+      - path: apps/api/.env
+        required: false
+    environment:
+      PORT: "4000"
+      SANDBOX_BACKEND: docker
+      SANDBOX_IMAGE: "${SANDBOX_IMAGE:-salurai-sandbox:1}"
+      # Both must be host paths, mounted below at the same path inside.
+      SANDBOX_ROOT: "${SANDBOX_ROOT:?set SANDBOX_ROOT in .env}"
+      SKILLS_ROOT: "${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Workspaces: written by this container, bind-mounted by sandbox siblings.
+      - "${SANDBOX_ROOT}:${SANDBOX_ROOT}"
+      # Skills: read by this container to build the prompt, mounted read-only
+      # into every sandbox. Read-only here too — the agent cannot rewrite the
+      # code it is about to run.
+      - "${REPO_ROOT}/apps/api/skills:${REPO_ROOT}/apps/api/skills:ro"
+      # SQLite lives on the host so a rebuild does not discard conversations,
+      # workspaces, documents, or MCP servers.
+      - "${REPO_ROOT}/apps/api/data:/app/apps/api/data"
+      # uvx / npx package cache. Without it every deploy re-downloads every
+      # stdio MCP server on its first call, which reads as a hang.
+      - mcp-cache:/cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "await fetch('http://127.0.0.1:4000/api/meta')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  mcp-cache:

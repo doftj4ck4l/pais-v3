@@ -101,18 +101,34 @@ export const traces = sqliteTable(
     conversationId: text("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    /** Which run this span belongs to. Null for rows written before runs existed. */
+    runId: text("run_id"),
     step: text("step").notNull(),
     fields: text("fields"), // JSON
+    /**
+     * When the span *ended*, in epoch ms, stamped as the event was recorded.
+     *
+     * Previously every row in a run shared one timestamp, because the whole
+     * batch was stamped at flush time — which made a timeline impossible to
+     * draw. Start is `ts - durationMs`.
+     */
     ts: integer("ts").notNull(),
+    /** Span length. 0 for instantaneous events like run.start. */
+    durationMs: integer("duration_ms").notNull().default(0),
   },
-  (t) => [index("idx_traces_conversation").on(t.conversationId, t.ts)],
+  (t) => [
+    index("idx_traces_conversation").on(t.conversationId, t.ts),
+    index("idx_traces_run").on(t.runId, t.ts),
+  ],
 );
 export type TraceRow = {
   id: string;
   conversationId: string;
+  runId: string | null;
   step: string;
   fields: string | null;
   ts: number;
+  durationMs: number;
 };
 
 // ---- memory: notes the agent keeps for one workspace between runs ----
@@ -344,4 +360,153 @@ export type DbColumnRow = {
   fkTable: string | null;
   fkColumn: string | null;
   comment: string | null;
+};
+
+export type RunStatus = "running" | "done" | "error" | "stopped";
+
+/**
+ * One agent run: a single prompt turned into an answer.
+ *
+ * A conversation holds many runs, and until now nothing recorded where one
+ * ended and the next began — traces were flushed against the conversation with
+ * a single timestamp, so a run's shape could not be reconstructed at all. This
+ * is the row the admin timeline lists and every span hangs from.
+ */
+export const runs = sqliteTable(
+  "runs",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id"),
+    harnessId: text("harness_id").notNull(),
+    modelId: text("model_id").notNull(),
+    /** The prompt this run answered, truncated. Enough to recognise it in a list. */
+    prompt: text("prompt"),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+    status: text("status").$type<RunStatus>().notNull().default("running"),
+    turns: integer("turns").notNull().default(0),
+    /** Provider-reported prompt and completion tokens, summed over the run's turns. */
+    tokensIn: integer("tokens_in").notNull().default(0),
+    tokensOut: integer("tokens_out").notNull().default(0),
+    /** Tool calls made, and how many of them reported an error. */
+    toolCalls: integer("tool_calls").notNull().default(0),
+    toolErrors: integer("tool_errors").notNull().default(0),
+    error: text("error"),
+  },
+  (t) => [
+    index("idx_runs_workspace").on(t.workspaceId, t.startedAt),
+    index("idx_runs_conversation").on(t.conversationId, t.startedAt),
+  ],
+);
+export type RunRow = {
+  id: string;
+  conversationId: string;
+  workspaceId: string | null;
+  harnessId: string;
+  modelId: string;
+  prompt: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  status: RunStatus;
+  turns: number;
+  tokensIn: number;
+  tokensOut: number;
+  toolCalls: number;
+  toolErrors: number;
+  error: string | null;
+};
+
+export type McpTransport = "http" | "stdio";
+export type McpServerStatus = "connected" | "error";
+
+/**
+ * One MCP server a user has connected.
+ *
+ * `headersEnc` (HTTP) and `envEnc` (stdio) hold encrypted JSON objects. They are
+ * credentials — an API token in a header, a key in an env var — and are treated
+ * exactly like `dbConnections.secret`: written by the repository, never selected
+ * into anything that reaches the client or the model.
+ *
+ * The transport-specific columns are nullable rather than split into two tables.
+ * A server is one row whichever way it is reached, and every consumer switches
+ * on `transport` anyway.
+ */
+export const mcpServers = sqliteTable(
+  "mcp_servers",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id"),
+    name: text("name").notNull(), // how the agent refers to it: <name>__<tool>
+    transport: text("transport").$type<McpTransport>().notNull(),
+    url: text("url"), // http only
+    headersEnc: text("headers_enc"), // http only
+    command: text("command"), // stdio only
+    argsJson: text("args_json"), // stdio only, JSON array
+    envEnc: text("env_enc"), // stdio only
+    enabled: integer("enabled").notNull().default(1), // 0 | 1
+    status: text("status").$type<McpServerStatus>().notNull().default("connected"),
+    error: text("error"),
+    toolCount: integer("tool_count").notNull().default(0),
+    lastProbedAt: integer("last_probed_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_mcp_servers_workspace").on(t.workspaceId, t.createdAt)],
+);
+export type McpServerRow = {
+  id: string;
+  workspaceId: string | null;
+  name: string;
+  transport: McpTransport;
+  url: string | null;
+  command: string | null;
+  argsJson: string | null;
+  enabled: number;
+  status: McpServerStatus;
+  error: string | null;
+  toolCount: number;
+  lastProbedAt: number | null;
+  createdAt: number;
+};
+
+export type McpCapabilityKind = "tool" | "resource" | "prompt";
+
+/**
+ * What one server advertised the last time it was probed.
+ *
+ * Cached rather than fetched on demand because both readers need it without a
+ * live connection: the settings UI lists what a server offers, and the system
+ * prompt names every tool the agent can call. Opening a socket to every server
+ * to render a page — or to build a prompt — would make both fail whenever any
+ * one server is down.
+ */
+export const mcpCapabilities = sqliteTable(
+  "mcp_capabilities",
+  {
+    id: text("id").primaryKey(),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id"),
+    kind: text("kind").$type<McpCapabilityKind>().notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    // Tool `inputSchema` or prompt `arguments`, stored whole. Nothing searches
+    // or joins it — it is read back verbatim and handed to the schema converter.
+    schemaJson: text("schema_json"),
+    uri: text("uri"), // resources only
+  },
+  (t) => [index("idx_mcp_capabilities_server").on(t.serverId, t.kind, t.name)],
+);
+export type McpCapabilityRow = {
+  id: string;
+  serverId: string;
+  workspaceId: string | null;
+  kind: McpCapabilityKind;
+  name: string;
+  description: string | null;
+  schemaJson: string | null;
+  uri: string | null;
 };
