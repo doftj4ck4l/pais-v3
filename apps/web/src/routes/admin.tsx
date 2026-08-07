@@ -3,7 +3,12 @@ import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { ArrowLeftIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { RunBreakdown, RunWaterfall, SpanDetail } from '@/components/run-waterfall'
+import {
+  RunBreakdown,
+  RunWaterfall,
+  SpanDetail,
+  SpanDetailEmpty,
+} from '@/components/run-waterfall'
 import { getRun, listRuns } from '@/lib/api'
 import { useScope } from '@/hooks/use-workspace'
 import type { RunDetail, RunRow, RunSpan } from '@/lib/types'
@@ -160,7 +165,11 @@ function Admin() {
           </ol>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        {/* Timeline and span detail sit side by side on a wide screen and stack
+            on a narrow one — same tree, only the axis changes, so there is one
+            copy of each panel rather than a desktop and a mobile version. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
+          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {!selectedId ? (
             <p className="p-4 text-xs text-muted-foreground">
               Pick a run to see where its time went.
@@ -195,10 +204,27 @@ function Admin() {
                 selectedId={span?.id ?? null}
                 onSelect={(s) => setSpan((prev) => (prev?.id === s.id ? null : s))}
               />
-              {span ? <SpanDetail span={span} onClose={() => setSpan(null)} /> : null}
             </>
           )}
-        </main>
+          </main>
+
+          {/* Only mounted once a run is loaded: an empty detail column beside
+              "pick a run" would be two empty states arguing with each other. */}
+          {detail ? (
+            <aside
+              className={cn(
+                'flex min-h-0 shrink-0 flex-col bg-sidebar/50',
+                'h-80 border-t lg:h-auto lg:w-[26rem] lg:border-t-0 lg:border-l',
+              )}
+            >
+              {span ? (
+                <SpanDetail span={span} onClose={() => setSpan(null)} />
+              ) : (
+                <SpanDetailEmpty />
+              )}
+            </aside>
+          ) : null}
+        </div>
       </div>
     </div>
   )
