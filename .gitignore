@@ -10,6 +10,9 @@ apps/api/data/
 # rather than from apps/api. `cwd/data/app.db` is relative, so both paths are
 # real and both hold conversations and encrypted credentials.
 apps/api/src/data/
+# And again from the repo root, which is where `bun run` on a script outside
+# apps/api resolves it.
+/data/
 
 # Agent sandbox workspaces
 workspaces/

@@ -201,10 +201,37 @@ export const documents = sqliteTable(
     chunkCount: integer("chunk_count").notNull(),
     status: text("status").$type<DocumentStatus>().notNull().default("indexed"),
     error: text("error"), // why status is `empty` or `error`, for the UI
+    /**
+     * Where this document came from: null for an upload, otherwise the id of
+     * the connector that synced it. A connector's documents are deleted with it.
+     */
+    connectorId: text("connector_id"),
+    /** The source's own id for this file, unique within a connector. */
+    externalId: text("external_id"),
+    /**
+     * The source's version marker — Drive's `version`, an etag elsewhere.
+     * Compared on re-sync so an unchanged file is skipped rather than
+     * re-extracted and re-chunked, which is the whole cost of a sync.
+     */
+    externalVersion: text("external_version"),
+    /** Deep link back to the file in its source, for citations. */
+    externalUrl: text("external_url"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_documents_workspace").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("idx_documents_workspace").on(t.workspaceId, t.createdAt),
+    // Re-sync looks a document up by (connector, external id) on every file it
+    // sees, so this index is on the hot path of the sync, not of search.
+    index("idx_documents_external").on(t.connectorId, t.externalId),
+  ],
 );
+export type DocumentSourceRow = {
+  connectorId: string | null;
+  externalId: string | null;
+  externalVersion: string | null;
+  externalUrl: string | null;
+};
+
 export type DocumentRow = {
   id: string;
   workspaceId: string | null;
@@ -214,6 +241,10 @@ export type DocumentRow = {
   chunkCount: number;
   status: DocumentStatus;
   error: string | null;
+  connectorId: string | null;
+  externalId: string | null;
+  externalVersion: string | null;
+  externalUrl: string | null;
   createdAt: number;
 };
 
@@ -509,4 +540,62 @@ export type McpCapabilityRow = {
   description: string | null;
   schemaJson: string | null;
   uri: string | null;
+};
+
+// ---- connectors: remote sources that sync into `documents` ----
+
+export type ConnectorKind = "gdrive";
+export type ConnectorStatus = "connected" | "syncing" | "error";
+
+/**
+ * One authorised remote source for one workspace.
+ *
+ * Authentication is per-user OAuth rather than an admin credential, and that is
+ * the load-bearing decision: the source's API only ever returns what the person
+ * who authorised it can already see, so permissions need no modelling here. The
+ * alternative — crawling everything with a domain-wide credential and mirroring
+ * each source's ACLs onto every row — is most of what makes an enterprise
+ * search connector expensive, and a workspace has exactly one owner.
+ *
+ * It follows that a workspace shared with a second person would expose the
+ * owner's indexed files to them. That is a real constraint on ever making
+ * workspaces multi-user, not an oversight.
+ */
+export const connectors = sqliteTable(
+  "connectors",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id"),
+    kind: text("kind").$type<ConnectorKind>().notNull(),
+    /** Which account this is connected as. Display only; never used for auth. */
+    accountEmail: text("account_email"),
+    status: text("status").$type<ConnectorStatus>().notNull().default("connected"),
+    error: text("error"),
+    /**
+     * OAuth tokens as an encrypted JSON blob, exactly like `dbConnections.secret`
+     * and the MCP server secrets: written by the repository, never selected into
+     * anything that reaches the client or the model.
+     */
+    tokensEnc: text("tokens_enc").notNull(),
+    /**
+     * The source's own change cursor — Drive's `startPageToken`. Stored rather
+     * than a timestamp because every source that offers a change feed offers a
+     * token, and a timestamp cannot express "changes I have already seen".
+     */
+    cursor: text("cursor"),
+    lastSyncAt: integer("last_sync_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_connectors_workspace").on(t.workspaceId, t.createdAt)],
+);
+export type ConnectorRow = {
+  id: string;
+  workspaceId: string | null;
+  kind: ConnectorKind;
+  accountEmail: string | null;
+  status: ConnectorStatus;
+  error: string | null;
+  cursor: string | null;
+  lastSyncAt: number | null;
+  createdAt: number;
 };
