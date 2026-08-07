@@ -34,7 +34,8 @@ import { createDocumentTools } from "./context-tools";
 import { documentStore } from "../repositories/document.repository";
 import { createDatabaseTools } from "./db-tools";
 import { databaseConnectionStore } from "../repositories/database-connection.repository";
-import { createMcpTools, type McpRuntime } from "./mcp-tools";
+import { createMcpTools, createToolActivator, type McpRuntime } from "./mcp-tools";
+import { describeEnvironment } from "./environment-prompt";
 import { usableWindow } from "./context-window.service";
 import { jsonSchemaToTypebox } from "../lib/typebox-schema";
 import { logger, startTimer } from "../lib/logger";
@@ -126,6 +127,8 @@ export async function runPiAgent(opts: {
   // stays inert until SANDBOX_BACKEND is switched.
   let execEnv: ExecutionEnv;
   let releaseSandbox: (() => Promise<void>) | undefined;
+  /** Where the file and shell tools resolve paths, for the prompt to name. */
+  let execCwd: string;
 
   if (appEnv.sandboxBackend === "docker") {
     // Timed because a cold acquire pulls an image and starts a container, which
@@ -143,10 +146,12 @@ export async function runPiAgent(opts: {
       cwd: sandbox.workspacePath,
     });
     releaseSandbox = () => sandboxService.release(workspaceId);
+    execCwd = sandbox.workspacePath;
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
     fs.mkdirSync(workspaceDir, { recursive: true });
     execEnv = new NodeExecutionEnv({ cwd: workspaceDir });
+    execCwd = workspaceDir;
   }
 
   // --- built-in pi tools: bash + file read/write/edit (scoped to workspace) ---
@@ -216,24 +221,47 @@ export async function runPiAgent(opts: {
   // unreachable, which must not take the run with it.
   let mcp: McpRuntime | undefined;
   const mcpTimer = startTimer();
+  // Filled in once the harness exists; `search_tools` widens its active tool
+  // set through this. See `createToolActivator`.
+  const mcpActivator = createToolActivator();
   try {
-    mcp = await createMcpTools(workspaceId);
-    // Spawning a stdio server and listing its tools costs seconds on every
-    // run. Untimed, that time was simply missing from the timeline.
+    mcp = await createMcpTools(workspaceId, undefined, undefined, {
+      activator: mcpActivator,
+      // A connection is now opened by the first tool call that needs one, which
+      // is somewhere in the middle of a run rather than at its start. Traced
+      // where it happens, or the seconds it costs would go unattributed.
+      onConnect: (o) =>
+        emit({
+          type: "trace",
+          step: "mcp.connect",
+          fields: {
+            server: o.server,
+            ms: o.ms,
+            ok: o.ok,
+            ...(o.error ? { error: o.error } : {}),
+          },
+        }),
+    });
+    // Building the runtime no longer connects to anything — the catalog comes
+    // from `mcp_capabilities`. This span is what proves that: it read ~4-6
+    // seconds per run before, and should now read single-digit milliseconds
+    // unless a server had no cached catalog and had to be probed.
     emit({
       type: "trace",
-      step: "mcp.connect",
+      step: "mcp.catalog",
       fields: {
         ms: mcpTimer.elapsed(),
         servers: mcp.servers.map((sv) => sv.name).join(", ") || "(none)",
-        connected: mcp.servers.filter((sv) => sv.ok).length,
-        failed: mcp.servers.filter((sv) => !sv.ok).length,
         ok: mcp.servers.every((sv) => sv.ok),
-        toolsExposed: mcp.tools.length,
+        failed: mcp.servers.filter((sv) => !sv.ok).length,
+        // The two numbers this whole mechanism exists to separate: how many
+        // tools the workspace can reach, and how many are occupying context.
+        advertised: mcp.tools.length,
+        active: mcp.activeToolNames.length,
+        probed: mcp.servers.filter((sv) => !sv.cached).length,
       },
     });
-    // One span per server as well. They connect in parallel, so the aggregate
-    // above is the slowest of them, not the sum — and it cannot say which.
+    // One span per server as well, so a failure names which one.
     for (const sv of mcp.servers) {
       emit({
         type: "trace",
@@ -243,6 +271,7 @@ export async function runPiAgent(opts: {
           ms: sv.ms,
           transport: sv.transport,
           ok: sv.ok,
+          cached: sv.cached,
           tools: sv.toolCount,
           resources: sv.resourceCount,
           prompts: sv.promptCount,
@@ -362,9 +391,30 @@ export async function runPiAgent(opts: {
 
   // #2: systemPrompt as a function that adapts to the active tool set/model.
   const systemPromptFn = (ctx: any): string => {
-    const activeTools = (ctx?.activeTools ?? []).map((t: any) => t.name).join(", ");
+    const activeNames = (ctx?.activeTools ?? []).map((t: any) => t.name);
+    const activeTools = activeNames.join(", ");
+    // The active set as *pi* resolved it, not as this file computed it.
+    //
+    // Those two can disagree — a name that never reaches the harness produces a
+    // model that insists a tool does not exist, which is indistinguishable from
+    // the model simply refusing to call it. This is the span that tells the two
+    // apart, and it is emitted per turn because `search_tools` widens the set
+    // mid-run.
+    emit({
+      type: "trace",
+      step: "llm.tools",
+      fields: { count: activeNames.length, tools: activeTools },
+    });
     let out = systemPrompt;
     if (activeTools) out += `\n\nAvailable tools: ${activeTools}.`;
+    // Before the MCP block, deliberately. The agent's own machine is the
+    // default place; the remote services are the exception, and the prompt
+    // should introduce them in that order.
+    out += describeEnvironment({
+      backend: appEnv.sandboxBackend === "docker" ? "docker" : "node",
+      cwd: execCwd,
+      hasExternalServices: Boolean(mcp?.systemPromptBlock),
+    });
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
     if (mcp?.systemPromptBlock) out += mcp.systemPromptBlock;
@@ -379,6 +429,21 @@ export async function runPiAgent(opts: {
   const toolStartedAt = new Map<string, number>();
   const toolArgs = new Map<string, string>();
 
+  // Registered and active are deliberately different sets.
+  //
+  // pi builds the provider request from `activeToolNames` alone (see
+  // `AgentHarness.createTurnState`), so a registered-but-inactive tool costs
+  // nothing until something activates it. That is what makes 151 MCP tools
+  // affordable: every local tool stays on, and the MCP catalog contributes only
+  // the handful this workspace actually uses, plus `search_tools` to reach the
+  // rest. The floor this removes was measured at 36,512 tokens per turn.
+  const allTools = [...builtinTools, ...agentTools];
+  const mcpCatalog = new Set<string>((mcp?.tools ?? []).map((t: any) => t.name));
+  const mcpActive = new Set<string>(mcp?.activeToolNames ?? []);
+  const activeToolNames = allTools
+    .map((tool) => tool.name)
+    .filter((name) => !mcpCatalog.has(name) || mcpActive.has(name));
+
   const session = new Session(new InMemorySessionStorage());
   const harness = new AgentHarness({
     session,
@@ -388,8 +453,13 @@ export async function runPiAgent(opts: {
     systemPrompt: systemPromptFn,
     resources: { skills, promptTemplates },
     toolContext: { env: execEnv },
-    tools: [...builtinTools, ...agentTools],
+    tools: allTools,
+    activeToolNames,
   });
+
+  // The harness exists now, so `search_tools` has something to widen. Bound
+  // before any turn can run, which is what makes the unbound state unreachable.
+  mcpActivator.bind(harness);
 
   // --- provider round trip ---
   //
@@ -647,11 +717,10 @@ export async function runPiAgent(opts: {
 
   const t = startTimer();
 
-  emit({
-    type: "slots",
-    mode: "tools",
-    tools: [...builtinTools, ...agentTools].map((tool) => tool.name),
-  });
+  // The active set, not everything registered: this is what the model can see,
+  // and the panel claiming 151 tools while the model was shown 20 would be a
+  // lie in the direction that matters.
+  emit({ type: "slots", mode: "tools", tools: activeToolNames });
 
   try {
     if (template) {
