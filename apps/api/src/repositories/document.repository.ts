@@ -23,13 +23,25 @@ export type NewDocument = {
   pages: number;
   status: DocumentStatus;
   error?: string | null;
+  /** Set when a connector synced this document; absent for an upload. */
+  connectorId?: string;
+  externalId?: string;
+  externalVersion?: string;
+  externalUrl?: string | null;
 };
+
+/** What a sync needs to know about a document it has already indexed. */
+export type IndexedSource = { documentId: string; externalVersion: string | null };
 
 export interface DocumentStore {
   save(doc: NewDocument, docChunks: Chunk[]): Promise<void>;
   list(workspaceId: string): Promise<DocumentRow[]>;
   remove(workspaceId: string, documentId: string): Promise<boolean>;
   search(workspaceId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]>;
+  /** Everything one connector has indexed, keyed by the source's own id. */
+  bySource(workspaceId: string, connectorId: string): Promise<Map<string, IndexedSource>>;
+  /** Drop every document a connector owns. Returns how many went. */
+  removeByConnector(workspaceId: string, connectorId: string): Promise<number>;
 }
 
 /**
@@ -54,6 +66,10 @@ export class SqliteDocumentStore implements DocumentStore {
           chunkCount: docChunks.length,
           status: doc.status,
           error: doc.error ?? null,
+          connectorId: doc.connectorId ?? null,
+          externalId: doc.externalId ?? null,
+          externalVersion: doc.externalVersion ?? null,
+          externalUrl: doc.externalUrl ?? null,
           createdAt: Date.now(),
         })
         .run();
@@ -85,6 +101,41 @@ export class SqliteDocumentStore implements DocumentStore {
       .where(eq(documents.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
     return rows as DocumentRow[];
+  }
+
+  async bySource(workspaceId: string, connectorId: string): Promise<Map<string, IndexedSource>> {
+    const rows = await this.dbImpl
+      .select({
+        id: documents.id,
+        externalId: documents.externalId,
+        externalVersion: documents.externalVersion,
+      })
+      .from(documents)
+      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.connectorId, connectorId)));
+
+    const out = new Map<string, IndexedSource>();
+    for (const row of rows) {
+      if (!row.externalId) continue;
+      out.set(row.externalId, { documentId: row.id, externalVersion: row.externalVersion });
+    }
+    return out;
+  }
+
+  async removeByConnector(workspaceId: string, connectorId: string): Promise<number> {
+    const owned = await this.dbImpl
+      .select({ id: documents.id })
+      .from(documents)
+      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.connectorId, connectorId)));
+    if (!owned.length) return 0;
+
+    this.dbImpl.transaction((tx) => {
+      for (const row of owned) {
+        // Same reason as `remove`: chunks cascade, the FTS mirror does not.
+        tx.run(sql`DELETE FROM chunks_fts WHERE document_id = ${row.id}`);
+        tx.delete(documents).where(eq(documents.id, row.id)).run();
+      }
+    });
+    return owned.length;
   }
 
   async remove(workspaceId: string, documentId: string): Promise<boolean> {

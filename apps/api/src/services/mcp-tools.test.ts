@@ -17,11 +17,14 @@ import { env } from "../config/env";
 import { SqliteMcpStore } from "../repositories/mcp.repository";
 import type { Connector, McpConnection } from "./mcp/client";
 import {
+  BINARY_RUN_MIN,
   RESULT_CHAR_CAP,
   RUN_CHAR_BUDGET,
   capResult,
   createBudget,
   createMcpTools,
+  createToolActivator,
+  elideBinary,
 } from "./mcp-tools";
 
 /**
@@ -67,6 +70,11 @@ function githubServer() {
         description: "Returns far more than a context window holds",
         inputSchema: { type: "object", properties: {} },
       },
+      {
+        name: "list_contacts",
+        description: "Contacts, each carrying an avatar photo",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
@@ -76,7 +84,19 @@ function githubServer() {
     }
     if (req.params.name === "dump_everything") {
       // A real Nextcloud `search_files` returned 239,701 characters here.
-      return { content: [{ type: "text", text: "x".repeat(250_000) }] };
+      // Written as realistic text rather than one unbroken run of a single
+      // character: that would be indistinguishable from base64 and would be
+      // elided instead of capped, which is not what this fixture is for.
+      return { content: [{ type: "text", text: "lorem ipsum dolor sit amet. ".repeat(9_000) }] };
+    }
+    if (req.params.name === "list_contacts") {
+      // The shape that actually broke a run: a short, useful record wrapped
+      // around an avatar that is 30x its size.
+      const photo = "A1b2C3d4".repeat(500); // 4,000 chars of base64
+      const contacts = Array.from({ length: 20 }, (_, i) =>
+        JSON.stringify({ uid: `c${i}`, fn: `Contact ${i}`, photo }),
+      );
+      return { content: [{ type: "text", text: `{"contacts":[${contacts.join(",")}]}` }] };
     }
     return { content: [{ type: "text", text: "boom" }], isError: true };
   });
@@ -204,6 +224,60 @@ describe("capResult", () => {
   });
 });
 
+describe("elideBinary", () => {
+  const blob = (n: number) => "A1b2C3d4".repeat(Math.ceil(n / 8)).slice(0, n);
+
+  it("replaces an embedded photo with a note saying how much was there", () => {
+    const out = elideBinary(`"photo": "${blob(4_000)}"`);
+    expect(out).toContain("[binary data, 4,000 characters elided]");
+    expect(out).not.toContain(blob(300));
+    expect(out.length).toBeLessThan(100);
+  });
+
+  it("keeps a marker rather than deleting silently", () => {
+    // A model that cannot tell "an image was here" from "this field was empty"
+    // will report a contact as having no photo.
+    expect(elideBinary(`{"photo":"${blob(1_000)}"}`)).toContain("binary data");
+  });
+
+  it("leaves the result parseable as JSON", () => {
+    const out = elideBinary(JSON.stringify({ name: "Adilah", photo: blob(2_000) }));
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(JSON.parse(out).name).toBe("Adilah");
+  });
+
+  it("elides every blob in a list, not just the first", () => {
+    const contacts = [1, 2, 3].map((i) => `{"uid":"${i}","photo":"${blob(900)}"}`).join(",");
+    const out = elideBinary(contacts);
+    expect(out.match(/binary data/g)).toHaveLength(3);
+    expect(out).toContain('"uid":"3"');
+  });
+
+  it("leaves prose alone however long", () => {
+    const prose = "The quick brown fox jumps over the lazy dog. ".repeat(200);
+    expect(elideBinary(prose)).toBe(prose);
+  });
+
+  it("leaves tokens below the threshold alone", () => {
+    // A sha256 is 64 characters and a short id shorter still. Eliding those
+    // would destroy the identifiers a follow-up call needs.
+    const sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    expect(elideBinary(`etag ${sha}`)).toContain(sha);
+    expect(elideBinary(blob(BINARY_RUN_MIN - 1))).toBe(blob(BINARY_RUN_MIN - 1));
+  });
+
+  it("leaves a path or minified payload alone — punctuation breaks the run", () => {
+    const path = "/remote.php/dav/addressbooks/users/admin/z-server-generated--system/Database:Adilah.vcf";
+    expect(elideBinary(path)).toBe(path);
+    const minified = "function a(b){return b.c+b.d;}".repeat(40);
+    expect(elideBinary(minified)).toBe(minified);
+  });
+
+  it("elides at the threshold exactly", () => {
+    expect(elideBinary(blob(BINARY_RUN_MIN))).toContain("binary data");
+  });
+});
+
 describe("createBudget", () => {
   it("spends down as results are taken", () => {
     const b = createBudget(1_000);
@@ -305,6 +379,42 @@ describe("createMcpTools", () => {
     await runtime.dispose();
   });
 
+  it("strips avatar blobs so a contact list fits instead of being truncated", async () => {
+    // The regression this exists for: 20 contacts totalling ~82k characters,
+    // of which ~80k is photos. Capped first, the model saw eight contacts and
+    // spent seven turns trying to work out how many there really were.
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector);
+
+    const contacts: any = byName(runtime.tools, "github__list_contacts");
+    const result = await contacts.execute("call-c", {});
+    const text = result.content[0].text as string;
+
+    expect(text).not.toContain("INCOMPLETE");
+    expect(text.length).toBeLessThan(RESULT_CHAR_CAP);
+    // Every contact survived, which is the whole point — the last one is the
+    // first casualty of truncation.
+    expect(text).toContain("Contact 19");
+    expect(text).toContain("binary data");
+    await runtime.dispose();
+  });
+
+  it("spends the run budget on information, not on photos", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector);
+    const contacts: any = byName(runtime.tools, "github__list_contacts");
+
+    // Six calls that would each have consumed the full 40k cap as photos now
+    // cost a fraction of it, so the run does not exhaust its budget.
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => contacts.execute(`c${i}`, {})),
+    );
+    const total = results.reduce((n, r: any) => n + r.content[0].text.length, 0);
+    expect(total).toBeLessThan(RUN_CHAR_BUDGET / 4);
+    for (const r of results as any[]) expect(r.content[0].text).toContain("Contact 19");
+    await runtime.dispose();
+  });
+
   it("returns a tool error to the model rather than throwing", async () => {
     await seed(["github"]);
     const runtime = await createMcpTools("ws1", store, connector);
@@ -355,6 +465,7 @@ describe("createMcpTools", () => {
     expect(caps.filter((c) => c.kind === "tool").map((c) => c.name).sort()).toEqual([
       "create_issue",
       "dump_everything",
+      "list_contacts",
       "search",
     ]);
     expect(caps.filter((c) => c.kind === "resource")).toHaveLength(1);
@@ -411,12 +522,17 @@ describe("createMcpTools", () => {
     await runtime.dispose();
   });
 
-  it("pre-renders a prompt that takes no arguments", async () => {
+  it("routes an argument-less prompt through mcp_get_prompt rather than inlining it", async () => {
+    // These used to be fetched while building the runtime, which was free back
+    // when every run already held a connection. Connections are opened on first
+    // call now, so inlining one would mean opening a connection for a prompt
+    // that may never be used.
     await seed(["github"]);
     const runtime = await createMcpTools("ws1", store, connector);
 
     const standup = runtime.promptTemplates.find((p) => p.name === "github__standup")!;
-    expect(standup.content).toContain("prompt:standup:");
+    expect(standup.content).toContain("mcp_get_prompt");
+    expect(standup.content).toContain('name="standup"');
     await runtime.dispose();
   });
 
@@ -467,12 +583,227 @@ describe("createMcpTools", () => {
     await runtime.dispose();
   });
 
-  it("builds a system-prompt block naming each server and its tools", async () => {
+  it("builds a system-prompt block naming each server and counting its tools", async () => {
     await seed(["github"]);
     const runtime = await createMcpTools("ws1", store, connector);
 
+    // Names the server and how much it offers. It deliberately no longer lists
+    // every tool name: that duplicated the schemas at ~1k tokens per prompt,
+    // and the schemas are now the partial thing, so the block's job is to say
+    // that the visible list is incomplete.
     expect(runtime.systemPromptBlock).toContain("github");
-    expect(runtime.systemPromptBlock).toContain("github__search");
+    expect(runtime.systemPromptBlock).toContain("4 tool(s)");
+    expect(runtime.systemPromptBlock).not.toContain("github__search");
+    await runtime.dispose();
+  });
+
+  it("tells the model the tool list is partial and how to widen it", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector);
+
+    // Without this the model answers "I have no tool for that" from the tools
+    // it can see, which is the failure deferring them would otherwise cause.
+    expect(runtime.systemPromptBlock).toContain("search_tools");
+    expect(runtime.systemPromptBlock).toContain("not shown");
+    await runtime.dispose();
+  });
+});
+
+describe("createMcpTools catalog and deferred loading", () => {
+  /** A connector that records every spec it was asked to connect. */
+  function countingConnector(): Connector & { calls: string[] } {
+    const calls: string[] = [];
+    const fn = (async (spec: any) => {
+      calls.push(spec.name);
+      if (spec.name === "github") return linkedConnection(spec, githubServer());
+      if (spec.name === "files") return linkedConnection(spec, filesServer());
+      throw new Error("connect ECONNREFUSED");
+    }) as Connector & { calls: string[] };
+    fn.calls = calls;
+    return fn;
+  }
+
+  it("probes a server that has no cached catalog, then never again", async () => {
+    await seed(["github"]);
+    const first = countingConnector();
+    const cold = await createMcpTools("ws1", store, first);
+    expect(first.calls).toEqual(["github"]);
+    expect(cold.tools.map((t) => t.name)).toContain("github__search");
+    await cold.dispose();
+
+    // Second run: the catalog is cached, so building the runtime must not open
+    // a connection at all. This is the 4-6 seconds every run used to pay.
+    const second = countingConnector();
+    const warm = await createMcpTools("ws1", store, second);
+    expect(second.calls).toEqual([]);
+    expect(warm.tools.map((t) => t.name)).toContain("github__search");
+    await warm.dispose();
+  });
+
+  it("connects on the first tool call, not while building the runtime", async () => {
+    await seed(["github"]);
+    await (await createMcpTools("ws1", store, connector)).dispose(); // warm the cache
+
+    const lazy = countingConnector();
+    const runtime = await createMcpTools("ws1", store, lazy);
+    expect(lazy.calls).toEqual([]);
+
+    const search: any = byName(runtime.tools, "github__search");
+    const result = await search.execute("call-1", { query: "bug" });
+    expect(result.content[0].text).toContain("found: bug");
+    expect(lazy.calls).toEqual(["github"]);
+    await runtime.dispose();
+  });
+
+  it("opens one connection per server however many calls a run makes", async () => {
+    await seed(["github"]);
+    await (await createMcpTools("ws1", store, connector)).dispose();
+
+    const lazy = countingConnector();
+    const runtime = await createMcpTools("ws1", store, lazy);
+    const search: any = byName(runtime.tools, "github__search");
+    await Promise.all([
+      search.execute("a", { query: "1" }),
+      search.execute("b", { query: "2" }),
+      search.execute("c", { query: "3" }),
+    ]);
+    expect(lazy.calls).toEqual(["github"]);
+    await runtime.dispose();
+  });
+
+  it("costs one connection attempt per run when a server is down", async () => {
+    await store.create({
+      id: "s0",
+      workspaceId: "ws1",
+      name: "github",
+      transport: "http",
+      url: "https://github.example.com/mcp",
+    });
+    // Cache a catalog, then make the server unreachable for the actual calls.
+    await (await createMcpTools("ws1", store, connector)).dispose();
+
+    const down: Connector & { calls: string[] } = Object.assign(
+      async (spec: any) => {
+        (down.calls ??= []).push(spec.name);
+        throw new Error("connect ECONNREFUSED");
+      },
+      { calls: [] as string[] },
+    );
+    const runtime = await createMcpTools("ws1", store, down);
+    const search: any = byName(runtime.tools, "github__search");
+
+    const first = await search.execute("a", { query: "1" });
+    const second = await search.execute("b", { query: "2" });
+    expect(first.isError).toBe(true);
+    expect(second.isError).toBe(true);
+    // A failed connection is cached like a successful one: a down server costs
+    // one attempt, not one per call.
+    expect(down.calls).toEqual(["github"]);
+    await runtime.dispose();
+  });
+
+  it("loads only the tools this workspace has used, and offers search for the rest", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector, {
+      usage: async () => [{ name: "github__search", calls: 9 }],
+    });
+
+    expect(runtime.tools.map((t) => t.name)).toContain("github__create_issue");
+    // Registered but not active: it costs no context until searched for.
+    expect(runtime.activeToolNames).toContain("github__search");
+    expect(runtime.activeToolNames).not.toContain("github__create_issue");
+    expect(runtime.activeToolNames).toContain("search_tools");
+    await runtime.dispose();
+  });
+
+  it("starts with no catalog tools loaded when the workspace has no history", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector, { usage: async () => [] });
+
+    // The honest cold start: nothing is known about what this workspace needs,
+    // and guessing would re-advertise the tools this mechanism exists to hide.
+    expect(runtime.activeToolNames).not.toContain("github__search");
+    expect(runtime.activeToolNames).toContain("search_tools");
+    await runtime.dispose();
+  });
+
+  it("ignores history naming a tool the server no longer advertises", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector, {
+      usage: async () => [
+        { name: "github__removed_tool", calls: 99 },
+        { name: "github__search", calls: 1 },
+      ],
+    });
+
+    // pi rejects an unknown name in setActiveTools, so a stale trace must not
+    // reach the active set — it would fail the run at construction.
+    expect(runtime.activeToolNames).not.toContain("github__removed_tool");
+    expect(runtime.activeToolNames).toContain("github__search");
+    await runtime.dispose();
+  });
+
+  it("survives a usage lookup that throws", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector, {
+      usage: async () => {
+        throw new Error("traces table is on fire");
+      },
+    });
+    // Degrades to search-first rather than failing the run.
+    expect(runtime.activeToolNames).toContain("search_tools");
+    await runtime.dispose();
+  });
+
+  it("activates a matching tool through search_tools", async () => {
+    await seed(["github"]);
+    const activator = createToolActivator();
+    const active = new Set<string>(["search_tools"]);
+    activator.bind({
+      getActiveTools: () => [...active].map((name) => ({ name })),
+      setActiveTools: async (names: string[]) => {
+        active.clear();
+        for (const n of names) active.add(n);
+      },
+    });
+
+    const runtime = await createMcpTools("ws1", store, connector, {
+      activator,
+      usage: async () => [],
+    });
+
+    const search: any = byName(runtime.tools, "search_tools");
+    const result = await search.execute("call-1", { query: "open an issue" });
+
+    expect(result.content[0].text).toContain("github__create_issue");
+    expect(active.has("github__create_issue")).toBe(true);
+    // The model must not try to call it in the same turn — pi rebuilds the tool
+    // set for the NEXT turn, so a same-turn call would hit an unknown name.
+    expect(result.content[0].text).toContain("next step");
+    await runtime.dispose();
+  });
+
+  it("says so rather than erroring when nothing matches", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector, { usage: async () => [] });
+
+    const search: any = byName(runtime.tools, "search_tools");
+    const result = await search.execute("call-1", { query: "zzzz" });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("No tool matches");
+    await runtime.dispose();
+  });
+
+  it("omits search_tools when every tool is already loaded", async () => {
+    await seed(["files"]);
+    const runtime = await createMcpTools("ws1", store, connector, {
+      usage: async () => [{ name: "files__read_file", calls: 3 }],
+    });
+
+    // One tool, and it is in the core set. A search tool here would advertise a
+    // catalog that is already fully visible.
+    expect(runtime.tools.map((t) => t.name)).not.toContain("search_tools");
+    expect(runtime.activeToolNames).toContain("files__read_file");
     await runtime.dispose();
   });
 });

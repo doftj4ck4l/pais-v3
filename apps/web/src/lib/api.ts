@@ -13,7 +13,16 @@ import type {
 } from '@/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    // The server's own `error` is the useful part — "add this redirect URI to
+    // the OAuth client" names the fix, where a bare "HTTP 400" sends you
+    // looking in the wrong place.
+    const detail = await res
+      .json()
+      .then((body: { error?: string }) => body?.error)
+      .catch(() => undefined)
+    throw new Error(detail || `HTTP ${res.status}`)
+  }
   return (await res.json()) as T
 }
 
@@ -318,4 +327,58 @@ export async function getRun(scope: Scope, id: string): Promise<RunDetail> {
   return json<RunDetail>(
     await fetch(`/api/admin/runs/${encodeURIComponent(id)}?${scoped(scope)}`),
   )
+}
+
+// ---- connectors ----
+
+export type ConnectorRow = {
+  id: string
+  kind: 'gdrive'
+  accountEmail: string | null
+  status: 'connected' | 'syncing' | 'error'
+  error: string | null
+  lastSyncAt: number | null
+  documentCount: number
+}
+
+export type SyncOutcome = {
+  indexed: number
+  updated: number
+  unchanged: number
+  removed: number
+  skipped: { title: string; reason: string }[]
+  failed: { title: string; reason: string }[]
+  ms: number
+}
+
+export async function listConnectors(
+  scope: Scope,
+): Promise<{ connectors: ConnectorRow[]; available: { kind: string; reason: string }[] }> {
+  return json(await fetch(`/api/connectors?${scoped(scope)}`))
+}
+
+/**
+ * Where to send the browser for Google's consent screen.
+ *
+ * The server returns a URL rather than redirecting, because this is a fetch
+ * from the SPA and a cross-origin 302 would be blocked before any consent
+ * screen appeared.
+ */
+export async function googleAuthUrl(scope: Scope): Promise<string> {
+  const { url } = await json<{ url: string }>(
+    await fetch(`/api/connectors/google/auth?${scoped(scope)}`),
+  )
+  return url
+}
+
+export async function syncConnector(scope: Scope, id: string): Promise<SyncOutcome> {
+  return json(
+    await fetch(`/api/connectors/${encodeURIComponent(id)}/sync?${scoped(scope)}`, {
+      method: 'POST',
+    }),
+  )
+}
+
+export async function deleteConnector(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/connectors/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }

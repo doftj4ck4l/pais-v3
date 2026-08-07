@@ -26,6 +26,7 @@ import {
   mcpServers,
   mcpCapabilities,
   runs,
+  connectors,
 } from "../models/schema";
 
 /** Where the SQLite database file lives (ignored by git). */
@@ -49,6 +50,7 @@ export {
   mcpServers,
   mcpCapabilities,
   runs,
+  connectors,
 };
 export type {
   WorkspaceRow,
@@ -71,6 +73,9 @@ export type {
   McpCapabilityKind,
   RunRow,
   RunStatus,
+  ConnectorRow,
+  ConnectorKind,
+  ConnectorStatus,
 } from "../models/schema";
 
 const sqlite = new Database(DB_PATH, { create: true });
@@ -294,6 +299,37 @@ export function applySchema(target: Database) {
     target.exec(`ALTER TABLE traces ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`);
   }
   target.exec(`CREATE INDEX IF NOT EXISTS idx_traces_run ON traces (run_id, ts)`);
+
+  // Connectors, and the columns that tie a document back to the file it came
+  // from. `documents` predates all of this, and `CREATE TABLE IF NOT EXISTS`
+  // does nothing for a table that already exists — without these ALTERs Drizzle
+  // selects columns SQLite does not have, and the API returns the column *name*
+  // as the value rather than erroring.
+  target.exec(`
+    CREATE TABLE IF NOT EXISTS connectors (
+      id             TEXT PRIMARY KEY,
+      workspace_id   TEXT,
+      kind           TEXT NOT NULL,
+      account_email  TEXT,
+      status         TEXT NOT NULL DEFAULT 'connected',
+      error          TEXT,
+      tokens_enc     TEXT NOT NULL,
+      cursor         TEXT,
+      last_sync_at   INTEGER,
+      created_at     INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_connectors_workspace ON connectors (workspace_id, created_at);
+  `);
+
+  const documentColumns = columnsOf(target, "documents");
+  for (const column of ["connector_id", "external_id", "external_version", "external_url"]) {
+    if (!documentColumns.includes(column)) {
+      target.exec(`ALTER TABLE documents ADD COLUMN ${column} TEXT`);
+    }
+  }
+  target.exec(
+    `CREATE INDEX IF NOT EXISTS idx_documents_external ON documents (connector_id, external_id)`,
+  );
 
   // Same story for `runs`: the columns above only apply to a table being
   // created for the first time. A database that already has `runs` needs them

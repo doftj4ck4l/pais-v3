@@ -52,4 +52,25 @@ export const env = {
    * stance the sandbox takes when Docker is down.
    */
   connectionSecret: process.env.CONNECTION_SECRET ?? "",
+
+  /**
+   * OAuth client for the Google Drive connector. Absent, the connector is
+   * simply not offered — the same stance as `connectionSecret`, since half a
+   * credential produces a consent screen that fails after the user has already
+   * approved it.
+   */
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+
+  /**
+   * How this API is reached from a browser, used to build the OAuth redirect.
+   *
+   * It must match an Authorized redirect URI on the Google client exactly, and
+   * Google compares the string, not the host it resolves to. Configurable
+   * because the API is reached through the web proxy's port, not its own.
+   */
+  publicUrl: (process.env.PUBLIC_URL ?? "http://localhost:8080").replace(/\/+$/, ""),
+
+  /** Files one Drive sync will pull. Small by default; a demo, not a crawl. */
+  connectorSyncLimit: Number(process.env.CONNECTOR_SYNC_LIMIT ?? 50),
 } as const;

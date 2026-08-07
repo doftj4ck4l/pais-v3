@@ -1,15 +1,19 @@
 import { useState } from 'react'
-import { DatabaseIcon, FileIcon, FileTextIcon, PlugIcon } from 'lucide-react'
+import { CloudIcon, DatabaseIcon, FileIcon, FileTextIcon, PlugIcon } from 'lucide-react'
 import { DocumentPanel } from '@/components/document-panel'
 import { DatabasePanel } from '@/components/database-panel'
 import { FilesPanel } from '@/components/files-panel'
 import { McpPanel } from '@/components/mcp-panel'
+import { ConnectorPanel } from '@/components/connector-panel'
 import { cn } from '@/lib/utils'
 
-type TabId = 'documents' | 'databases' | 'mcp' | 'files'
+type TabId = 'documents' | 'connectors' | 'databases' | 'mcp' | 'files'
 
 const TABS: { id: TabId; label: string; icon: typeof FileTextIcon }[] = [
   { id: 'documents', label: 'Docs', icon: FileTextIcon },
+  // Next to Docs on purpose: a connector's files land in the same index as an
+  // upload, so the two tabs are two ways to fill one drawer.
+  { id: 'connectors', label: 'Sources', icon: CloudIcon },
   { id: 'databases', label: 'Data', icon: DatabaseIcon },
   { id: 'mcp', label: 'MCP', icon: PlugIcon },
   { id: 'files', label: 'Files', icon: FileIcon },
@@ -32,6 +36,7 @@ export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }
   const [tab, setTab] = useState<TabId>('documents')
   const [counts, setCounts] = useState<Record<TabId, number>>({
     documents: 0,
+    connectors: 0,
     databases: 0,
     mcp: 0,
     files: 0,
@@ -68,6 +73,9 @@ export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         <Pane active={tab === 'documents'}>
           <DocumentPanel onCountChange={setCount('documents')} />
+        </Pane>
+        <Pane active={tab === 'connectors'}>
+          <ConnectorPanel onCountChange={setCount('connectors')} />
         </Pane>
         <Pane active={tab === 'databases'}>
           <DatabasePanel onCountChange={setCount('databases')} />
