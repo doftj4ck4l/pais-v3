@@ -8,7 +8,7 @@ import { ControlDeck } from '@/pages/console/components/control-deck'
 import { ResourcesPanel } from '@/features/resources/components/resources-panel'
 import { ResourcesHandle } from '@/features/resources/components/resources-handle'
 import { SettingsModal } from '@/pages/console/components/settings-modal'
-import { EmptyState, type Suggestion } from '@/pages/console/components/empty-state'
+import { EmptyState } from '@/pages/console/components/empty-state'
 import { TraceSheet } from '@/features/agents/components/trace-sheet'
 import { Transcript } from '@/features/agents/components/transcript'
 import { WorkspaceOnboarding } from '@/features/workspace/components/workspace-onboarding'
@@ -19,14 +19,6 @@ import { useResourcePanel } from '@/features/resources/hooks/use-resource-panel'
 import { useTheme } from '@/shared/hooks/use-theme'
 import { cn } from '@/shared/lib/utils'
 import { Brand } from '@/shared/components/brand'
-
-// Each one fires a real tool, so a new agent has something to show.
-const SUGGESTIONS: Suggestion[] = [
-  { text: 'What time is it in Kuala Lumpur?', tool: 'get_current_time' },
-  { text: 'Compute (2 + 3) * 4 - 10', tool: 'calculator' },
-  { text: "What's the weather in Penang?", tool: 'get_weather' },
-  { text: 'Roll a number between 1 and 20', tool: 'random_number' },
-]
 
 
 export function Console() {
@@ -155,7 +147,7 @@ export function Console() {
                 runSummary={`Working… ${(selected.elapsed / 1000).toFixed(1)}s`}
               />
             ) : (
-              <EmptyState suggestions={SUGGESTIONS} onPick={spawn} />
+              <EmptyState harnessId={board.harnessId} onPick={spawn} />
             )}
           </main>
 
