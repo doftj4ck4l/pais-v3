@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import {
   backfill,
   columnsOf,
@@ -31,11 +32,24 @@ import {
   generatedImages,
 } from "../models/schema";
 
-/** Where the SQLite database file lives (ignored by git). */
+/**
+ * Where the SQLite database file lives (ignored by git).
+ *
+ * Overridable so tests can drive the real HTTP surface against a throwaway
+ * file instead of the working database.
+ *
+ * Under `bun test` an unset DB_PATH resolves to a throwaway rather than to
+ * `data/app.db`. A test that reaches this singleton would otherwise read and
+ * write whatever the developer last used `bun dev` on — which also hides
+ * failures, because a schema the working database happens to have is a schema
+ * a fresh checkout does not. That is exactly how a green suite here shipped a
+ * red one in CI.
+ */
 export const DB_PATH =
-  // Overridable so tests can drive the real HTTP surface against a throwaway
-  // file instead of the working database.
-  process.env.DB_PATH ?? path.resolve(process.cwd(), "data", "app.db");
+  process.env.DB_PATH ??
+  (process.env.NODE_ENV === "test"
+    ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "salur-test-db-")), "app.db")
+    : path.resolve(process.cwd(), "data", "app.db"));
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
