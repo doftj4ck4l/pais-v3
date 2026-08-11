@@ -16,6 +16,19 @@
 
 	handle {
 		root * /srv
+
+		# Asset filenames carry a content hash, so a given URL never changes
+		# meaning and may be cached forever.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		# index.html is the one file whose URL is stable while its contents
+		# change every deploy. Without this it had no Cache-Control at all, so
+		# browsers applied heuristic freshness and could keep serving a stale
+		# copy — which pins the whole app to the previous bundle.
+		header /index.html Cache-Control "no-cache"
+		header / Cache-Control "no-cache"
+
 		# Single-page app: every unknown path is a client route, not a 404.
 		try_files {path} /index.html
 		file_server
