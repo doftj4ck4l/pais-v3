@@ -7,8 +7,8 @@ architecture, then this for the traps.
 Two parts of the README have rotted and will mislead you: the endpoints table
 still says every scoped endpoint takes `?userId=&workspaceId=` (identity now
 comes from a header — see *Who the caller is*), and the four-step agent loop
-under "Flow in `services/agent.service.ts`" describes a driver no shipped
-harness uses (see *Two agent drivers*).
+under "Flow in `services/agent.service.ts`" describes code that no longer exists
+(see *Where a run actually happens*).
 
 ## Toolchain
 
@@ -16,7 +16,7 @@ Bun, not npm. `bun test`, `bun run build`, `bunx tsc`. Node is only present to
 bootstrap Bun.
 
 ```bash
-cd apps/api && bun test                          # 457 pass, 7 fail
+cd apps/api && bun test                          # 463 pass, 7 fail
 cd apps/api && bun test src/services/mcp         # one directory
 cd apps/api && bun test -t "reapIdle"            # one test by name
 cd apps/api && bunx tsc --noEmit -p tsconfig.json
@@ -34,14 +34,18 @@ whenever the Docker daemon is unreachable from the test process. Compare against
 anything outside it is yours. CI excludes those three files by name rather than
 tolerating failures, so any *other* red test stops a deploy.
 
-## Two agent drivers
+## Where a run actually happens
 
-`Harness.driver` is `"prompt" | "pi"`, and **both shipped harnesses are `"pi"`**.
-So `runAgent` in `agent.service.ts` forwards to `runPiAgent` before it reaches
-its own loop, and that loop is unreachable from the catalog. Read
-`pi.service.ts` (the real engine, ~930 lines) for anything about how a run
-actually behaves; editing the loop in `agent.service.ts` changes nothing you can
-observe.
+`pi.service.ts` (~930 lines). Not `agent.service.ts`, which is a 38-line adapter
+turning a catalog harness into `runPiAgent` arguments and nothing else — and not
+the README's four-step loop under "Flow in `services/agent.service.ts`", which
+describes a second loop that used to live there.
+
+That loop was reached when `harness.driver` was anything but `"pi"`. Every
+harness the catalog shipped was `"pi"`, so it was unreachable for as long as it
+existed while still answering every search for where a turn is taken. It is
+gone, along with `Harness.driver` and `Harness.maxIterations`, which existed
+only to feed it. A harness is now a system prompt plus optional tool groups.
 
 The model's tool list is assembled in one place there, from six sources — not
 just `catalog/tools.ts` as the README's "Adding a tool" implies:
@@ -124,11 +128,49 @@ or request body reintroduces the hole.
 
 ## Migrations
 
-`applySchema` uses `CREATE TABLE IF NOT EXISTS`, which does nothing for a table
-that already exists. **Adding a column to an existing table needs an explicit
-`ALTER TABLE`** next to the ones already in `db/client.ts`. Miss it and Drizzle
-selects a column SQLite does not have, and the API returns the column *name* as
-the value rather than erroring.
+`models/schema.ts` is the only place a table is described. The SQL is generated
+from it:
+
+```bash
+cd apps/api
+#  1. edit src/models/schema.ts
+bunx drizzle-kit generate     # 2. writes drizzle/NNNN_*.sql
+#  3. commit the generated file
+```
+
+Nothing applies them from the CLI. `ensureSchema` runs `migrate()` at boot, so
+starting the API *is* migrating it — there is no second command to forget, and
+none to run during a deploy.
+
+**Do not hand-write DDL in `db/client.ts`.** It used to be several hundred lines
+that had to agree with `models/schema.ts` by hand, and the way that failed was
+silent: Drizzle would select a column SQLite did not have, and SQLite answers
+that with the column *name* rather than an error, so the value looks plausible
+everywhere it is displayed.
+
+Three things about this that are not obvious:
+
+- **`0000_baseline.sql` is guarded with `IF NOT EXISTS`, and later ones are
+  not.** That guard is how a database written before migrations adopts them: it
+  already has the tables and no `__drizzle_migrations` to say so, so `migrate()`
+  runs 0000 once, changes nothing, and records the baseline. Regenerating 0000
+  means re-applying those guards.
+- **`0001_fts5.sql` is hand-written and always will be.** Drizzle cannot express
+  `CREATE VIRTUAL TABLE ... USING fts5`, so drizzle-kit will neither generate
+  those two tables nor drop them. It is the only DDL here not generated.
+- **`applySchema` still exists and still takes a handle**, because fifteen test
+  files build their in-memory database with it. It runs the migrations now.
+  `adoptLegacyColumns` beside it is frozen — it carries the guarded `ALTER`s for
+  databases created before migrations, and nothing new belongs in it.
+
+A column the ORM declares but the database lacks is caught by
+`db/schema-parity.test.ts`, which cannot catch generated drift but does catch a
+hand-edited migration.
+
+Building the pre-workspace shape (`user_id` on the scoped tables) is
+`db/testing/legacy-database.ts`. It is what `backfill` and `dropLegacyUserId`
+exist to move forward, and it is no longer part of the schema a fresh database
+gets.
 
 ## Context accounting
 
