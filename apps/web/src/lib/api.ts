@@ -9,8 +9,7 @@ import type {
   RunDetail,
   RunRow,
   WorkspaceFile,
-  WorkspaceRow,
-} from '@/lib/types'
+  WorkspaceRow, UserProfile } from '@/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -27,32 +26,30 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 /**
- * Who is asking, and which body of work they are asking about.
+ * Which body of work is being asked about.
  *
- * Passed as one object rather than two positional strings: both are opaque ids,
- * so getting them the wrong way round would type-check cleanly and silently
- * read an empty workspace. `workspaceId` may be null before the first list has
- * arrived, in which case the server picks the user's default.
+ * This used to carry a `userId` too, invented client-side and trusted by the
+ * server. Identity now comes from the authenticating proxy, so the only thing
+ * left to say is which workspace. `workspaceId` may be null before the first
+ * list has arrived, in which case the server picks the user's default.
  */
-export type Scope = { userId: string; workspaceId: string | null }
+export type Scope = { workspaceId: string | null }
 
 const scoped = (scope: Scope, extra: Record<string, string> = {}) => {
-  const params = new URLSearchParams({ userId: scope.userId, ...extra })
+  const params = new URLSearchParams({ ...extra })
   if (scope.workspaceId) params.set('workspaceId', scope.workspaceId)
   return params.toString()
 }
 
 /** Every workspace this user owns, oldest first. The server creates one if none exist. */
-export async function listWorkspaces(userId: string): Promise<WorkspaceRow[]> {
-  const { workspaces } = await json<{ workspaces: WorkspaceRow[] }>(
-    await fetch(`/api/workspaces?userId=${encodeURIComponent(userId)}`),
-  )
+export async function listWorkspaces(): Promise<WorkspaceRow[]> {
+  const { workspaces } = await json<{ workspaces: WorkspaceRow[] }>(await fetch('/api/workspaces'))
   return workspaces
 }
 
-export async function createWorkspace(userId: string, name: string): Promise<WorkspaceRow> {
+export async function createWorkspace(name: string): Promise<WorkspaceRow> {
   const { workspace } = await json<{ workspace: WorkspaceRow }>(
-    await fetch(`/api/workspaces?userId=${encodeURIComponent(userId)}`, {
+    await fetch('/api/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -61,8 +58,8 @@ export async function createWorkspace(userId: string, name: string): Promise<Wor
   return workspace
 }
 
-export async function renameWorkspace(userId: string, id: string, name: string): Promise<void> {
-  await fetch(`/api/workspaces/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
+export async function renameWorkspace(id: string, name: string): Promise<void> {
+  await fetch(`/api/workspaces/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -74,14 +71,16 @@ export async function renameWorkspace(userId: string, id: string, name: string):
  * one with a 409, which is reported rather than thrown — it is a rule, not a
  * failure.
  */
-export async function deleteWorkspace(userId: string, id: string): Promise<{ error?: string }> {
-  const res = await fetch(
-    `/api/workspaces/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`,
-    { method: 'DELETE' },
-  )
+export async function deleteWorkspace(id: string): Promise<{ error?: string }> {
+  const res = await fetch(`/api/workspaces/${encodeURIComponent(id)}`, { method: 'DELETE' })
   if (res.ok) return {}
   const body = (await res.json().catch(() => ({}))) as { error?: string }
   return { error: body.error ?? `HTTP ${res.status}` }
+}
+
+/** Who the authenticating proxy says you are. */
+export async function fetchMe(): Promise<UserProfile> {
+  return json<UserProfile>(await fetch('/api/me'))
 }
 
 export async function fetchMeta(): Promise<Meta> {

@@ -5,11 +5,19 @@ import { currentUserId } from "../middleware/auth";
 
 const userIdOf = (c: Context) => currentUserId(c);
 
-/** GET /api/workspaces — a user's workspaces, oldest first, creating one if none exist. */
+/**
+ * GET /api/workspaces — a user's workspaces, oldest first.
+ *
+ * Deliberately does not create one. This used to call `resolve` first so the
+ * client always had something to select, which meant a brand-new user was
+ * indistinguishable from an existing one: the console could never offer to set
+ * a workspace up, because by the time it asked, "Default" already existed.
+ *
+ * An empty list is the signal for onboarding. `resolve` still creates on demand
+ * for the endpoints that genuinely need a workspace to answer at all.
+ */
 export async function index(c: Context) {
   const userId = userIdOf(c);
-  // Resolving first guarantees the client always has at least one to select.
-  await workspaceRegistry.resolve(userId);
   return c.json({ workspaces: await workspaceRegistry.list(userId) });
 }
 

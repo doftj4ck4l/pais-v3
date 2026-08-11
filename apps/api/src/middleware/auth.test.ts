@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import { createAuth, currentUserId } from "./auth";
+import { createAuth, currentUser, currentUserId } from "./auth";
 
 /** A minimal app that reports whichever user id the middleware resolved. */
 const appWith = (opts: Parameters<typeof createAuth>[0]) => {
@@ -79,5 +79,55 @@ describe("dev mode", () => {
     const res = await app.request("/who?userId=bob");
 
     expect(await res.json()).toEqual({ userId: "local" });
+  });
+});
+
+describe("profile", () => {
+  it("reads the display fields the proxy supplies", async () => {
+    const app = new Hono();
+    app.use("*", createAuth({ mode: "proxy" }));
+    app.get("/me", (c) => c.json(currentUser(c)));
+
+    const res = await app.request("/me", {
+      headers: {
+        "x-authentik-uid": "alice-uid",
+        "x-authentik-username": "alice",
+        "x-authentik-email": "alice@example.com",
+        "x-authentik-name": "Alice Example",
+        "x-authentik-groups": "engineering|admins",
+      },
+    });
+
+    expect(await res.json()).toEqual({
+      id: "alice-uid",
+      username: "alice",
+      email: "alice@example.com",
+      name: "Alice Example",
+      groups: ["engineering", "admins"],
+    });
+  });
+
+  it("reports an empty group list when the header is absent", async () => {
+    const app = new Hono();
+    app.use("*", createAuth({ mode: "proxy" }));
+    app.get("/me", (c) => c.json(currentUser(c)));
+
+    const res = await app.request("/me", { headers: { "x-authentik-uid": "alice-uid" } });
+
+    expect(await res.json()).toEqual({
+      id: "alice-uid",
+      username: undefined,
+      email: undefined,
+      name: undefined,
+      groups: [],
+    });
+  });
+
+  it("falls back to the default user in dev mode", async () => {
+    const app = new Hono();
+    app.use("*", createAuth({ mode: "dev", defaultUserId: "local" }));
+    app.get("/me", (c) => c.json(currentUser(c)));
+
+    expect(await (await app.request("/me")).json()).toMatchObject({ id: "local", groups: [] });
   });
 });

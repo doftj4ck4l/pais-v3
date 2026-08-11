@@ -19,3 +19,30 @@ describe("api auth wiring", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("GET /api/me", () => {
+  it("reports the authenticated identity", async () => {
+    const res = await createApp().request("/api/me", {
+      headers: {
+        "x-authentik-uid": "alice-uid",
+        "x-authentik-username": "alice",
+        "x-authentik-email": "alice@example.com",
+        "x-authentik-groups": "engineering|admins",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id: "alice-uid",
+      username: "alice",
+      email: "alice@example.com",
+      groups: ["engineering", "admins"],
+    });
+  });
+
+  it("is itself behind auth", async () => {
+    const res = await createApp().request("/api/me");
+
+    expect(res.status).toBe(401);
+  });
+});

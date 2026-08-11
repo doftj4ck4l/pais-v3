@@ -199,3 +199,15 @@ export type WorkspaceRow = {
   name: string
   createdAt: number
 }
+
+/**
+ * Who the authenticating proxy says you are. Supplied per request by the
+ * identity provider, never stored by this app.
+ */
+export type UserProfile = {
+  id: string
+  username?: string
+  email?: string
+  name?: string
+  groups: string[]
+}
