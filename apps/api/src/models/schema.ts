@@ -480,6 +480,12 @@ export const mcpServers = sqliteTable(
     enabled: integer("enabled").notNull().default(1), // 0 | 1
     status: text("status").$type<McpServerStatus>().notNull().default("connected"),
     error: text("error"),
+    /**
+     * Whatever the server said on the way down — a stdio launcher's stderr, or
+     * an HTTP body. Separate from `error` because that one is a single line
+     * shown in a row, and this is a traceback shown behind a click.
+     */
+    errorDetail: text("error_detail"),
     toolCount: integer("tool_count").notNull().default(0),
     lastProbedAt: integer("last_probed_at"),
     createdAt: integer("created_at").notNull(),
@@ -497,6 +503,7 @@ export type McpServerRow = {
   enabled: number;
   status: McpServerStatus;
   error: string | null;
+  errorDetail: string | null;
   toolCount: number;
   lastProbedAt: number | null;
   createdAt: number;

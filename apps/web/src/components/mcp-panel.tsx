@@ -50,6 +50,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
   const [editing, setEditing] = useState<McpServerRow | null>(null)
+  const [diagnosing, setDiagnosing] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scope = useScope()
@@ -179,6 +180,32 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
       </Dialog>
 
       <Dialog
+        open={!!diagnosing}
+        onOpenChange={(open) => {
+          if (!open) setDiagnosing(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          {diagnosing ? (
+            <ConnectionReport
+              server={
+                // Re-read from the list so a retry's outcome replaces what is
+                // on screen instead of leaving the first failure frozen there.
+                servers.find((s) => s.id === diagnosing.id) ?? diagnosing
+              }
+              busy={busy}
+              onRetry={async () => {
+                setBusy(true)
+                await refreshMcpServer(scope, diagnosing.id)
+                await refresh()
+                setBusy(false)
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={picking}
         onOpenChange={(open) => {
           if (!open) closePicker()
@@ -239,6 +266,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
                 setError(null)
                 setEditing(s)
               }}
+              onDiagnose={() => setDiagnosing(s)}
               onToggle={async () => {
                 // Optimistic: the round trip is a single UPDATE, and a switch
                 // that lags behind the click reads as broken.
@@ -763,12 +791,14 @@ function ServerItem({
   server,
   onToggle,
   onEdit,
+  onDiagnose,
   onRefresh,
   onRemove,
 }: {
   server: McpServerRow
   onToggle: () => Promise<void>
   onEdit: () => void
+  onDiagnose: () => void
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
 }) {
@@ -791,11 +821,21 @@ function ServerItem({
   return (
     <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
       {failed ? (
+        // A button, not a tooltip. The reason a connection failed is usually a
+        // traceback: it has to be readable at length and selectable to paste
+        // somewhere, and a hover card that truncates at 16rem is neither.
         <Tooltip>
           <TooltipTrigger asChild>
-            <AlertTriangleIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <button
+              type="button"
+              onClick={onDiagnose}
+              aria-label={`Why ${server.name} failed`}
+              className="shrink-0 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40"
+            >
+              <AlertTriangleIcon className="size-3.5 text-muted-foreground" />
+            </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-64">{server.error ?? 'unreachable'}</TooltipContent>
+          <TooltipContent>See why it failed</TooltipContent>
         </Tooltip>
       ) : server.transport === 'stdio' ? (
         <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -810,9 +850,23 @@ function ServerItem({
           {server.name}
           {off ? <span className="ml-1.5 opacity-60">(off)</span> : null}
         </span>
-        <span className="readout block truncate text-[0.625rem] text-muted-foreground">
-          {detail}
-        </span>
+        {failed ? (
+          <button
+            type="button"
+            onClick={onDiagnose}
+            className={cn(
+              'readout block max-w-full truncate text-left text-[0.625rem] text-muted-foreground',
+              'underline decoration-dotted underline-offset-2 outline-none',
+              'hover:text-foreground focus-visible:text-foreground',
+            )}
+          >
+            could not connect — see details
+          </button>
+        ) : (
+          <span className="readout block truncate text-[0.625rem] text-muted-foreground">
+            {detail}
+          </span>
+        )}
       </span>
 
       <Button
@@ -863,4 +917,91 @@ function hostOf(url: string | null): string {
   } catch {
     return url
   }
+}
+
+/**
+ * Why a server would not connect.
+ *
+ * Three things, in the order you need them: what was attempted, what came back,
+ * and what the process said before it died. The third is the one that was
+ * missing — nothing drained the stdio pipe, so a launcher that failed during
+ * startup reported only the timeout that followed, never the cause.
+ *
+ * Everything is selectable and the output keeps its own line breaks, because
+ * the realistic next step is pasting it into a search or an issue.
+ */
+function ConnectionReport({
+  server,
+  busy,
+  onRetry,
+}: {
+  server: McpServerRow
+  busy: boolean
+  onRetry: () => Promise<void>
+}) {
+  const attempted =
+    server.transport === 'stdio'
+      ? [server.command, ...server.args].filter(Boolean).join(' ')
+      : (server.url ?? '')
+  const recovered = server.status === 'connected'
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{server.name}</DialogTitle>
+        <DialogDescription>
+          {recovered
+            ? 'Connected. This server is working now.'
+            : 'This server did not connect. Everything below is selectable.'}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className={cn(BODY_CLASS, 'flex flex-col gap-4')}>
+        <Field label={server.transport === 'stdio' ? 'Command' : 'URL'}>{attempted}</Field>
+
+        {server.error ? <Field label="Error">{server.error}</Field> : null}
+
+        {server.errorDetail ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="label text-muted-foreground">
+              {server.transport === 'stdio' ? 'Server output (stderr)' : 'Response'}
+            </span>
+            <pre className="readout max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap">
+              {server.errorDetail}
+            </pre>
+          </div>
+        ) : !recovered ? (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            The server produced no output before it failed. For a stdio server that usually means
+            the launcher itself never started — check that the command is spelled correctly and
+            that the package exists.
+          </p>
+        ) : null}
+
+        <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
+          {server.lastProbedAt
+            ? `Last checked ${new Date(server.lastProbedAt).toLocaleString()}.`
+            : 'Never connected successfully.'}
+        </p>
+      </div>
+
+      <div className="flex gap-2 border-t px-5 py-3.5">
+        <Button type="button" size="sm" disabled={busy} onClick={() => void onRetry()}>
+          {busy ? 'Reconnecting…' : 'Try again'}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+/** A labelled, selectable value. Mono, because all of these are machine strings. */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="label text-muted-foreground">{label}</span>
+      <p className="readout rounded-md border bg-muted/40 p-3 text-[0.6875rem] leading-relaxed break-all">
+        {children}
+      </p>
+    </div>
+  )
 }

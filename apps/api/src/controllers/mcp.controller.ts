@@ -7,7 +7,7 @@ import {
   mcpStore,
   type NewMcpServer,
 } from "../repositories/mcp.repository";
-import { connectMcpServer, type McpServerSpec } from "../services/mcp/client";
+import { connectMcpServer, McpConnectError, type McpServerSpec } from "../services/mcp/client";
 import { listCapabilities } from "../services/mcp/probe";
 import { checkStdioCommand } from "../services/mcp/allowlist";
 import { currentUserId } from "../middleware/auth";
@@ -195,22 +195,29 @@ function sanitiseMap(map: unknown): Record<string, string> {
 async function probeAndCache(
   workspaceId: string,
   spec: McpServerSpec,
-): Promise<{ ok: boolean; error?: string; toolCount: number }> {
+): Promise<{ ok: boolean; error?: string; detail?: string | null; toolCount: number }> {
   try {
     const conn = await connectMcpServer(spec);
     try {
       const caps = await listCapabilities(conn);
       await mcpStore.saveCapabilities(workspaceId, spec.id, caps);
-      await mcpStore.markStatus(workspaceId, spec.id, "connected", null);
+      await mcpStore.markStatus(workspaceId, spec.id, "connected", null, null);
       return { ok: true, toolCount: caps.filter((cap) => cap.kind === "tool").length };
     } finally {
       await conn.close();
     }
   } catch (e) {
     const error = (e as Error)?.message ?? String(e);
-    logger.warn("mcp.probe_failed", { server: spec.name, message: error });
-    await mcpStore.markStatus(workspaceId, spec.id, "error", error);
-    return { ok: false, error, toolCount: 0 };
+    // What the process actually said, when it said anything. `connect ... timed
+    // out` names the symptom; this is the only place the cause survives.
+    const detail = e instanceof McpConnectError ? e.detail : null;
+    logger.warn("mcp.probe_failed", {
+      server: spec.name,
+      message: error,
+      detailChars: detail?.length ?? 0,
+    });
+    await mcpStore.markStatus(workspaceId, spec.id, "error", error, detail);
+    return { ok: false, error, detail, toolCount: 0 };
   }
 }
 

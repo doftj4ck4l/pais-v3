@@ -147,6 +147,8 @@ export interface McpStore {
     id: string,
     status: McpServerStatus,
     error: string | null,
+    /** Output captured from the failure — a stderr tail, or an HTTP body. */
+    errorDetail?: string | null,
   ): Promise<void>;
   saveCapabilities(
     workspaceId: string,
@@ -174,6 +176,7 @@ const PUBLIC_COLUMNS = {
   enabled: mcpServers.enabled,
   status: mcpServers.status,
   error: mcpServers.error,
+  errorDetail: mcpServers.errorDetail,
   toolCount: mcpServers.toolCount,
   lastProbedAt: mcpServers.lastProbedAt,
   createdAt: mcpServers.createdAt,
@@ -328,10 +331,13 @@ export class SqliteMcpStore implements McpStore {
     id: string,
     status: McpServerStatus,
     error: string | null,
+    errorDetail: string | null = null,
   ): Promise<void> {
     await this.dbImpl
       .update(mcpServers)
-      .set({ status, error })
+      // Cleared on success, not merely left behind: a stale traceback next to a
+      // connected server is worse than no traceback at all.
+      .set({ status, error, errorDetail })
       .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, id)));
   }
 

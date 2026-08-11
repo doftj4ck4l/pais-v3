@@ -137,19 +137,77 @@ async function connectStdio(spec: McpServerSpec, timeoutMs: number): Promise<Cli
   if (!allowed.ok) throw new Error(allowed.reason);
 
   const client = new Client(CLIENT_INFO, { capabilities: {} });
-  await withTimeout(
-    client.connect(
-      new StdioClientTransport({
-        command,
-        args,
-        env: { ...getDefaultEnvironment(), ...(spec.env ?? {}) },
-        stderr: "pipe",
-      }),
-    ),
-    timeoutMs,
-    `connect to "${spec.name}"`,
-  );
+  const transport = new StdioClientTransport({
+    command,
+    args,
+    env: { ...getDefaultEnvironment(), ...(spec.env ?? {}) },
+    stderr: "pipe",
+  });
+
+  // Nothing used to read this pipe, and that is why a failed server was
+  // untroubleshootable: a launcher that dies during startup says why on
+  // stderr — a Python traceback, "No solution found when resolving", an auth
+  // rejection — and all of it was discarded. What surfaced instead was the
+  // timeout that followed, which names the symptom and never the cause.
+  //
+  // The SDK hands back a PassThrough as soon as `stderr: "pipe"` is set,
+  // before the child is spawned, so this listener cannot miss the first write.
+  const stderrTail = captureStderr(transport);
+
+  try {
+    await withTimeout(client.connect(transport), timeoutMs, `connect to "${spec.name}"`);
+  } catch (e) {
+    throw withStderr(e as Error, stderrTail());
+  }
   return client;
+}
+
+/** How much of a failing server's stderr to keep. A traceback, not a session. */
+const STDERR_CAP = 4000;
+
+/**
+ * Drain a transport's stderr into a capped tail.
+ *
+ * Capped from the front rather than the back: the useful part of a startup
+ * failure is the last thing said before it gave up, not the banner it printed
+ * first.
+ */
+// Structural rather than `Stream`: the SDK types this getter as `Stream | null`,
+// which does not carry `read`/`setEncoding`, and `on` is all this needs.
+type StderrSource = { on(event: string, listener: (chunk: unknown) => void): unknown } | null;
+
+function captureStderr(transport: { stderr: StderrSource }): () => string {
+  let buffer = "";
+  const stream = transport.stderr;
+  stream?.on("data", (chunk: unknown) => {
+    buffer += String(chunk);
+    if (buffer.length > STDERR_CAP) buffer = buffer.slice(-STDERR_CAP);
+  });
+  // Never let a broken pipe become a second, unrelated failure.
+  stream?.on("error", () => {});
+  return () => buffer.trim();
+}
+
+/**
+ * Attach captured output to an error without losing its own message.
+ *
+ * The two are kept as separate lines so a caller can show the summary in a row
+ * and the detail behind a click.
+ */
+export class McpConnectError extends Error {
+  constructor(
+    message: string,
+    /** Whatever the process said on the way down. Empty when it said nothing. */
+    readonly detail: string,
+  ) {
+    super(message);
+    this.name = "McpConnectError";
+  }
+}
+
+function withStderr(error: Error, stderr: string): Error {
+  if (!stderr) return error;
+  return new McpConnectError(error.message, stderr);
 }
 
 /** Connect to one server over whichever transport it declares. */
