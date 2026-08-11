@@ -28,6 +28,9 @@ export function Console() {
   const board = useAgentBoard(workspace.scope)
   const { theme, toggle } = useTheme()
   const [deckOpen, setDeckOpen] = useState(false)
+  // Nothing opens this yet: the sidebar button that did was removed to make
+  // room for the admin panel. Kept wired so restoring an entry point is a
+  // button rather than a rebuild.
   const [traceOpen, setTraceOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const panel = useResourcePanel()
@@ -70,10 +73,6 @@ export function Console() {
       onNewAgent={() => {
         board.select(null)
         setDeckOpen(false)
-      }}
-      onOpenTrace={() => {
-        setDeckOpen(false)
-        setTraceOpen(true)
       }}
       onOpenSettings={() => {
         setDeckOpen(false)

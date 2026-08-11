@@ -148,7 +148,7 @@ function DocumentItem({ doc, onRemove }: { doc: DocumentRow; onRemove: () => voi
         <span className="readout block text-[0.625rem] text-muted-foreground">
           {failed
             ? doc.status === 'empty'
-              ? 'no text layer — needs OCR'
+              ? 'no text layer, needs OCR'
               : 'could not be read'
             : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`}
         </span>

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
-import { ActivityIcon, PanelRightIcon, PlusIcon, SettingsIcon, TerminalIcon } from 'lucide-react'
+import { PanelRightIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { Separator } from '@/shared/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
@@ -32,7 +31,6 @@ export function ControlDeck({
   onSelectAgent,
   onRemoveAgent,
   onNewAgent,
-  onOpenTrace,
   onOpenSettings,
   onToggleResources,
 }: {
@@ -43,7 +41,6 @@ export function ControlDeck({
   onSelectAgent: (id: string) => void
   onRemoveAgent: (id: string) => void
   onNewAgent: () => void
-  onOpenTrace: () => void
   onOpenSettings: () => void
   onToggleResources: () => void
 }) {
@@ -97,28 +94,9 @@ export function ControlDeck({
       ) : null}
 
       <div className="flex shrink-0 items-center gap-1 border-t px-3 py-2.5">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onOpenTrace}
-          className="gap-1.5 text-muted-foreground"
-        >
-          <TerminalIcon data-icon="inline-start" />
-          Trace
-          <span className="readout text-[0.625rem] opacity-70">{selected?.trace.length ?? 0}</span>
-        </Button>
-
-        {/* Trace is this run; Runs is every run. Sat next to each other because
-            the question "why was that slow" starts at one and ends at the other. */}
-        <Button asChild variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
-          <Link to="/admin">
-            <ActivityIcon data-icon="inline-start" />
-            Runs
-          </Link>
-        </Button>
-
-        {/* Also on the agent header, but that only exists once a run is open —
-            and attaching a database is something you do before any run. */}
+        {/* Trace and Runs used to sit here. The row is being kept for the admin
+            panel that is going where they were, so it stays a row rather than
+            collapsing into the badge above. */}
         <Button
           variant="ghost"
           size="sm"
