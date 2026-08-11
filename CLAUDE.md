@@ -4,22 +4,61 @@ Orientation for an agent. The README explains what Salur *is* and how to run it;
 this file records what is easy to get wrong. Read the README first for
 architecture, then this for the traps.
 
+Two parts of the README have rotted and will mislead you: the endpoints table
+still says every scoped endpoint takes `?userId=&workspaceId=` (identity now
+comes from a header — see *Who the caller is*), and the four-step agent loop
+under "Flow in `services/agent.service.ts`" describes a driver no shipped
+harness uses (see *Two agent drivers*).
+
 ## Toolchain
 
 Bun, not npm. `bun test`, `bun run build`, `bunx tsc`. Node is only present to
 bootstrap Bun.
 
 ```bash
-cd apps/api && bun test          # 342 pass, 7 fail
+cd apps/api && bun test                          # 457 pass, 7 fail
+cd apps/api && bun test src/services/mcp         # one directory
+cd apps/api && bun test -t "reapIdle"            # one test by name
 cd apps/api && bunx tsc --noEmit -p tsconfig.json
-cd apps/web && bun run build     # tsc -b && vite build
+cd apps/web && bun run build                     # tsc -b && vite build
+cd apps/web && bun run lint                      # oxlint, no config file
 ```
 
+`apps/web` has no test suite; `bun run build` is its check, and the `tsc -b`
+half of it is what catches real breakage.
+
 **The 7 failures are the baseline, not a regression.** They are the
-`sandbox.service` / `docker.ts` tests, and they fail whenever the Docker daemon
-is unreachable from the test process. Compare against 7 before assuming you
-broke something; anything in that list is pre-existing, anything outside it is
-yours.
+`sandbox.service` / `docker.ts` / `docker-execution-env.ts` tests, and they fail
+whenever the Docker daemon is unreachable from the test process. Compare against
+7 before assuming you broke something; anything in that list is pre-existing,
+anything outside it is yours. CI excludes those three files by name rather than
+tolerating failures, so any *other* red test stops a deploy.
+
+## Two agent drivers
+
+`Harness.driver` is `"prompt" | "pi"`, and **both shipped harnesses are `"pi"`**.
+So `runAgent` in `agent.service.ts` forwards to `runPiAgent` before it reaches
+its own loop, and that loop is unreachable from the catalog. Read
+`pi.service.ts` (the real engine, ~930 lines) for anything about how a run
+actually behaves; editing the loop in `agent.service.ts` changes nothing you can
+observe.
+
+The model's tool list is assembled in one place there, from six sources — not
+just `catalog/tools.ts` as the README's "Adding a tool" implies:
+
+| Source | Gate |
+| --- | --- |
+| pi built-ins (`bash`, `read`, `write`, `edit`) | always |
+| `catalog/tools.ts` | always |
+| `memory.service` (`remember` / `recall`) | always |
+| `context-tools` (document search) | always |
+| `image-tools` | `OPENROUTER_API_KEY` **and** RustFS configured |
+| `db-tools` | `harness.tools` includes `"db"` |
+| `mcp-tools` | a workspace has servers — deliberately *not* harness-gated |
+
+MCP tools are also deferred: only previously-used ones start active, and
+`search_tools` widens the set mid-run. That is why the advertised count and the
+count the model was shown differ in the slots panel, and why both are emitted.
 
 ## The three execution contexts
 
@@ -204,9 +243,19 @@ belong in `__root.tsx`, not in a route.
 
 ## Deploying
 
-Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs tests, builds,
-starts, and verifies `/api/meta` through the proxy. `docker compose up -d
---build` — without `--build`, "deployed" silently means "restarted the old code".
+Two targets, and they are not the same machine.
+
+**This host.** Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs
+tests, builds, starts, and verifies `/api/meta` through the proxy. `docker
+compose up -d --build` — without `--build`, "deployed" silently means "restarted
+the old code".
+
+**Pushing to `main` deploys too.** `.forgejo/workflows/deploy.yml` fires on every
+push to `main`: it tests, rsyncs the tree to the deploy host, and rebuilds there.
+Merging is a release, so treat a merge to `main` as one. The rsync runs
+`--delete` but excludes `.env`, `apps/api/.env` and `apps/api/data` from transfer
+*and* from deletion — that is the only thing standing between a deploy and the
+live SQLite database.
 
 ## Conventions
 
