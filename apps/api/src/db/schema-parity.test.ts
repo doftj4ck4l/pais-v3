@@ -7,18 +7,18 @@ import { backfill, dropLegacyUserId, migrateSandboxDirs, rebuildSandboxes } from
 import * as schema from "../models/schema";
 
 /**
- * The two halves of the schema have to agree, and nothing but this makes them.
+ * What the migrations build has to be what the models declare.
  *
- * `models/schema.ts` describes tables to Drizzle so queries compile; it does
- * not create anything. `applySchema` writes the `CREATE TABLE` SQL that does.
- * Normally drizzle-kit would generate the second from the first — that was
- * abandoned two migrations in, so both are now maintained by hand, in two
- * languages, from the same intent.
+ * The migrations are generated from `models/schema.ts`, so this cannot drift
+ * on its own any more — which is exactly why the check is cheap to keep. What
+ * it still catches is a migration edited by hand: 0000 is (it carries the
+ * IF NOT EXISTS guards), 0001 is written by hand outright, and a later one may
+ * be, since drizzle-kit cannot express everything SQLite can do.
  *
- * The failure that costs the most is silent. A column added to the Drizzle
- * table but not to the SQL means Drizzle selects a column SQLite does not
- * have, and what comes back is the column *name* rather than an error, so the
- * value looks plausible everywhere it is displayed.
+ * The failure that costs the most is silent. A column the Drizzle table
+ * declares but the database does not have comes back from SQLite as the column
+ * *name* rather than as an error, so the value looks plausible everywhere it
+ * is displayed.
  */
 
 /** Every Drizzle table in models/schema.ts, by SQL name. */

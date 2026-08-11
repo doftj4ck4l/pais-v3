@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { applySchema } from "./client";
+import { legacyDatabase } from "./testing/legacy-database";
 import { backfill, dropLegacyUserId, rebuildSandboxes } from "./backfill";
 
 function seeded() {
-  const db = new Database(":memory:");
-  applySchema(db);
+  const db = legacyDatabase();
   db.run(`INSERT INTO users (id, created_at) VALUES ('u1', 1)`);
   db.run(
     `INSERT INTO conversations (id, user_id, title, model_id, harness_id, status, created_at, updated_at)

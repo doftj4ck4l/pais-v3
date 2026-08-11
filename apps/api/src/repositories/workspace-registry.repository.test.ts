@@ -166,8 +166,8 @@ describe("workspace registry", () => {
     const a = await registry.create("u1", "A");
     await registry.create("u1", "B");
     sqlite.run(
-      `INSERT INTO conversations (id, user_id, workspace_id, title, model_id, harness_id, status, created_at, updated_at)
-       VALUES ('c1', 'u1', ?, 't', 'm', 'h', 'done', 1, 1)`,
+      `INSERT INTO conversations (id, workspace_id, title, model_id, harness_id, status, created_at, updated_at)
+       VALUES ('c1', ?, 't', 'm', 'h', 'done', 1, 1)`,
       [a.id],
     );
     sqlite.run(

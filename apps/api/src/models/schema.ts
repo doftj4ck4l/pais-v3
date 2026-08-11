@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * Drizzle schema: pure ORM definitions, no runtime connection.
@@ -311,7 +311,13 @@ export const dbConnections = sqliteTable(
     lastIntrospectedAt: integer("last_introspected_at"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_db_connections_workspace").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("idx_db_connections_workspace").on(t.workspaceId, t.createdAt),
+    // Same reasoning as mcp_servers: the agent asks for "the sales database" by
+    // name, so the name has to be unique within the workspace and free to
+    // repeat across workspaces.
+    uniqueIndex("idx_db_connections_workspace_name").on(t.workspaceId, t.name),
+  ],
 );
 export type DbConnectionRow = {
   id: string;
@@ -493,7 +499,13 @@ export const mcpServers = sqliteTable(
     lastProbedAt: integer("last_probed_at"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_mcp_servers_workspace").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("idx_mcp_servers_workspace").on(t.workspaceId, t.createdAt),
+    // The agent addresses a server by name, so two servers called "github" in
+    // one workspace would make a tool name ambiguous. Two workspaces may each
+    // have a "github" — that is the point of the composite key.
+    uniqueIndex("idx_mcp_servers_workspace_name").on(t.workspaceId, t.name),
+  ],
 );
 export type McpServerRow = {
   id: string;
