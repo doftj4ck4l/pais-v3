@@ -15,6 +15,8 @@
     --font-heading: var(--font-sans);
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
+    --color-brand-from: var(--brand-from);
+    --color-brand-to: var(--brand-to);
     --color-rail: var(--rail);
     --color-rail-strong: var(--rail-strong);
 
@@ -95,6 +97,11 @@
 
     --rail: oklch(0.885 0 0);
     --rail-strong: oklch(0.13 0 0);
+    /* The wordmark's own ramp, sampled from logos/pixelspace.png. The only
+       place brand colour appears in the console, so it stays a token rather
+       than a hex buried in one component. */
+    --brand-from: oklch(0.68 0.09 176);
+    --brand-to: oklch(0.55 0.08 216);
 }
 
 /* ── Console: true black ground, white ink. ──────────────────────────── */
@@ -133,6 +140,10 @@
 
     --rail: oklch(0.29 0 0);
     --rail-strong: oklch(1 0 0);
+    /* Lifted on the dark ground: the same ramp at light-theme lightness sits
+       too close to the background to read as colour. */
+    --brand-from: oklch(0.78 0.11 176);
+    --brand-to: oklch(0.68 0.10 216);
 }
 
 @layer base {
