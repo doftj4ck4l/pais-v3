@@ -190,6 +190,12 @@ export type McpServerRow = {
   lastProbedAt: number | null
   createdAt: number
   capabilities: McpCapability[]
+  /**
+   * Names of the configured credentials, never their values. The edit form
+   * shows these so changing a URL does not mean retyping a password blind.
+   */
+  headerKeys?: string[]
+  envKeys?: string[]
 }
 
 /** A container for one body of work: its agents, documents, databases, files. */

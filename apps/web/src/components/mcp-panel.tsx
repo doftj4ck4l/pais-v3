@@ -4,6 +4,7 @@ import {
   ChevronLeftIcon,
   CloudIcon,
   MailIcon,
+  PencilIcon,
   PlugIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -27,6 +28,7 @@ import {
   listMcpServers,
   refreshMcpServer,
   setMcpServerEnabled,
+  updateMcpServer,
   type NewMcpServerInput,
 } from '@/lib/api'
 import { useScope } from '@/hooks/use-workspace'
@@ -47,6 +49,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [picking, setPicking] = useState(false)
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
+  const [editing, setEditing] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scope = useScope()
@@ -135,6 +138,46 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         Connect an MCP server
       </button>
 
+      {/* Separate dialog from the picker: an edit starts from a row, not from
+          "Connect an MCP server", and sharing one dialog would mean the picker
+          could appear behind a Back press during an edit. */}
+      <Dialog
+        open={!!editing}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          {editing ? (
+            <AddServerForm
+              busy={busy}
+              error={error}
+              editing={editing}
+              onBack={() => {
+                setEditing(null)
+                setError(null)
+              }}
+              onSubmit={async (input) => {
+                setBusy(true)
+                setError(null)
+                const { error: failed } = await updateMcpServer(scope, editing.id, input)
+                setBusy(false)
+                if (failed) {
+                  setError(failed)
+                  return false
+                }
+                await refresh()
+                setEditing(null)
+                return true
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={picking}
         onOpenChange={(open) => {
@@ -192,6 +235,10 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
             <ServerItem
               key={s.id}
               server={s}
+              onEdit={() => {
+                setError(null)
+                setEditing(s)
+              }}
               onToggle={async () => {
                 // Optimistic: the round trip is a single UPDATE, and a switch
                 // that lags behind the click reads as broken.
@@ -472,24 +519,39 @@ const ALLOWED_COMMANDS = 'npx, uvx, node, python, python3, bun, deno'
  * server has no URL and an HTTP server has no command, so showing all four at
  * once would mean two of them are always wrong to fill in.
  */
+/**
+ * The manual form, used both to add a server and to edit one.
+ *
+ * `editing` is the only difference, and it changes one rule that matters: a
+ * blank credential field means "leave the stored one alone" rather than "no
+ * credential". The API never sends a secret back, so the form has nothing to
+ * prefill and cannot tell an untouched field from an emptied one — the two are
+ * distinguished by omitting the key entirely, which is what `undefined` does
+ * once JSON.stringify drops it.
+ */
 function AddServerForm({
   busy,
   error,
+  editing,
   onSubmit,
   onBack,
 }: {
   busy: boolean
   error: string | null
+  /** The server being edited, or null when adding a new one. */
+  editing?: McpServerRow | null
   onSubmit: (input: NewMcpServerInput) => Promise<boolean>
   onBack: () => void
 }) {
-  const [transport, setTransport] = useState<'http' | 'stdio'>('http')
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
+  const [transport, setTransport] = useState<'http' | 'stdio'>(editing?.transport ?? 'http')
+  const [name, setName] = useState(editing?.name ?? '')
+  const [url, setUrl] = useState(editing?.url ?? '')
   const [authHeader, setAuthHeader] = useState('')
-  const [command, setCommand] = useState('npx')
-  const [argsText, setArgsText] = useState('')
+  const [command, setCommand] = useState(editing?.command ?? 'npx')
+  const [argsText, setArgsText] = useState((editing?.args ?? []).join(' '))
   const [envText, setEnvText] = useState('')
+
+  const storedKeys = (transport === 'http' ? editing?.headerKeys : editing?.envKeys) ?? []
 
   const reset = () => {
     setName('')
@@ -501,20 +563,27 @@ function AddServerForm({
 
   const submit = async () => {
     if (!name.trim()) return
+    // Adding: a blank field is an empty credential. Editing: it is silence, so
+    // the key is omitted and the API keeps what is stored.
+    const keepSecret = !!editing
     const input: NewMcpServerInput =
       transport === 'http'
         ? {
             name: name.trim(),
             transport,
             url: url.trim(),
-            headers: authHeader.trim() ? { Authorization: authHeader.trim() } : {},
+            headers: authHeader.trim()
+              ? { Authorization: authHeader.trim() }
+              : keepSecret
+                ? undefined
+                : {},
           }
         : {
             name: name.trim(),
             transport,
             command: command.trim(),
             args: splitArgs(argsText),
-            env: parseEnv(envText),
+            env: envText.trim() ? parseEnv(envText) : keepSecret ? undefined : {},
           }
     const done = await onSubmit(input)
     // Credentials must not sit in a live input for as long as the panel stays
@@ -540,10 +609,12 @@ function AddServerForm({
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <BackButton onClick={back} />
-          Configure manually
+          {editing ? `Edit ${editing.name}` : 'Configure manually'}
         </DialogTitle>
         <DialogDescription>
-          For a server that is not in the list. The API validates the command before it runs.
+          {editing
+            ? 'Changing the connection clears the cached tool list and reconnects.'
+            : 'For a server that is not in the list. The API validates the command before it runs.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -599,7 +670,9 @@ function AddServerForm({
                   className={FIELD_CLASS}
                 />
                 <span className="text-[0.625rem] leading-relaxed text-muted-foreground">
-                  Optional. Sent as the Authorization header on every request.
+                  {editing && storedKeys.length
+                    ? `Already stored: ${storedKeys.join(', ')}. Leave blank to keep it.`
+                    : 'Optional. Sent as the Authorization header on every request.'}
                 </span>
               </label>
             </>
@@ -637,6 +710,9 @@ function AddServerForm({
                 />
                 <span className="text-[0.625rem] leading-relaxed text-muted-foreground">
                   One KEY=value per line. Values are taken verbatim — do not quote them.
+                  {editing && storedKeys.length
+                    ? ` Already stored: ${storedKeys.join(', ')}. Leave blank to keep them; anything you type replaces the set.`
+                    : ''}
                 </span>
               </label>
             </>
@@ -650,7 +726,7 @@ function AddServerForm({
 
       <div className="flex gap-2 border-t px-5 py-3.5">
         <Button type="submit" size="sm" disabled={busy} className="flex-1">
-          {busy ? 'Connecting…' : 'Connect'}
+          {busy ? 'Connecting…' : editing ? 'Save and reconnect' : 'Connect'}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={back}>
           Back
@@ -686,11 +762,13 @@ function parseEnv(text: string): Record<string, string> {
 function ServerItem({
   server,
   onToggle,
+  onEdit,
   onRefresh,
   onRemove,
 }: {
   server: McpServerRow
   onToggle: () => Promise<void>
+  onEdit: () => void
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
 }) {
@@ -745,6 +823,15 @@ function ServerItem({
         className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
       >
         <PlugIcon className={cn(off && 'opacity-40')} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onEdit}
+        aria-label={`Edit ${server.name}`}
+        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <PencilIcon />
       </Button>
       <Button
         variant="ghost"

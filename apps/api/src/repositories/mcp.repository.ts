@@ -42,6 +42,26 @@ export type NewMcpServer = {
   error?: string | null;
 };
 
+/**
+ * A change to an existing server's connection details.
+ *
+ * `headers` and `env` are the reason this is a distinct type rather than a
+ * `Partial<NewMcpServer>`: **undefined means keep what is stored, `{}` means
+ * clear it**. The encrypted blobs never leave the repository, so an edit form
+ * cannot round-trip them — it sends new values or says nothing, and saying
+ * nothing must not wipe a working credential.
+ */
+export type McpConnectionUpdate = {
+  name: string;
+  transport: McpTransport;
+  url?: string;
+  headers?: Record<string, string>;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+};
+
 export type NewCapability = {
   kind: McpCapabilityKind;
   name: string;
@@ -118,6 +138,10 @@ export interface McpStore {
     id: string,
   ): Promise<{ headers: Record<string, string>; env: Record<string, string> } | null>;
   setEnabled(workspaceId: string, id: string, enabled: boolean): Promise<void>;
+  /** Rewrite a server's connection. False when the workspace does not own it. */
+  update(workspaceId: string, id: string, patch: McpConnectionUpdate): Promise<boolean>;
+  /** Drop a server's cached catalog without deleting the server. */
+  clearCapabilities(workspaceId: string, serverId: string): Promise<void>;
   markStatus(
     workspaceId: string,
     id: string,
@@ -228,6 +252,75 @@ export class SqliteMcpStore implements McpStore {
       .update(mcpServers)
       .set({ enabled: enabled ? 1 : 0 })
       .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, id)));
+  }
+
+  async update(workspaceId: string, id: string, patch: McpConnectionUpdate): Promise<boolean> {
+    const owned = await this.dbImpl
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, id)));
+    if (!owned.length) return false;
+
+    // The unused half of the row is nulled rather than left alone. A server
+    // switched from stdio to http that kept its old `command` would show a
+    // launcher it will never run, and `resolveSecrets` would hand back env
+    // vars for a process that no longer exists.
+    const values: Record<string, unknown> =
+      patch.transport === "http"
+        ? {
+            name: patch.name,
+            transport: patch.transport,
+            url: patch.url ?? null,
+            command: null,
+            argsJson: null,
+            envEnc: null,
+          }
+        : {
+            name: patch.name,
+            transport: patch.transport,
+            url: null,
+            headersEnc: null,
+            command: patch.command ?? null,
+            argsJson: patch.args ? JSON.stringify(patch.args) : null,
+          };
+
+    // Only overwrite a secret blob when one was actually supplied. See the note
+    // on McpConnectionUpdate: undefined keeps, {} clears.
+    if (patch.transport === "http" && patch.headers !== undefined) {
+      values.headersEnc = encryptMap(patch.headers);
+    }
+    if (patch.transport === "stdio" && patch.env !== undefined) {
+      values.envEnc = encryptMap(patch.env);
+    }
+    if (patch.enabled !== undefined) values.enabled = patch.enabled ? 1 : 0;
+
+    try {
+      await this.dbImpl
+        .update(mcpServers)
+        .set(values)
+        .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, id)))
+        .run();
+    } catch (e) {
+      if (isDuplicateNameViolation(e)) throw new DuplicateServerNameError(patch.name);
+      throw e;
+    }
+    return true;
+  }
+
+  async clearCapabilities(workspaceId: string, serverId: string): Promise<void> {
+    const owned = await this.dbImpl
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, serverId)));
+    if (!owned.length) return;
+
+    this.dbImpl.transaction((tx) => {
+      tx.delete(mcpCapabilities).where(eq(mcpCapabilities.serverId, serverId)).run();
+      tx.update(mcpServers)
+        .set({ toolCount: 0, lastProbedAt: null })
+        .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.id, serverId)))
+        .run();
+    });
   }
 
   async markStatus(

@@ -200,3 +200,117 @@ describe("SqliteMcpStore", () => {
     expect(await store.list("ws1")).toHaveLength(1);
   });
 });
+
+describe("SqliteMcpStore.update", () => {
+  it("rewrites the connection but keeps a credential that was not re-sent", async () => {
+    await store.create(http());
+    // No `headers` key at all — the edit form did not touch the password field.
+    await store.update("ws1", "s1", {
+      name: "github",
+      transport: "http",
+      url: "https://mcp.example.com/v2/sse",
+    });
+
+    const rows = await store.list("ws1");
+    expect(rows[0]!.url).toBe("https://mcp.example.com/v2/sse");
+    const secrets = await store.resolveSecrets("ws1", "s1");
+    expect(secrets?.headers).toEqual({ Authorization: "Bearer ghp_supersecret" });
+  });
+
+  it("replaces a credential when a new one is supplied", async () => {
+    await store.create(http());
+    await store.update("ws1", "s1", {
+      name: "github",
+      transport: "http",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "Bearer ghp_rotated" },
+    });
+    const secrets = await store.resolveSecrets("ws1", "s1");
+    expect(secrets?.headers).toEqual({ Authorization: "Bearer ghp_rotated" });
+  });
+
+  it("clears a credential when an empty map is supplied", async () => {
+    await store.create(http());
+    await store.update("ws1", "s1", {
+      name: "github",
+      transport: "http",
+      url: "https://mcp.example.com/sse",
+      headers: {},
+    });
+    const secrets = await store.resolveSecrets("ws1", "s1");
+    expect(secrets?.headers).toEqual({});
+  });
+
+  it("nulls the unused half of the row when the transport changes", async () => {
+    await store.create(stdio());
+    await store.update("ws1", "s2", {
+      name: "filesystem",
+      transport: "http",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "Bearer new" },
+    });
+
+    const row = (await store.list("ws1"))[0]!;
+    expect(row.transport).toBe("http");
+    // A leftover command would show a launcher that will never run again.
+    expect(row.command).toBeNull();
+    expect(row.argsJson).toBeNull();
+    // And the old process's env must not survive as a decryptable blob.
+    const secrets = await store.resolveSecrets("ws1", "s2");
+    expect(secrets?.env).toEqual({});
+  });
+
+  it("refuses to rename onto another server's name", async () => {
+    await store.create(http());
+    await store.create(stdio());
+    await expect(
+      store.update("ws1", "s2", { name: "github", transport: "stdio", command: "npx", args: [] }),
+    ).rejects.toBeInstanceOf(DuplicateServerNameError);
+  });
+
+  it("allows a server to keep its own name", async () => {
+    await store.create(http());
+    const ok = await store.update("ws1", "s1", {
+      name: "github",
+      transport: "http",
+      url: "https://elsewhere.example.com/sse",
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("will not update a server owned by another workspace", async () => {
+    await store.create(http());
+    const ok = await store.update("ws2", "s1", {
+      name: "hijacked",
+      transport: "http",
+      url: "https://attacker.example.com/sse",
+    });
+    expect(ok).toBe(false);
+    expect((await store.list("ws1"))[0]!.name).toBe("github");
+  });
+});
+
+describe("SqliteMcpStore.clearCapabilities", () => {
+  it("drops the cached catalog and resets the count, keeping the server", async () => {
+    await store.create(http());
+    await store.saveCapabilities("ws1", "s1", [
+      { kind: "tool", name: "search", description: "old tool" },
+    ]);
+    expect((await store.list("ws1"))[0]!.toolCount).toBe(1);
+
+    await store.clearCapabilities("ws1", "s1");
+
+    expect(await store.capabilities("ws1", "s1")).toHaveLength(0);
+    const row = (await store.list("ws1"))[0]!;
+    expect(row.toolCount).toBe(0);
+    expect(row.lastProbedAt).toBeNull();
+    expect(row.name).toBe("github");
+  });
+
+  it("ignores a server another workspace owns", async () => {
+    await store.create(http());
+    await store.saveCapabilities("ws1", "s1", [{ kind: "tool", name: "search" }]);
+    await store.clearCapabilities("ws2", "s1");
+    expect(await store.capabilities("ws1", "s1")).toHaveLength(1);
+  });
+});

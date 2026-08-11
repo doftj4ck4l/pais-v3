@@ -293,6 +293,31 @@ export async function addMcpServer(
   return { server: body.server }
 }
 
+/**
+ * Edit an existing server's connection.
+ *
+ * Omitting `headers`/`env` keeps whatever is stored — the API never sends a
+ * credential back, so an edit form has nothing to re-submit and must be able to
+ * say "leave it alone". Sending `{}` is the explicit way to clear one.
+ *
+ * Unlike `setMcpServerEnabled`, this re-probes: the cached tool catalog
+ * describes the old connection and would be wrong the moment a URL changes.
+ */
+export async function updateMcpServer(
+  scope: Scope,
+  id: string,
+  input: NewMcpServerInput,
+): Promise<{ server?: McpServerRow; error?: string }> {
+  const res = await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as { server?: McpServerRow; error?: string }
+  if (!res.ok) return { error: body.error ?? `HTTP ${res.status}` }
+  return { server: body.server }
+}
+
 export async function refreshMcpServer(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/mcp/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, { method: 'POST' })
 }
