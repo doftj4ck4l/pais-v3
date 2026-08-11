@@ -34,7 +34,7 @@ export type Connector = {
   /** One line, shown in the picker. */
   summary: string
   /** Resolved to a component by the panel — the catalog stays free of JSX. */
-  icon: 'cloud' | 'mail'
+  icon: 'cloud' | 'mail' | 'kanban'
   command: string
   args: string[]
   fields: ConnectorField[]
@@ -65,6 +65,42 @@ export const CONNECTORS: Connector[] = [
         label: 'Password',
         type: 'password',
         help: 'Prefer an app password — it is scoped to this integration and revocable on its own.',
+      },
+    ],
+  },
+  {
+    id: 'plane',
+    name: 'Plane',
+    summary: 'Issues, cycles, modules and projects in a Plane workspace',
+    icon: 'kanban',
+    command: 'uvx',
+    args: ['plane-mcp-server', 'stdio'],
+    // Same shape as Nextcloud: uvx builds a Python environment on the first
+    // connection, and that download is what a cold first call is waiting on.
+    note: 'First connection builds a Python environment and can take a few minutes. Later ones are fast.',
+    fields: [
+      {
+        key: 'PLANE_API_KEY',
+        label: 'API key',
+        type: 'password',
+        help: 'Plane → Workspace Settings → API tokens. A token belongs to one workspace, so it must match the slug below.',
+      },
+      {
+        key: 'PLANE_WORKSPACE_SLUG',
+        label: 'Workspace slug',
+        placeholder: 'my-team',
+        help: 'The path segment after the host in your Plane URL, e.g. app.plane.so/my-team/ → my-team. Not the display name.',
+      },
+      {
+        key: 'PLANE_BASE_URL',
+        label: 'API base URL',
+        type: 'url',
+        default: 'https://api.plane.so',
+        required: false,
+        // The server defaults to the cloud API, so this only ever needs changing
+        // for self-hosted Plane — where it must resolve from the API container,
+        // not from the browser.
+        help: 'Only for self-hosted Plane. Must be reachable from the API container.',
       },
     ],
   },

@@ -3,6 +3,7 @@ import {
   AlertTriangleIcon,
   ChevronLeftIcon,
   CloudIcon,
+  KanbanIcon,
   MailIcon,
   PlugIcon,
   PlusIcon,
@@ -224,7 +225,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
 }
 
 /** Catalog icons, resolved here so `lib/connectors.ts` stays free of JSX. */
-const CONNECTOR_ICONS = { cloud: CloudIcon, mail: MailIcon } as const
+const CONNECTOR_ICONS = { cloud: CloudIcon, mail: MailIcon, kanban: KanbanIcon } as const
 
 /** The field styling every input in this panel shares. */
 const FIELD_CLASS =
