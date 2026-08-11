@@ -5,6 +5,7 @@ import { searchDocuments } from "../services/search.service";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * The workspace this request applies to.
@@ -14,7 +15,7 @@ import { workspaceRegistry } from "../repositories/workspace-registry.repository
  * query string.
  */
 const workspaceIdOf = async (c: Context) => {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
   return workspace.id;
 };

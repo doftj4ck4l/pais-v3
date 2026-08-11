@@ -62,6 +62,27 @@ Two, and they are not interchangeable:
 Put an API key in the wrong one and it works in dev and is silently absent in
 the deployment.
 
+## Who the caller is
+
+`userId` comes from the `AUTH_USER_HEADER` header (`x-authentik-uid`) and from
+nowhere else. It used to come from `?userId=`, which let any caller name any
+tenant; the ownership check in the workspace registry was sound, it was just
+being asked the wrong question.
+
+Two halves make that header trustworthy, and neither works alone:
+
+- `AUTH_MODE=proxy` refuses a request carrying no identity, rather than falling
+  back to a shared account. `dev` restores the fallback for `bun dev`.
+- The deploy host drops traffic to `WEB_PORT` from anywhere but the proxy. **If
+  that port is ever published more widely, the header is forgeable and the
+  isolation is gone** — the firewall rule is part of this control, not separate.
+
+`/api/meta` is deliberately open: it carries no tenant data and is what the
+container healthcheck calls. Gate it and the container reports unhealthy.
+
+Controllers must call `currentUserId(c)`. Reading a user id off the query string
+or request body reintroduces the hole.
+
 ## Migrations
 
 `applySchema` uses `CREATE TABLE IF NOT EXISTS`, which does nothing for a table

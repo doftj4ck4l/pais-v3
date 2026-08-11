@@ -10,13 +10,14 @@ import { probe } from "../services/db/postgres.driver";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * The workspace this request applies to. `resolve` is the one place a
  * client-supplied workspace id is checked against ownership.
  */
 const workspaceIdOf = async (c: Context) => {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
   return workspace.id;
 };

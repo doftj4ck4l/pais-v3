@@ -13,6 +13,7 @@ import { env } from "../config/env";
 import type { AgentEvent, ChatRequest } from "../types/agent";
 import type { ChatMessage } from "../types/chat";
 import type { ConversationStatus } from "../models/schema";
+import { currentUserId } from "../middleware/auth";
 
 const newRunId = () => Math.random().toString(36).slice(2, 8);
 
@@ -48,7 +49,7 @@ export function stream(c: Context) {
       }
 
       const { harness, model } = resolved;
-      const userId = body.userId ?? env.defaultUserId;
+      const userId = currentUserId(c);
       // Resolved here, once. Every tool and repository below takes the
       // workspace id rather than the user id, so this is the single place a
       // client-supplied value is checked against ownership.

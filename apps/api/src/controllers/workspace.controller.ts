@@ -4,6 +4,7 @@ import path from "node:path";
 import { list, resolve } from "../repositories/workspace.repository";
 import { env } from "../config/env";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * The workspace whose files this request reads. `resolve` is the one place a
@@ -11,7 +12,7 @@ import { workspaceRegistry } from "../repositories/workspace-registry.repository
  * decides which directory under SANDBOX_ROOT is reachable at all.
  */
 const workspaceIdOf = async (c: Context) => {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
   return workspace.id;
 };

@@ -6,6 +6,7 @@ import { documentStore } from "../repositories/document.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import * as drive from "../services/connectors/google-drive";
 import { syncConnector } from "../services/connectors/sync.service";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * Connectors: authorise a remote source, then pull it into the document index.
@@ -21,7 +22,7 @@ const newConnectorId = () =>
   `con_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 async function scope(c: Context): Promise<{ id: string }> {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   return workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
 }
 

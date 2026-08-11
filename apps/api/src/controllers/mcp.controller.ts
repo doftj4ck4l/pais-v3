@@ -10,6 +10,7 @@ import {
 import { connectMcpServer, type McpServerSpec } from "../services/mcp/client";
 import { listCapabilities } from "../services/mcp/probe";
 import { checkStdioCommand } from "../services/mcp/allowlist";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * HTTP in, HTTP out. Every decision that is not about the request itself lives
@@ -21,7 +22,7 @@ import { checkStdioCommand } from "../services/mcp/allowlist";
  * client-supplied workspace id is checked against ownership.
  */
 const workspaceIdOf = async (c: Context) => {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
   return workspace.id;
 };

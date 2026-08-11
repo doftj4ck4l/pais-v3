@@ -12,8 +12,27 @@ export const env = {
   /** OpenAI-compatible gateway that serves the model catalog. */
   gatewayBaseUrl: process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1",
 
-  /** Default user id when a request doesn't carry one. */
+  /** Default user id, used only when `authMode` is `dev`. */
   defaultUserId: process.env.DEFAULT_USER_ID ?? "local",
+
+  /**
+   * How the API decides who is calling.
+   *
+   * `proxy` takes the identity from `authUserHeader` and refuses a request
+   * that has none — correct wherever an authenticating proxy sits in front.
+   * `dev` falls back to `defaultUserId` so `bun dev` needs no SSO stack.
+   *
+   * Defaults to `proxy` because the failure modes are not symmetric: a
+   * deployment that forgets to set this would otherwise merge every tenant
+   * into one shared account, silently.
+   */
+  authMode: (process.env.AUTH_MODE ?? "proxy") as "proxy" | "dev",
+
+  /**
+   * Header carrying the authenticated user id. Authentik's proxy provider
+   * sets `X-authentik-uid`, a stable id that survives a username change.
+   */
+  authUserHeader: (process.env.AUTH_USER_HEADER ?? "x-authentik-uid").toLowerCase(),
 
   /**
    * Where the agent's shell and file tools run.

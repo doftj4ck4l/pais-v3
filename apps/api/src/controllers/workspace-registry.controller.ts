@@ -1,8 +1,9 @@
 import type { Context } from "hono";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { env } from "../config/env";
+import { currentUserId } from "../middleware/auth";
 
-const userIdOf = (c: Context) => c.req.query("userId") ?? env.defaultUserId;
+const userIdOf = (c: Context) => currentUserId(c);
 
 /** GET /api/workspaces — a user's workspaces, oldest first, creating one if none exist. */
 export async function index(c: Context) {

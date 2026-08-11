@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { env } from "../config/env";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { runRepository } from "../repositories/run.repository";
+import { currentUserId } from "../middleware/auth";
 
 /**
  * Read-only views over recorded runs, for the admin timeline.
@@ -11,7 +12,7 @@ import { runRepository } from "../repositories/run.repository";
  */
 
 const workspaceIdOf = async (c: Context) => {
-  const userId = c.req.query("userId") ?? env.defaultUserId;
+  const userId = currentUserId(c);
   const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
   return workspace.id;
 };
