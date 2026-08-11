@@ -113,6 +113,26 @@ export type WorkspaceFile = {
   modifiedAt: number
 }
 
+/**
+ * One thing this workspace has learned about its own work, written by the
+ * reflector after a run rather than by anyone typing.
+ */
+export type PlaybookBullet = {
+  id: string
+  kind: 'fact' | 'route' | 'pitfall'
+  content: string
+  helpful: number
+  harmful: number
+  /** helpful − harmful, computed server-side so the ordering matches the prompt's. */
+  score: number
+  /** Enough bad runs that the agent is no longer shown it. Still listed, greyed. */
+  demoted: boolean
+  /** Whether it survived selection into the last system prompt. */
+  inPrompt: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 export type DbConnectionRow = {
   id: string
   name: string

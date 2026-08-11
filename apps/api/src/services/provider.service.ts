@@ -3,12 +3,23 @@ import { effectiveApiKey } from "../catalog/llm-models";
 import type { AssistantChunk, ChatMessage, ToolSchema } from "../types/chat";
 
 /**
+ * A message as the provider takes it.
+ *
+ * Wider than `ChatMessage` in exactly one way: a system turn. `ChatRole` does
+ * not include one because a *conversation* never contains one — the system
+ * prompt is assembled per request and is not part of the history the user sees
+ * or the transcript stores. A caller doing a one-shot completion with its own
+ * instructions still needs to send one.
+ */
+export type ProviderMessage = ChatMessage | { role: "system"; content: string };
+
+/**
  * Minimal OpenAI-compatible streaming chat client.
  * Returns accumulated text + tool_calls once the stream finishes.
  */
 export async function chatOnce(
   model: ModelConfig,
-  messages: ChatMessage[],
+  messages: ProviderMessage[],
   tools: ToolSchema[],
 ): Promise<AssistantChunk> {
   if (model.provider === "mock") return mockOnce(messages);
@@ -104,7 +115,7 @@ async function parseStream(body: ReadableStream<Uint8Array>): Promise<AssistantC
 }
 
 /** Offline demo provider so the UI works with zero API keys. */
-function mockOnce(messages: ChatMessage[]): AssistantChunk {
+function mockOnce(messages: ProviderMessage[]): AssistantChunk {
   const last = messages[messages.length - 1];
 
   // After the model has called a tool, the agent appends its result as the
