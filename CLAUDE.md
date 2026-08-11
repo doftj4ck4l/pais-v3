@@ -4,22 +4,61 @@ Orientation for an agent. The README explains what Salur *is* and how to run it;
 this file records what is easy to get wrong. Read the README first for
 architecture, then this for the traps.
 
+Two parts of the README have rotted and will mislead you: the endpoints table
+still says every scoped endpoint takes `?userId=&workspaceId=` (identity now
+comes from a header — see *Who the caller is*), and the four-step agent loop
+under "Flow in `services/agent.service.ts`" describes a driver no shipped
+harness uses (see *Two agent drivers*).
+
 ## Toolchain
 
 Bun, not npm. `bun test`, `bun run build`, `bunx tsc`. Node is only present to
 bootstrap Bun.
 
 ```bash
-cd apps/api && bun test          # 342 pass, 7 fail
+cd apps/api && bun test                          # 457 pass, 7 fail
+cd apps/api && bun test src/services/mcp         # one directory
+cd apps/api && bun test -t "reapIdle"            # one test by name
 cd apps/api && bunx tsc --noEmit -p tsconfig.json
-cd apps/web && bun run build     # tsc -b && vite build
+cd apps/web && bun run build                     # tsc -b && vite build
+cd apps/web && bun run lint                      # oxlint, no config file
 ```
 
+`apps/web` has no test suite; `bun run build` is its check, and the `tsc -b`
+half of it is what catches real breakage.
+
 **The 7 failures are the baseline, not a regression.** They are the
-`sandbox.service` / `docker.ts` tests, and they fail whenever the Docker daemon
-is unreachable from the test process. Compare against 7 before assuming you
-broke something; anything in that list is pre-existing, anything outside it is
-yours.
+`sandbox.service` / `docker.ts` / `docker-execution-env.ts` tests, and they fail
+whenever the Docker daemon is unreachable from the test process. Compare against
+7 before assuming you broke something; anything in that list is pre-existing,
+anything outside it is yours. CI excludes those three files by name rather than
+tolerating failures, so any *other* red test stops a deploy.
+
+## Two agent drivers
+
+`Harness.driver` is `"prompt" | "pi"`, and **both shipped harnesses are `"pi"`**.
+So `runAgent` in `agent.service.ts` forwards to `runPiAgent` before it reaches
+its own loop, and that loop is unreachable from the catalog. Read
+`pi.service.ts` (the real engine, ~930 lines) for anything about how a run
+actually behaves; editing the loop in `agent.service.ts` changes nothing you can
+observe.
+
+The model's tool list is assembled in one place there, from six sources — not
+just `catalog/tools.ts` as the README's "Adding a tool" implies:
+
+| Source | Gate |
+| --- | --- |
+| pi built-ins (`bash`, `read`, `write`, `edit`) | always |
+| `catalog/tools.ts` | always |
+| `memory.service` (`remember` / `recall`) | always |
+| `context-tools` (document search) | always |
+| `image-tools` | `OPENROUTER_API_KEY` **and** RustFS configured |
+| `db-tools` | `harness.tools` includes `"db"` |
+| `mcp-tools` | a workspace has servers — deliberately *not* harness-gated |
+
+MCP tools are also deferred: only previously-used ones start active, and
+`search_tools` widens the set mid-run. That is why the advertised count and the
+count the model was shown differ in the slots panel, and why both are emitted.
 
 ## The three execution contexts
 
@@ -107,6 +146,35 @@ the window, and a gateway that caches tool schemas reports 160 where the truth i
 Compaction only helps when *history* is what is large. When tool schemas are the
 occupancy, `planCompaction` correctly returns null; summarising two messages
 would cost a model call and reclaim nothing.
+
+## What a stdio MCP child inherits
+
+`connectStdio` gives the child an explicit **environment** and an explicit
+**working directory**. Both are the same decision and only the first was
+obvious.
+
+A working directory is readable configuration to anything that looks for a
+dotfile in it. `fastmcp` constructs a pydantic `Settings()` at *import* time,
+which reads `.env` relative to cwd — so a child left in the API's directory was
+being handed `apps/api/.env` as its own configuration. `stdioCwd()` in
+`services/mcp/client.ts` puts each server in an empty directory of its own
+instead.
+
+What surfaced was a crash, not a leak, and only by luck: in the deployed image
+that file is mode 600 root:root while the API runs as uid 1000, so
+`uvx plane-mcp-server stdio` died on import with `PermissionError: [Errno 13]
+Permission denied: '.env'`, which the transport reports as the uninformative
+`MCP error -32000: Connection closed`. Under `bun dev` the same file is readable
+by the same user and the secrets would have loaded in silence.
+
+**`.dockerignore` patterns are anchored at the context root unless they start
+with `**/`.** A bare `.env` excluded the root file only, and `COPY apps/api`
+carried `apps/api/.env` into the image at `/app/apps/api/.env` — byte-identical
+to the host's secrets file, under a comment promising secrets never enter a
+layer. Any new secret file needs the `**/` form.
+
+When an MCP server reports "Connection closed", the cause is in `error_detail`
+on its `mcp_servers` row, not in `error`.
 
 ## MCP result size
 
@@ -204,9 +272,19 @@ belong in `__root.tsx`, not in a route.
 
 ## Deploying
 
-Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs tests, builds,
-starts, and verifies `/api/meta` through the proxy. `docker compose up -d
---build` — without `--build`, "deployed" silently means "restarted the old code".
+Two targets, and they are not the same machine.
+
+**This host.** Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs
+tests, builds, starts, and verifies `/api/meta` through the proxy. `docker
+compose up -d --build` — without `--build`, "deployed" silently means "restarted
+the old code".
+
+**Pushing to `main` deploys too.** `.forgejo/workflows/deploy.yml` fires on every
+push to `main`: it tests, rsyncs the tree to the deploy host, and rebuilds there.
+Merging is a release, so treat a merge to `main` as one. The rsync runs
+`--delete` but excludes `.env`, `apps/api/.env` and `apps/api/data` from transfer
+*and* from deletion — that is the only thing standing between a deploy and the
+live SQLite database.
 
 ## Conventions
 

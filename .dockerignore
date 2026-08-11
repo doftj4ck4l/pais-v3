@@ -11,9 +11,17 @@ dist
 
 # Secrets never enter an image layer. They arrive at run time, through
 # docker-compose's env_file.
-.env
-.env.*
-!.env.example
+#
+# The `**/` is the whole point. A pattern without it is anchored at the context
+# root, so a bare `.env` excluded the root file and silently let `COPY apps/api`
+# carry `apps/api/.env` — CONNECTION_SECRET and every model key — into the
+# image at /app/apps/api/.env. It was mode 600 root:root there and the API runs
+# as uid 1000, so nothing read it and nothing complained; what found it was a
+# stdio MCP server inheriting the API's working directory and dying on the
+# unreadable file. See `stdioCwd` in services/mcp/client.ts.
+**/.env
+**/.env.*
+!**/.env.example
 
 # Local state, not application code.
 apps/api/data
