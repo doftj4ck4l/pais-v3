@@ -147,6 +147,35 @@ Compaction only helps when *history* is what is large. When tool schemas are the
 occupancy, `planCompaction` correctly returns null; summarising two messages
 would cost a model call and reclaim nothing.
 
+## What a stdio MCP child inherits
+
+`connectStdio` gives the child an explicit **environment** and an explicit
+**working directory**. Both are the same decision and only the first was
+obvious.
+
+A working directory is readable configuration to anything that looks for a
+dotfile in it. `fastmcp` constructs a pydantic `Settings()` at *import* time,
+which reads `.env` relative to cwd — so a child left in the API's directory was
+being handed `apps/api/.env` as its own configuration. `stdioCwd()` in
+`services/mcp/client.ts` puts each server in an empty directory of its own
+instead.
+
+What surfaced was a crash, not a leak, and only by luck: in the deployed image
+that file is mode 600 root:root while the API runs as uid 1000, so
+`uvx plane-mcp-server stdio` died on import with `PermissionError: [Errno 13]
+Permission denied: '.env'`, which the transport reports as the uninformative
+`MCP error -32000: Connection closed`. Under `bun dev` the same file is readable
+by the same user and the secrets would have loaded in silence.
+
+**`.dockerignore` patterns are anchored at the context root unless they start
+with `**/`.** A bare `.env` excluded the root file only, and `COPY apps/api`
+carried `apps/api/.env` into the image at `/app/apps/api/.env` — byte-identical
+to the host's secrets file, under a comment promising secrets never enter a
+layer. Any new secret file needs the `**/` form.
+
+When an MCP server reports "Connection closed", the cause is in `error_detail`
+on its `mcp_servers` row, not in `error`.
+
 ## MCP result size
 
 Bounded in two places, and both are load-bearing:

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import path from "node:path";
 import {
   CONNECT_TIMEOUT_MS,
   STDIO_CONNECT_TIMEOUT_MS,
   connectMcpServer,
   connectTimeoutFor,
   McpConnectError,
+  stdioCwd,
 } from "./client";
 
 describe("connectTimeoutFor", () => {
@@ -101,4 +103,60 @@ describe("stdio failure diagnostics", () => {
     expect(thrown).toBeInstanceOf(Error);
     expect(thrown).not.toBeInstanceOf(McpConnectError);
   });
+});
+
+describe("stdio working directory", () => {
+  it("gives each server its own directory, and never the API's", () => {
+    const dir = stdioCwd("srv1");
+    expect(dir).not.toBe(process.cwd());
+    expect(path.basename(dir)).toBe("srv1");
+    // Must already exist: a child spawned into a missing directory fails with
+    // ENOENT, which reads as "the command is broken" rather than "we asked for
+    // somewhere that is not there".
+    expect(require("node:fs").existsSync(dir)).toBe(true);
+  });
+
+  it("keeps a server id from escaping the root", () => {
+    // Ids come out of the database, so they are not attacker-chosen today —
+    // but a cwd assembled by string join is one bad row away from naming
+    // somewhere else entirely.
+    const dir = stdioCwd("../../etc");
+    expect(dir.includes("..")).toBe(false);
+    expect(path.dirname(dir)).toBe(path.dirname(stdioCwd("srv1")));
+  });
+
+  /**
+   * The regression this guards is the one that broke every fastmcp server.
+   *
+   * Importing `fastmcp` constructs pydantic `Settings()`, which reads `.env`
+   * from the working directory. Inheriting ours pointed that at the API's own
+   * `apps/api/.env`. In the deployed image the file is mode 600 root:root and
+   * the API runs as uid 1000, so the server died on import with
+   * `PermissionError: [Errno 13] Permission denied: '.env'` — surfaced as
+   * "Connection closed". Under `bun dev` the same file is readable, so the
+   * secrets would have loaded instead, silently.
+   */
+  it("starts the child somewhere with none of our files in it", async () => {
+    let thrown: unknown;
+    try {
+      await connectMcpServer(
+        {
+          id: "t3",
+          name: "cwd-probe",
+          transport: "stdio",
+          command: "bun",
+          args: [path.join(import.meta.dir, "testing", "print-cwd.ts")],
+          env: {},
+        },
+        20_000,
+      );
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(McpConnectError);
+    const detail = (thrown as McpConnectError).detail ?? "";
+    expect(detail).toContain(`cwd=${stdioCwd("t3")}`);
+    expect(detail).not.toContain(`cwd=${process.cwd()}\n`);
+  }, 30_000);
 });

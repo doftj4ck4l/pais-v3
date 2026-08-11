@@ -5,6 +5,9 @@ import {
   StdioClientTransport,
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { McpTransport } from "../../models/schema";
 import { checkStdioCommand } from "./allowlist";
 import { logger } from "../../lib/logger";
@@ -41,6 +44,50 @@ export function connectTimeoutFor(transport: McpTransport): number {
 
 /** A tool call that has not returned by now is abandoned so the run can continue. */
 export const CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * Where stdio servers' scratch directories live.
+ *
+ * `/tmp` rather than `HOME`: nothing here is worth keeping between runs, and a
+ * working directory that does not survive a restart cannot accumulate one
+ * server's leftovers into another server's startup.
+ */
+export const MCP_CWD_ROOT = process.env.MCP_CWD_ROOT || path.join(os.tmpdir(), "salur-mcp");
+
+/**
+ * The directory a stdio server's process starts in.
+ *
+ * Not ours, which is what a child inherits by default. A working directory is
+ * readable configuration to anything that looks for a dotfile in it, and
+ * `fastmcp` does exactly that: importing it constructs a pydantic `Settings()`,
+ * which reads `.env` relative to the cwd. Inheriting ours pointed every fastmcp
+ * server at the API's own `apps/api/.env` — `CONNECTION_SECRET`, model keys —
+ * and invited it to load that as its configuration.
+ *
+ * What we saw was the crash, not the leak: in the deployed image that file is
+ * mode 600 root:root while the API runs as uid 1000, so `uvx plane-mcp-server`
+ * died on import with `PermissionError: [Errno 13] Permission denied: '.env'`
+ * and the transport reported "Connection closed". The failure was the lucky
+ * outcome — under `bun dev` the same file is readable by the same user, and the
+ * secrets would have loaded without a word.
+ *
+ * `connectStdio` already refuses to hand a child `process.env`, building its
+ * environment explicitly instead. The working directory is that same decision,
+ * and it was the half left open.
+ *
+ * One directory per server, so a file one of them writes is not something the
+ * next one reads. The id is reduced to a bare name first: it arrives from the
+ * database, and a cwd assembled by joining strings is one bad row away from
+ * naming a directory outside the root.
+ */
+export function stdioCwd(serverId: string): string {
+  const safe = path.basename(String(serverId ?? "")).replace(/[^A-Za-z0-9._-]/g, "") || "unnamed";
+  const dir = path.join(MCP_CWD_ROOT, safe);
+  // Spawning into a directory that does not exist fails as ENOENT on the
+  // command itself, which reads as "this server is broken".
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 export type McpServerSpec = {
   id: string;
@@ -141,6 +188,8 @@ async function connectStdio(spec: McpServerSpec, timeoutMs: number): Promise<Cli
     command,
     args,
     env: { ...getDefaultEnvironment(), ...(spec.env ?? {}) },
+    // See `stdioCwd`: a child left in our directory reads our dotfiles.
+    cwd: stdioCwd(spec.id),
     stderr: "pipe",
   });
 
