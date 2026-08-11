@@ -183,3 +183,37 @@ describe("workspace registry", () => {
     expect(countOf("traces")).toBe(0);
   });
 });
+
+describe("display name", () => {
+  it("is unset until someone sets one", async () => {
+    expect(await registry.displayName("u1")).toBeNull();
+  });
+
+  it("survives being set before the user has any workspace", async () => {
+    // Settings is reachable before a first workspace exists, so this has to
+    // create the user row rather than assume `create` already did.
+    await registry.setDisplayName("u1", "Farhan");
+    expect(await registry.displayName("u1")).toBe("Farhan");
+    expect(countOf("users", `id = 'u1'`)).toBe(1);
+  });
+
+  it("does not disturb a user who already exists", async () => {
+    await registry.create("u1", "Research");
+    await registry.setDisplayName("u1", "Farhan");
+
+    expect(await registry.displayName("u1")).toBe("Farhan");
+    expect(countOf("users", `id = 'u1'`)).toBe(1);
+    expect(countOf("workspaces", `user_id = 'u1'`)).toBe(1);
+  });
+
+  it("clears back to the provider's name", async () => {
+    await registry.setDisplayName("u1", "Farhan");
+    await registry.setDisplayName("u1", null);
+    expect(await registry.displayName("u1")).toBeNull();
+  });
+
+  it("keeps one user's name off another", async () => {
+    await registry.setDisplayName("u1", "Farhan");
+    expect(await registry.displayName("u2")).toBeNull();
+  });
+});

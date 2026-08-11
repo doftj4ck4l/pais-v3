@@ -1,6 +1,7 @@
 import { Outlet, createRootRoute } from '@tanstack/react-router'
 import { TooltipProvider } from '@/shared/ui/tooltip'
 import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/use-workspace'
+import { MeContext, useMeState } from '@/features/workspace/hooks/use-me'
 
 /**
  * Everything every route needs, and nothing any single route owns.
@@ -8,6 +9,9 @@ import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/
  * The workspace lives here rather than in a route because it outlives
  * navigation: switching between the console and the admin page must not
  * re-resolve which workspace is open, or re-fetch the list to find out.
+ *
+ * The profile is here for a second reason as well: the display name is shown
+ * in two places at once, so both have to read the same copy of it.
  */
 export const Route = createRootRoute({
   component: RootLayout,
@@ -16,12 +20,15 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const workspace = useWorkspaceState()
+  const me = useMeState()
 
   return (
     <TooltipProvider>
-      <WorkspaceContext.Provider value={workspace}>
-        <Outlet />
-      </WorkspaceContext.Provider>
+      <MeContext.Provider value={me}>
+        <WorkspaceContext.Provider value={workspace}>
+          <Outlet />
+        </WorkspaceContext.Provider>
+      </MeContext.Provider>
     </TooltipProvider>
   )
 }

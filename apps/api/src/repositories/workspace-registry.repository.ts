@@ -24,6 +24,8 @@ export interface WorkspaceRegistry {
   rename(id: string, userId: string, name: string): Promise<boolean>;
   remove(id: string, userId: string): Promise<boolean>;
   resolve(userId: string, requested?: string): Promise<WorkspaceRow>;
+  displayName(userId: string): Promise<string | null>;
+  setDisplayName(userId: string, name: string | null): Promise<void>;
 }
 
 /**
@@ -132,6 +134,35 @@ export class SqliteWorkspaceRegistry implements WorkspaceRegistry {
     }
     const existing = await this.list(userId);
     return existing[0] ?? (await this.create(userId, "Default"));
+  }
+
+  /**
+   * The name this console should use, or null to use the proxy's.
+   *
+   * The only thing about a person we store. Everything else on the profile
+   * arrives in headers on every request and the identity provider is the
+   * authority on it; a copy here could only ever go stale.
+   */
+  async displayName(userId: string): Promise<string | null> {
+    const [row] = await this.dbImpl
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return row?.displayName ?? null;
+  }
+
+  /**
+   * Set or clear it.
+   *
+   * Upserts, because a user row is only created when they first make a
+   * workspace and someone can reach settings before then.
+   */
+  async setDisplayName(userId: string, name: string | null): Promise<void> {
+    await this.dbImpl
+      .insert(users)
+      .values({ id: userId, createdAt: Date.now(), displayName: name })
+      .onConflictDoUpdate({ target: users.id, set: { displayName: name } });
   }
 }
 

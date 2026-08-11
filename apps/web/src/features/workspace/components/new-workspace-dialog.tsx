@@ -73,8 +73,8 @@ export function NewWorkspaceDialog({
         <DialogHeader>
           <DialogTitle>New workspace</DialogTitle>
           <DialogDescription>
-            A workspace holds one body of work — its agents, documents, databases and files. Nothing
-            is shared between them.
+            Each workspace keeps its own agents, documents, databases and files. Nothing is
+            shared between them.
           </DialogDescription>
         </DialogHeader>
 

@@ -83,6 +83,17 @@ export async function fetchMe(): Promise<UserProfile> {
   return json<UserProfile>(await fetch('/api/me'))
 }
 
+/** Change what this console calls you. Empty clears it back to the proxy's name. */
+export async function updateMe(displayName: string): Promise<UserProfile> {
+  return json<UserProfile>(
+    await fetch('/api/me', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    }),
+  )
+}
+
 export async function fetchMeta(): Promise<Meta> {
   return json<Meta>(await fetch('/api/meta'))
 }

@@ -49,8 +49,8 @@ export function WorkspaceOnboarding({
           {greeting ? `Welcome, ${greeting}` : 'Welcome to PixelSpace'}
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          A workspace holds one body of work — its agents, documents, databases and files. Name your
-          first one to get started.
+          Each workspace keeps its own agents, documents, databases and files. Name your first
+          one to get started.
         </p>
 
         <form

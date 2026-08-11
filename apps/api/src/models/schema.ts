@@ -12,6 +12,15 @@ import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqli
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   createdAt: integer("created_at").notNull(), // epoch ms
+  /**
+   * What this console calls you, when you would rather it did not use the name
+   * the identity provider sends.
+   *
+   * Null means "use the proxy's". Nothing else about the identity is stored:
+   * the provider remains the authority on who you are, and a copy of an email
+   * or a group list here could only ever be a stale second opinion.
+   */
+  displayName: text("display_name"),
 });
 
 /**

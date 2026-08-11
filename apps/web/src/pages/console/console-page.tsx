@@ -8,7 +8,7 @@ import { ControlDeck } from '@/pages/console/components/control-deck'
 import { ResourcesPanel } from '@/features/resources/components/resources-panel'
 import { ResourcesHandle } from '@/features/resources/components/resources-handle'
 import { SettingsModal } from '@/pages/console/components/settings-modal'
-import { EmptyState, type Suggestion } from '@/pages/console/components/empty-state'
+import { EmptyState } from '@/pages/console/components/empty-state'
 import { TraceSheet } from '@/features/agents/components/trace-sheet'
 import { Transcript } from '@/features/agents/components/transcript'
 import { WorkspaceOnboarding } from '@/features/workspace/components/workspace-onboarding'
@@ -20,14 +20,6 @@ import { useTheme } from '@/shared/hooks/use-theme'
 import { cn } from '@/shared/lib/utils'
 import { Brand } from '@/shared/components/brand'
 
-// Each one fires a real tool, so a new agent has something to show.
-const SUGGESTIONS: Suggestion[] = [
-  { text: 'What time is it in Kuala Lumpur?', tool: 'get_current_time' },
-  { text: 'Compute (2 + 3) * 4 - 10', tool: 'calculator' },
-  { text: "What's the weather in Penang?", tool: 'get_weather' },
-  { text: 'Roll a number between 1 and 20', tool: 'random_number' },
-]
-
 
 export function Console() {
   // Provided by __root, so the open workspace survives navigating away to the
@@ -36,6 +28,9 @@ export function Console() {
   const board = useAgentBoard(workspace.scope)
   const { theme, toggle } = useTheme()
   const [deckOpen, setDeckOpen] = useState(false)
+  // Nothing opens this yet: the sidebar button that did was removed to make
+  // room for the admin panel. Kept wired so restoring an entry point is a
+  // button rather than a rebuild.
   const [traceOpen, setTraceOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const panel = useResourcePanel()
@@ -78,10 +73,6 @@ export function Console() {
       onNewAgent={() => {
         board.select(null)
         setDeckOpen(false)
-      }}
-      onOpenTrace={() => {
-        setDeckOpen(false)
-        setTraceOpen(true)
       }}
       onOpenSettings={() => {
         setDeckOpen(false)
@@ -155,7 +146,7 @@ export function Console() {
                 runSummary={`Working… ${(selected.elapsed / 1000).toFixed(1)}s`}
               />
             ) : (
-              <EmptyState suggestions={SUGGESTIONS} onPick={spawn} />
+              <EmptyState harnessId={board.harnessId} onPick={spawn} />
             )}
           </main>
 

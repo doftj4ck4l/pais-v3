@@ -222,4 +222,12 @@ export type UserProfile = {
   email?: string
   name?: string
   groups: string[]
+  /**
+   * The name set in this console, on its own. `name` already has it applied;
+   * this says whether it came from here or from the identity provider, which
+   * is what lets settings offer to clear it.
+   */
+  displayName?: string | null
+  /** The name your sign-in provides, before any override. */
+  providerName?: string | null
 }

@@ -1,9 +1,8 @@
 import { ArrowRightIcon } from 'lucide-react'
 import { useMe } from '@/features/workspace/hooks/use-me'
+import { useSuggestions } from '@/features/agents/hooks/use-suggestions'
 import { useNow } from '@/shared/hooks/use-now'
 import { firstName, partOfDay } from './greeting'
-
-export type Suggestion = { text: string; tool: string }
 
 /**
  * The console with nothing open yet.
@@ -13,14 +12,15 @@ export type Suggestion = { text: string; tool: string }
  * and what the time is, and only then offers something to run.
  */
 export function EmptyState({
-  suggestions,
+  harnessId,
   onPick,
 }: {
-  suggestions: Suggestion[]
+  harnessId: string | null
   onPick: (text: string) => void
 }) {
   const me = useMe()
   const name = firstName(me)
+  const suggestions = useSuggestions(harnessId)
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-4 py-12 sm:px-6">
@@ -45,7 +45,7 @@ export function EmptyState({
           >
             <span className="min-w-0 flex-1">
               <span className="block text-[0.9375rem] leading-snug font-semibold">{s.text}</span>
-              <span className="readout mt-1.5 block text-muted-foreground">{s.tool}</span>
+              <span className="readout mt-1.5 block text-muted-foreground">{s.hint}</span>
             </span>
             <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
           </button>
