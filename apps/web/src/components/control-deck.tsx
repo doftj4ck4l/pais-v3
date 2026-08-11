@@ -95,7 +95,7 @@ export function ControlDeck({
         </>
       ) : null}
 
-      <div className="flex items-center gap-1 border-t px-3 py-2.5">
+      <div className="flex shrink-0 items-center gap-1 border-t px-3 py-2.5">
         <Button
           variant="ghost"
           size="sm"

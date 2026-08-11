@@ -23,7 +23,10 @@ export function UserBadge() {
   const secondary = me.email ?? (me.username && me.name ? me.username : null)
 
   return (
-    <div className="flex items-center gap-2 border-t px-3 py-2.5">
+    // shrink-0: this is the last child of a flex column whose middle section can
+    // grow with the agent list. Without it the badge is a shrinkable flex item
+    // and a tall sidebar squeezes it to zero height — rendered, but invisible.
+    <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2.5">
       <span
         aria-hidden
         className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-[0.6875rem] font-semibold uppercase text-muted-foreground"
