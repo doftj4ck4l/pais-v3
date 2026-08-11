@@ -6,6 +6,7 @@ import type {
   IngestResult,
   McpServerRow,
   Meta,
+  PlaybookBullet,
   RunDetail,
   RunRow,
   WorkspaceFile,
@@ -142,6 +143,18 @@ export async function uploadDocuments(scope: Scope, files: File[]): Promise<Inge
 
 export async function deleteDocument(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+}
+
+/** What this workspace has learned. Read and delete only — nothing writes from here. */
+export async function listPlaybook(scope: Scope): Promise<PlaybookBullet[]> {
+  const { bullets } = await json<{ bullets: PlaybookBullet[] }>(
+    await fetch(`/api/playbook?${scoped(scope)}`),
+  )
+  return bullets
+}
+
+export async function deletePlaybookBullet(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/playbook/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
 /** Files the agent has produced in this workspace's sandbox directory. */

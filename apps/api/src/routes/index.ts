@@ -9,6 +9,7 @@ import { workspaceRegistryRoutes } from "./workspace-registry.routes";
 import { databaseRoutes } from "./database.routes";
 import { mcpRoutes } from "./mcp.routes";
 import { connectorRoutes } from "./connector.routes";
+import { playbookRoutes } from "./playbook.routes";
 import { imageRoutes } from "./image.routes";
 import { adminRoutes } from "./admin.routes";
 
@@ -28,6 +29,9 @@ apiRoutes.route("/workspaces", workspaceRegistryRoutes);
 apiRoutes.route("/databases", databaseRoutes);
 apiRoutes.route("/mcp", mcpRoutes);
 apiRoutes.route("/connectors", connectorRoutes);
+// What this workspace has learned about its own work, and the one control over
+// it: delete. Written by the reflector after a run, never by a client.
+apiRoutes.route("/playbook", playbookRoutes);
 // Generated media. `GET /:id` is what the markdown image links in a transcript
 // resolve to, so this path is effectively public within the console.
 apiRoutes.route("/images", imageRoutes);

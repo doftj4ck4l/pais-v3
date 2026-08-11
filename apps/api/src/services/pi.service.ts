@@ -37,6 +37,10 @@ import { documentStore } from "../repositories/document.repository";
 import { createDatabaseTools } from "./db-tools";
 import { databaseConnectionStore } from "../repositories/database-connection.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "./mcp-tools";
+import { playbookStore } from "../repositories/playbook.repository";
+import { renderPlaybook } from "./playbook/prompt";
+import { reflect } from "./playbook/reflector";
+import type { ToolCallRecord } from "./playbook/signals";
 import { describeEnvironment } from "./environment-prompt";
 import { usableWindow } from "./context-window.service";
 import { jsonSchemaToTypebox } from "../lib/typebox-schema";
@@ -376,6 +380,17 @@ export async function runPiAgent(opts: {
     logger.warn("context.list_failed", { workspaceId, message: e?.message ?? String(e) });
   }
 
+  // What earlier runs in this workspace learned. Injected rather than offered
+  // as a tool: `recall` has existed for as long as the agent has, and the run
+  // that motivated this one never called it — a fact the model has to decide to
+  // look up is a fact it does not have.
+  let playbookPrompt = "";
+  try {
+    playbookPrompt = renderPlaybook(await playbookStore.list(workspaceId));
+  } catch (e: any) {
+    logger.warn("playbook.load_failed", { workspaceId, message: e?.message ?? String(e) });
+  }
+
   // Table names, not table structures. Naming the corpus is what turns the
   // schema tools from ones the model *could* call into ones it knows are worth
   // calling; loading full structure here would not survive a real schema.
@@ -434,6 +449,10 @@ export async function runPiAgent(opts: {
     });
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
+    // After the environment and the corpora, before the MCP block: the playbook
+    // is commentary on the tools described around it, so it reads as commentary
+    // only once they have been introduced.
+    if (playbookPrompt) out += playbookPrompt;
     if (mcp?.systemPromptBlock) out += mcp.systemPromptBlock;
     if (skillsPrompt)
       out += `\n\nThe following skills are available. Invoke them via the "call_skill" tool when they'd help, instead of guessing or fetching by hand:\n${skillsPrompt}`;
@@ -507,6 +526,8 @@ export async function runPiAgent(opts: {
   // ends with zero answer needs to say why, and the largest tool result is
   // almost always the reason.
   let answerChars = 0;
+  /** The answer itself, capped. See ANSWER_KEEP_CHARS. */
+  let answerText = "";
   let largestToolResult = { name: "", chars: 0 };
   /** Provider-reported prompt size of the most recent turn. 0 until one lands. */
   let realTokens = 0;
@@ -515,6 +536,14 @@ export async function runPiAgent(opts: {
   /** Tool calls and failures across the run, for the run summary. */
   let toolCalls = 0;
   let toolErrors = 0;
+  /**
+   * Every call, for the reflector.
+   *
+   * Kept in memory rather than read back from `traces` afterwards: the spans
+   * are flushed in batches, so a query issued the moment the run ends is racing
+   * its own writes. This array is the same data, already in hand.
+   */
+  const toolLog: ToolCallRecord[] = [];
 
   harness.subscribe((event: AgentHarnessEvent) => {
     try {
@@ -591,6 +620,10 @@ export async function runPiAgent(opts: {
           if (a.type === "thinking_delta") emit({ type: "reasoning", delta: a.delta });
           else if (a.type === "text_delta") {
             answerChars += a.delta.length;
+            // Bounded copy of the answer, for the reflector. Capped because a
+            // run that emits a 200KB answer should not then send 200KB to a
+            // second model to be reflected on.
+            if (answerText.length < ANSWER_KEEP_CHARS) answerText += a.delta;
             emit({ type: "text", delta: a.delta });
           }
           break;
@@ -617,6 +650,12 @@ export async function runPiAgent(opts: {
 
           toolCalls++;
           if (failed) toolErrors++;
+          toolLog.push({
+            name: event.toolName,
+            ok: !failed,
+            args,
+            resultChars: text.length,
+          });
 
           if (text.length > largestToolResult.chars) {
             largestToolResult = { name: event.toolName, chars: text.length };
@@ -807,6 +846,25 @@ export async function runPiAgent(opts: {
       contextPct: usableTokens ? Math.round((realTokens / usableTokens) * 100) : 0,
     });
     emit({ type: "done", turns });
+
+    // Reflection, after the answer and outside its critical path.
+    //
+    // Deliberately not awaited: it is a second model call, and the user is
+    // already reading their reply. Awaiting it would hold the response stream
+    // open for the length of a whole extra round trip in exchange for nothing
+    // the user sees. Its failures are logged inside `reflect` and swallowed
+    // here — a run that answered correctly must not be reported as failed
+    // because the thing that learns from it did not.
+    void reflect({
+      workspaceId,
+      runId: runId === "-" ? null : runId,
+      model,
+      history,
+      answer: answerText,
+      toolCalls: toolLog,
+    }).catch((e) => {
+      logger.warn("playbook.reflect_crashed", { run: runId, message: (e as Error)?.message });
+    });
   } catch (e) {
     logger.warn("run.error", { run: runId, ms: t.elapsed(), error: (e as Error)?.message });
     emit({ type: "error", message: (e as Error)?.message ?? String(e) });
@@ -894,6 +952,15 @@ const RESULT_PREVIEW_CHARS = 2_000;
 
 /** How much of a turn's answer text a span carries. */
 const ANSWER_PREVIEW_CHARS = 1_000;
+
+/**
+ * How much of the answer is kept for the reflector.
+ *
+ * Larger than the span preview, because a fact worth learning ("your Plane
+ * workspace is at …") often arrives well into a long answer, and smaller than
+ * unbounded, because this text is about to be sent to a second model.
+ */
+const ANSWER_KEEP_CHARS = 8_000;
 
 /** Truncate for storage, saying so rather than trailing off silently. */
 function preview(text: string, cap: number): string {

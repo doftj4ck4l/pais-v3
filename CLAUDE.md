@@ -199,6 +199,42 @@ Building the pre-workspace shape (`user_id` on the scoped tables) is
 exist to move forward, and it is no longer part of the schema a fresh database
 gets.
 
+## The playbook
+
+**Every run makes a second model call.** After `emit({type:"done"})`, `reflect`
+in `services/playbook/reflector.ts` sends the transcript, the run's tool calls
+and the existing playbook to the same model and asks what changed. It is
+deliberately not awaited — a run's latency is unaffected and a reflector failure
+cannot fail a run that already answered — which also means **it does not show up
+in the run's own traces or timings**. Look for `playbook.reflected` in the log.
+
+What comes back is a *delta*, never a document. There is no operation that
+rewrites the playbook and none that deletes a bullet, because both are how an
+evolving context dies: asked to rewrite, a model compresses hard-won detail to
+nothing (measured upstream at 18k tokens of playbook rewritten down to 122, with
+accuracy falling below the no-playbook baseline). Adding one would undo the
+design. Removal is decided by counters, or by the user in the UI.
+
+Three things that are easy to get wrong:
+
+- **The merge is in `playbook.repository.ts`, in code, not in the prompt.** An
+  `add` whose fingerprint already exists is not a duplicate and not a no-op — it
+  becomes a `helpful` increment on the bullet it matched, which is where most of
+  the ranking signal actually comes from.
+- **The helpful/harmful signal is computed, not judged.** `playbook/signals.ts`
+  reads the run's tool calls and hands the reflector conclusions. The one that
+  matters is `searching`: three or more calls to *one* tool with *different*
+  arguments. Every such call succeeds individually, so nothing else in the
+  system can see it, and it is the exact shape of a run hunting for a tool that
+  does not exist.
+- **Everything the reflector returns is untrusted.** It is two steps downstream
+  of MCP results, which are text from someone else's server. `parseDeltas` drops
+  ops naming ids that do not exist, caps bullets at 320 chars and runs at 5 ops.
+
+The prompt block is capped at 6k characters (`PLAYBOOK_CHAR_CAP`). Over it, the
+lowest-scoring bullets fall out of the *prompt* and stay in the database —
+`inPrompt` in the API response is what the panel greys out.
+
 ## Context accounting
 
 `estimateHistoryTokens` measures the chat history and nothing else — not the

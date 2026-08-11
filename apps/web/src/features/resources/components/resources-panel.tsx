@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { CloudIcon, DatabaseIcon, FileIcon, FileTextIcon, PlugIcon } from 'lucide-react'
+import { BrainIcon, CloudIcon, DatabaseIcon, FileIcon, FileTextIcon, PlugIcon } from 'lucide-react'
 import { DocumentPanel } from '@/features/resources/components/document-panel'
 import { DatabasePanel } from '@/features/resources/components/database-panel'
 import { FilesPanel } from '@/features/resources/components/files-panel'
 import { McpPanel } from '@/features/resources/components/mcp-panel'
 import { ConnectorPanel } from '@/features/resources/components/connector-panel'
+import { PlaybookPanel } from '@/features/resources/components/playbook-panel'
 import { cn } from '@/shared/lib/utils'
 
-type TabId = 'documents' | 'connectors' | 'databases' | 'mcp' | 'files'
+type TabId = 'documents' | 'connectors' | 'databases' | 'mcp' | 'files' | 'playbook'
 
 const TABS: { id: TabId; label: string; icon: typeof FileTextIcon }[] = [
   { id: 'documents', label: 'Docs', icon: FileTextIcon },
@@ -17,6 +18,8 @@ const TABS: { id: TabId; label: string; icon: typeof FileTextIcon }[] = [
   { id: 'databases', label: 'Data', icon: DatabaseIcon },
   { id: 'mcp', label: 'MCP', icon: PlugIcon },
   { id: 'files', label: 'Files', icon: FileIcon },
+  // Last, and the only tab nothing is attached to: it fills itself.
+  { id: 'playbook', label: 'Learned', icon: BrainIcon },
 ]
 
 /**
@@ -40,6 +43,7 @@ export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }
     databases: 0,
     mcp: 0,
     files: 0,
+    playbook: 0,
   })
 
   const setCount = (id: TabId) => (n: number) =>
@@ -104,6 +108,9 @@ export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }
         </Pane>
         <Pane active={tab === 'files'}>
           <FilesPanel refreshKey={filesRefreshKey} onCountChange={setCount('files')} />
+        </Pane>
+        <Pane active={tab === 'playbook'}>
+          <PlaybookPanel onCountChange={setCount('playbook')} />
         </Pane>
       </div>
     </div>

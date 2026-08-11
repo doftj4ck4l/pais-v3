@@ -166,6 +166,62 @@ export type MemoryNoteRow = {
   source: string | null;
 };
 
+// ---- playbook: what the workspace has learned about doing its own work ----
+//
+// A curated layer above `memory_notes`, not a replacement for it. Notes are
+// whatever the model chose to write down mid-run; bullets are distilled after
+// the run from what actually happened, and every one of them is injected into
+// the next system prompt.
+//
+// The counters are the reason this is a table rather than a text blob. A bullet
+// that keeps preceding failures has to be demotable, and a demotion has to
+// survive the run that noticed it — an LLM asked to rewrite the whole document
+// instead loses the detail that made the bullet worth keeping (measured
+// upstream as "context collapse": 18k tokens of playbook rewritten down to 122,
+// taking accuracy below the no-playbook baseline).
+export const playbookBullets = sqliteTable(
+  "playbook_bullets",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    /** fact | route | pitfall — see services/playbook/types.ts. */
+    kind: text("kind").notNull(),
+    content: text("content").notNull(),
+    /**
+     * Normalised content, unique per workspace.
+     *
+     * The dedup backstop. The reflector is shown the existing bullets and asked
+     * to update them by id rather than restate them, which handles the ordinary
+     * case; this catches the time it ignores that and proposes bullet #7 as a
+     * seventh phrasing of bullet #2.
+     */
+    fingerprint: text("fingerprint").notNull(),
+    helpful: integer("helpful").notNull().default(0),
+    harmful: integer("harmful").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    /** The run that first proposed it. Without this a bad bullet is unattributable. */
+    runId: text("run_id"),
+  },
+  (t) => [
+    index("idx_playbook_workspace").on(t.workspaceId, t.updatedAt),
+    uniqueIndex("idx_playbook_fingerprint").on(t.workspaceId, t.fingerprint),
+  ],
+);
+
+export type PlaybookBulletRow = {
+  id: string;
+  workspaceId: string;
+  kind: string;
+  content: string;
+  fingerprint: string;
+  helpful: number;
+  harmful: number;
+  createdAt: number;
+  updatedAt: number;
+  runId: string | null;
+};
+
 // One sandbox per workspace: a directory that persists, and a container that
 // does not. The directory is the workspace's file storage, which is why the two
 // meanings of the word collapse into one here.
