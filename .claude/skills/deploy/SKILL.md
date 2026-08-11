@@ -22,8 +22,15 @@ already true.
 | Requirement | Check | Fix |
 | --- | --- | --- |
 | `.env` exists at the repo root | `test -f .env` | `cp .env.example .env` then fill in `CONNECTION_SECRET` and model keys |
+| `S3_SECRET_KEY` set in `.env` | `docker compose config -q` | Generate one: `openssl rand -base64 24`. Compose refuses to render without it, so this fails loudly rather than starting a broken stack. |
 | Docker reachable as this user | `docker ps` | `sudo usermod -aG docker $USER`, then start a new login session |
 | Sandbox image built | `docker image inspect salurai-sandbox:1` | `bun run sandbox:build` |
+
+Image generation is the one feature that is *not* covered by the root `.env`:
+`OPENROUTER_API_KEY` lives in `apps/api/.env`, and without it `generate_image`
+is simply not registered. That is a silent absence by design, not a failure —
+but it is why a fresh server can look fully deployed and still have no image
+tool.
 
 ## Steps
 

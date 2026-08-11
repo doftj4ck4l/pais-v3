@@ -8,6 +8,7 @@ import { workspaceRegistryRoutes } from "./workspace-registry.routes";
 import { databaseRoutes } from "./database.routes";
 import { mcpRoutes } from "./mcp.routes";
 import { connectorRoutes } from "./connector.routes";
+import { imageRoutes } from "./image.routes";
 import { adminRoutes } from "./admin.routes";
 
 /** Every HTTP surface the API exposes, mounted under /api. */
@@ -24,5 +25,8 @@ apiRoutes.route("/workspaces", workspaceRegistryRoutes);
 apiRoutes.route("/databases", databaseRoutes);
 apiRoutes.route("/mcp", mcpRoutes);
 apiRoutes.route("/connectors", connectorRoutes);
+// Generated media. `GET /:id` is what the markdown image links in a transcript
+// resolve to, so this path is effectively public within the console.
+apiRoutes.route("/images", imageRoutes);
 // Read-only views over recorded runs. "admin" is the audience, not a permission.
 apiRoutes.route("/admin", adminRoutes);

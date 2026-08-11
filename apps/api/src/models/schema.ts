@@ -599,3 +599,49 @@ export type ConnectorRow = {
   lastSyncAt: number | null;
   createdAt: number;
 };
+
+/**
+ * One image produced by the `generate_image` tool.
+ *
+ * The row is metadata only — the bytes live in the media bucket under
+ * `storageKey`. Keeping them out of SQLite is deliberate: a Gemini image is
+ * 25–200KB, and a base64 copy of one in the transcript would exceed
+ * `RESULT_CHAR_CAP` by itself and then be re-sent to the model on every
+ * following turn.
+ */
+export const generatedImages = sqliteTable(
+  "generated_images",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    /** Null when generated outside a conversation (tests, direct API use). */
+    conversationId: text("conversation_id"),
+    prompt: text("prompt").notNull(),
+    /** The OpenRouter model slug that produced it, e.g. google/gemini-3.1-flash-image. */
+    model: text("model").notNull(),
+    /** Object key in the media bucket. Workspace-prefixed, so a listing is scoped. */
+    storageKey: text("storage_key").notNull(),
+    contentType: text("content_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    /**
+     * Cost in micro-dollars (1e-6 USD), not a float. One image ran $0.0336 in
+     * testing — small enough that float drift over a month of rows would be a
+     * real error, and integers make the sum exact.
+     */
+    costMicros: integer("cost_micros"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idx_generated_images_workspace").on(t.workspaceId, t.createdAt)],
+);
+export type GeneratedImageRow = {
+  id: string;
+  workspaceId: string;
+  conversationId: string | null;
+  prompt: string;
+  model: string;
+  storageKey: string;
+  contentType: string;
+  bytes: number;
+  costMicros: number | null;
+  createdAt: number;
+};

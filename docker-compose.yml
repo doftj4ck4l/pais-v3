@@ -42,6 +42,14 @@ services:
       # Both must be host paths, mounted below at the same path inside.
       SANDBOX_ROOT: "${SANDBOX_ROOT:?set SANDBOX_ROOT in .env}"
       SKILLS_ROOT: "${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills"
+      # Generated media. `rustfs` is the compose service name, so this only
+      # resolves on the compose network — the bucket is not reachable from the
+      # host, by design. `bun dev` needs S3_ENDPOINT=http://localhost:9000 in
+      # apps/api/.env to reach the published port instead.
+      S3_ENDPOINT: "http://rustfs:9000"
+      S3_BUCKET: "${S3_BUCKET:-salur-media}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-rustfsadmin}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Workspaces: written by this container, bind-mounted by sandbox siblings.
@@ -56,6 +64,9 @@ services:
       # uvx / npx package cache. Without it every deploy re-downloads every
       # stdio MCP server on its first call, which reads as a hang.
       - mcp-cache:/cache
+    depends_on:
+      rustfs:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bun", "-e", "await fetch('http://127.0.0.1:4000/api/meta')"]
@@ -63,6 +74,26 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+
+  # S3-compatible object storage for generated images. Unpublished like `api`:
+  # the only thing that talks to it is the API, which re-serves objects through
+  # /api/images/:id so a link in a transcript never expires and the bucket
+  # credentials never leave the compose network.
+  rustfs:
+    image: rustfs/rustfs:latest
+    # Deliberately NOT pinned to HOST_UID the way `api` is. `api` needs it
+    # because it writes into bind mounts the host user must own; rustfs owns a
+    # named volume that nothing outside the container ever opens by path. The
+    # override was tried and the image refuses to start under it: /data and
+    # /logs belong to the image's own `rustfs` user, so uid 1000 gets
+    # "Local disk initialization failed ... Permission denied (os error 13)".
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ACCESS_KEY: "${S3_ACCESS_KEY:-rustfsadmin}"
+      RUSTFS_SECRET_KEY: "${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}"
+    volumes:
+      - rustfs-data:/data
+    restart: unless-stopped
 
   web:
     build:
@@ -77,3 +108,7 @@ services:
 
 volumes:
   mcp-cache:
+  # Generated images. A named volume rather than a bind mount: nothing outside
+  # RustFS reads these files by path, so there is no reason to pin them to a
+  # host directory the way SANDBOX_ROOT has to be.
+  rustfs-data:

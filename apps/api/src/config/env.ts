@@ -73,4 +73,40 @@ export const env = {
 
   /** Files one Drive sync will pull. Small by default; a demo, not a crawl. */
   connectorSyncLimit: Number(process.env.CONNECTOR_SYNC_LIMIT ?? 50),
+
+  /**
+   * OpenRouter, used only for image generation — the chat models come from the
+   * gateway above. Absent, `generate_image` is not registered at all, the same
+   * stance `connectionSecret` and the Google client take: a tool the model can
+   * see but never satisfy is worse than one that is missing.
+   */
+  openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  openrouterBaseUrl: (process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1").replace(
+    /\/+$/,
+    "",
+  ),
+  /**
+   * Default image model. Flash rather than pro because one pro image is ~4x the
+   * cost and the tool is reachable from any prompt; override per call.
+   */
+  imageModel: process.env.IMAGE_MODEL ?? "google/gemini-3.1-flash-image",
+  /**
+   * Ceiling on images per single tool call. Gemini bills per output token, so a
+   * request for "20 variations" is a real bill, not a rounding error.
+   */
+  imageMaxPerCall: Number(process.env.IMAGE_MAX_PER_CALL ?? 4),
+
+  /**
+   * RustFS — S3-compatible object storage for generated media.
+   *
+   * Bytes go here rather than into SQLite or the sandbox volume: the database
+   * holds metadata that stays small, and the sandbox is per-workspace scratch
+   * that gets rebuilt. `endpoint` is the compose service by default, so a dev
+   * run without RustFS up degrades to a clear error rather than a wrong path.
+   */
+  s3Endpoint: (process.env.S3_ENDPOINT ?? "http://rustfs:9000").replace(/\/+$/, ""),
+  s3Bucket: process.env.S3_BUCKET ?? "salur-media",
+  s3AccessKey: process.env.S3_ACCESS_KEY ?? "rustfsadmin",
+  s3SecretKey: process.env.S3_SECRET_KEY ?? "",
+  s3Region: process.env.S3_REGION ?? "us-east-1",
 } as const;

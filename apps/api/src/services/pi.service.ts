@@ -31,6 +31,8 @@ import { TOOLS, runTool } from "../catalog/tools";
 import { getSkills, skillsBlock, invokeSkill } from "./skill.service";
 import { createMemoryTools } from "./memory.service";
 import { createDocumentTools } from "./context-tools";
+import { createImageTools } from "./image-tools";
+import { mediaConfigured } from "./media.service";
 import { documentStore } from "../repositories/document.repository";
 import { createDatabaseTools } from "./db-tools";
 import { databaseConnectionStore } from "../repositories/database-connection.repository";
@@ -194,6 +196,21 @@ export async function runPiAgent(opts: {
       label: dt.name,
       execute: dt.execute,
     });
+  }
+
+  // --- image generation, when both halves of it are configured ---
+  // Gated on storage as well as the key: generating an image bills immediately,
+  // so a tool that can produce bytes it cannot then keep is worse than absent.
+  if (appEnv.openrouterApiKey && mediaConfigured()) {
+    for (const it of createImageTools(workspaceId)) {
+      agentTools.push({
+        name: it.name,
+        description: it.description,
+        parameters: jsonSchemaToTypebox(it.parameters as Record<string, unknown>),
+        label: it.name,
+        execute: it.execute,
+      });
+    }
   }
 
   // --- context layer: read-only database access, only where a harness asks ---

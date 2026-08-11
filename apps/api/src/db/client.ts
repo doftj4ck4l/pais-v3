@@ -27,6 +27,7 @@ import {
   mcpCapabilities,
   runs,
   connectors,
+  generatedImages,
 } from "../models/schema";
 
 /** Where the SQLite database file lives (ignored by git). */
@@ -51,6 +52,7 @@ export {
   mcpCapabilities,
   runs,
   connectors,
+  generatedImages,
 };
 export type {
   WorkspaceRow,
@@ -319,6 +321,20 @@ export function applySchema(target: Database) {
       created_at     INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_connectors_workspace ON connectors (workspace_id, created_at);
+    CREATE TABLE IF NOT EXISTS generated_images (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT NOT NULL,
+      conversation_id TEXT,
+      prompt          TEXT NOT NULL,
+      model           TEXT NOT NULL,
+      storage_key     TEXT NOT NULL,
+      content_type    TEXT NOT NULL,
+      bytes           INTEGER NOT NULL,
+      cost_micros     INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_generated_images_workspace
+      ON generated_images (workspace_id, created_at);
   `);
 
   const documentColumns = columnsOf(target, "documents");

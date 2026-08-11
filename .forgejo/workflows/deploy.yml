@@ -1,0 +1,99 @@
+name: deploy
+
+# Runner lives on the Forgejo host (CT 100). It cannot build into the deploy
+# target, so it tests here, syncs the tree to CT 105, and rebuilds there.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DEPLOY_HOST: 10.92.130.248
+  DEPLOY_USER: salur
+  DEPLOY_PATH: /opt/salur
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The sandbox suites drive a real Docker daemon and fail without one.
+      # They are excluded here rather than ignored, so any *other* failure
+      # still stops the deploy — which is the rule in .claude/skills/deploy.
+      - name: Test
+        run: |
+          cd apps/api
+          mapfile -t files < <(find src -name '*.test.ts' \
+            ! -name 'docker.test.ts' \
+            ! -name 'docker-execution-env.test.ts' \
+            ! -name 'sandbox.service.test.ts')
+          echo "running ${#files[@]} test files"
+          bun test "${files[@]}"
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deploy tooling
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq rsync openssh-client curl
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # .env and apps/api/.env hold this host's secrets and are never in git.
+      # apps/api/data is the live SQLite database. All three are excluded from
+      # --delete as well as from transfer, so a deploy cannot destroy them.
+      - name: Sync tree to deploy host
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude 'apps/api/.env' \
+            --exclude 'apps/api/data' \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      # A fresh clone has no apps/api/data. Without it Docker creates the bind
+      # mount as root and the API dies with SQLITE_CANTOPEN.
+      - name: Ensure data directory exists
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH/apps/api/data"
+
+      # --build is not optional: without it compose reuses the previous image
+      # and "deployed" silently means "restarted the old code".
+      - name: Build and restart
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker compose up -d --build"
+
+      # /api/meta proves three things at once: Caddy is up, the proxy reaches
+      # the API, and the API finished ensureSchema().
+      - name: Verify
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" '
+            for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/api/meta || true)
+              if [ "$code" = "200" ]; then echo "/api/meta OK after $((i*3))s"; exit 0; fi
+              sleep 3
+            done
+            echo "API did not answer within 90s"
+            cd '"$DEPLOY_PATH"' && docker compose ps && docker compose logs api --tail 40
+            exit 1'

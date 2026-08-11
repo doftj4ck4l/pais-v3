@@ -99,6 +99,46 @@ individually under the cap, still carried 240k characters into one turn. Every
 result goes through `toolResult()`, so a tool added later cannot forget to bound
 its output.
 
+## Image generation
+
+`generate_image` calls OpenRouter, not the gateway the chat models come from,
+and OpenRouter has **no separate image endpoint**. Generation is
+`/chat/completions` with `modalities: ["image", "text"]`. Three things about the
+response are easy to get wrong, and all three were found by calling it:
+
+- `message.content` is **null**. The image is on `message.images[]` as a data
+  URI. Reading `content` and finding nothing looks exactly like a failure.
+- **Do not set `max_tokens`.** Reasoning tokens come out of the same budget, so
+  a small cap returns `finish_reason: "length"` with no image and no error. A
+  20-token cap spent 18 on reasoning and returned nothing.
+- The `image_output` price in `/api/v1/models` is **per token, not per image**.
+  One 1408x768 image billed $0.0336–$0.0673 — roughly 1,500x a text call, from
+  a tool any prompt can reach.
+
+The bytes never enter SQLite or the transcript. They go to the RustFS bucket and
+the tool returns a `/api/images/<id>` URL, because one base64 image is 30k–2.5M
+characters: it would blow `RESULT_CHAR_CAP` alone and then be replayed to the
+model every following turn, for a picture the chat model cannot see anyway. The
+tool description tells the model to embed that URL as markdown — the console
+renders assistant text through `marked`, and without the instruction the model
+says "I've generated it" and shows nothing.
+
+## RustFS
+
+S3-compatible object storage, unpublished like `api` — only the API talks to it,
+and it re-serves objects so a link in a transcript never expires.
+
+`Bun.S3Client` covers get/put/delete but has **no CreateBucket**, so that one
+request is SigV4-signed by hand in `media.service.ts` rather than pulling in
+`@aws-sdk/client-s3` for a single call. Re-creating an existing bucket answers
+**200 on RustFS where AWS answers 409**; both are treated as success.
+
+Do **not** add `user: "${HOST_UID}:${HOST_GID}"` to the rustfs service the way
+`api` has it. `api` needs it for bind mounts the host user must own; rustfs owns
+a named volume nothing opens by path, and under that override the image dies on
+startup with `Local disk initialization failed ... Permission denied (os error
+13)` because `/data` and `/logs` belong to its own `rustfs` user.
+
 ## pi's two event channels
 
 `AgentHarness` delivers events through **two separate channels**, and registering
