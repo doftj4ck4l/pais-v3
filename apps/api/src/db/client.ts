@@ -31,7 +31,10 @@ import {
 } from "../models/schema";
 
 /** Where the SQLite database file lives (ignored by git). */
-export const DB_PATH = path.resolve(process.cwd(), "data", "app.db");
+export const DB_PATH =
+  // Overridable so tests can drive the real HTTP surface against a throwaway
+  // file instead of the working database.
+  process.env.DB_PATH ?? path.resolve(process.cwd(), "data", "app.db");
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 

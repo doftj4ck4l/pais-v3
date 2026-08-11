@@ -12,6 +12,7 @@ import { SettingsModal } from '@/components/settings-modal'
 import { EmptyState, type Suggestion } from '@/components/empty-state'
 import { TraceSheet } from '@/components/trace-sheet'
 import { Transcript } from '@/components/transcript'
+import { WorkspaceOnboarding } from '@/components/workspace-onboarding'
 import { useAgentBoard } from '@/hooks/use-agent-board'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
@@ -102,6 +103,13 @@ function Console() {
   const resources = (
     <ResourcesPanel key={workspace.current ?? 'none'} filesRefreshKey={board.runsCompleted} />
   )
+
+  // Before any workspace exists there is nothing for the console to show and
+  // nothing for an agent to act on, so onboarding replaces the whole screen
+  // rather than appearing inside a shell full of disabled controls.
+  if (workspace.needsOnboarding) {
+    return <WorkspaceOnboarding onCreate={workspace.create} />
+  }
 
   return (
     <>

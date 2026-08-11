@@ -15,6 +15,8 @@ export type WorkspaceState = {
   current: string | null
   scope: Scope
   loading: boolean
+  /** No workspaces yet: the console shows onboarding instead. */
+  needsOnboarding: boolean
   setCurrent: (id: string) => void
   create: (name: string) => Promise<WorkspaceRow>
   rename: (id: string, name: string) => Promise<void>
@@ -93,7 +95,17 @@ export function useWorkspaceState(): WorkspaceState {
 
   const scope = useMemo<Scope>(() => ({ workspaceId: current }), [current])
 
-  return { workspaces, current, scope, loading, setCurrent, create, rename, remove }
+  return {
+    workspaces,
+    current,
+    scope,
+    loading,
+    needsOnboarding: !loading && workspaces.length === 0,
+    setCurrent,
+    create,
+    rename,
+    remove,
+  }
 }
 
 /**
