@@ -57,7 +57,7 @@ export function ControlDeck({
         current={workspace.current}
         loading={workspace.loading}
         onSelect={workspace.setCurrent}
-        onCreate={(name) => void workspace.create(name)}
+        onCreate={workspace.create}
       />
 
       <div className="flex min-h-0 flex-1 flex-col px-4 py-4">

@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/shared/ui/select'
+import { NewWorkspaceDialog } from '@/features/workspace/components/new-workspace-dialog'
 import type { WorkspaceRow } from '@/shared/lib/types'
 
 /**
@@ -29,37 +30,9 @@ export function WorkspaceSwitcher({
   current: string | null
   loading: boolean
   onSelect: (id: string) => void
-  onCreate: (name: string) => void
+  onCreate: (name: string) => Promise<unknown>
 }) {
   const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-
-  if (adding) {
-    return (
-      <form
-        className="flex items-center gap-1.5 border-b px-3 py-2.5"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (name.trim()) onCreate(name.trim())
-          setName('')
-          setAdding(false)
-        }}
-      >
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          // Blur cancels, so an accidental click outside does not leave a
-          // half-typed name sitting in the sidebar.
-          onBlur={() => setAdding(false)}
-          onKeyDown={(e) => e.key === 'Escape' && setAdding(false)}
-          placeholder="Workspace name"
-          aria-label="New workspace name"
-          className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-xs"
-        />
-      </form>
-    )
-  }
 
   return (
     <div className="flex items-center gap-1.5 border-b px-3 py-2.5">
@@ -86,6 +59,13 @@ export function WorkspaceSwitcher({
       >
         <PlusIcon />
       </Button>
+
+      <NewWorkspaceDialog
+        open={adding}
+        onOpenChange={setAdding}
+        existing={workspaces}
+        onCreate={onCreate}
+      />
     </div>
   )
 }
