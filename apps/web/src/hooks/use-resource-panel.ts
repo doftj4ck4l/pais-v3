@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 
-const KEY = 'salurai-resources-open'
+const KEY = 'pixelspace-resources-open'
+/** Read-only fallback; writes go to KEY. */
+const LEGACY_KEY = 'salurai-resources-open'
 /** Matches the `xl` breakpoint the inline column uses. */
 const WIDE = '(min-width: 1280px)'
 
@@ -22,7 +24,7 @@ export function useResourcePanel() {
   const [isWide, setIsWide] = useState(() => window.matchMedia(WIDE).matches)
 
   const [open, setOpen] = useState<boolean>(() => {
-    const saved = localStorage.getItem(KEY)
+    const saved = localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY)
     if (saved === 'true') return true
     if (saved === 'false') return false
     return window.matchMedia(WIDE).matches

@@ -430,9 +430,14 @@ const RESCOPED_TABLES = [
 ];
 
 /**
- * Auto-create tables on boot (dev-friendly; drizzle-kit for real migrations),
- * place any pre-workspace rows into a workspace, then retire the old scoping
- * key from the tables that have finished moving over.
+ * Create any missing tables on boot, place any pre-workspace rows into a
+ * workspace, then retire the old scoping key from the tables that have
+ * finished moving over.
+ *
+ * This is the migration mechanism, not a stand-in for one. A generated
+ * migration folder used to sit alongside it, two files deep and years behind
+ * the fourteen tables below — the appearance of a workflow nobody ran. Adding
+ * a column means adding an `ALTER TABLE` above.
  *
  * Order matters: the sandbox directories are moved while `user_id` still says
  * who owned them, and only then is the column given up.
