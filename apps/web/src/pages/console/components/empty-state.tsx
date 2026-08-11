@@ -1,7 +1,17 @@
 import { ArrowRightIcon } from 'lucide-react'
+import { useMe } from '@/features/workspace/hooks/use-me'
+import { useNow } from '@/shared/hooks/use-now'
+import { firstName, partOfDay } from './greeting'
 
 export type Suggestion = { text: string; tool: string }
 
+/**
+ * The console with nothing open yet.
+ *
+ * It used to open with a slogan. A slogan is what a landing page needs; what a
+ * console needs is to say where you are — so it now answers who is signed in
+ * and what the time is, and only then offers something to run.
+ */
 export function EmptyState({
   suggestions,
   onPick,
@@ -9,19 +19,23 @@ export function EmptyState({
   suggestions: Suggestion[]
   onPick: (text: string) => void
 }) {
+  const me = useMe()
+  const name = firstName(me)
+
   return (
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-4 py-12 sm:px-6">
-      <h1 className="text-[clamp(1.9rem,4.5vw,2.6rem)] leading-[1.08] font-extrabold tracking-[-0.03em]">
-        Run agents.
-        <br />
-        In parallel.
+      <Clock />
+
+      <h1 className="mt-4 text-[clamp(1.9rem,4.5vw,2.6rem)] leading-[1.08] font-extrabold tracking-[-0.03em]">
+        <Salutation />
+        {name ? <span className="text-foreground">, {name}</span> : null}
       </h1>
 
-      <p className="mt-3 max-w-md text-[0.9375rem] text-muted-foreground">
+      <p className="mt-3 max-w-lg text-[0.9375rem] text-muted-foreground">
         Every question starts its own agent. Watch them all from the sidebar.
       </p>
 
-      <div className="mt-6 grid gap-2.5 sm:grid-cols-2">
+      <div className="mt-7 grid gap-2.5 sm:grid-cols-2">
         {suggestions.map((s) => (
           <button
             key={s.text}
@@ -39,6 +53,62 @@ export function EmptyState({
       </div>
 
       <p className="mt-6 text-sm text-muted-foreground">Or type your own below.</p>
+    </div>
+  )
+}
+
+/**
+ * "Good morning" — with the part of the day carrying the wordmark's gradient.
+ *
+ * The one place brand colour appears on this screen, and it is on the only
+ * word that changes. Everything else here is greyscale, which is what keeps a
+ * gradient from reading as decoration.
+ */
+function Salutation() {
+  const part = partOfDay(useNow(60_000))
+  return (
+    <>
+      Good{' '}
+      <span className="bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-transparent">
+        {part}
+      </span>
+    </>
+  )
+}
+
+/**
+ * The time, seconds and all, above the greeting.
+ *
+ * Its own component so that a tick re-renders eleven characters rather than
+ * the whole screen and its four buttons.
+ *
+ * Seconds are set at 40% — present, because a console that shows a frozen
+ * HH:MM looks broken, but dimmed, because nothing here is worth reading to the
+ * second. The zone is spelled out for the same reason the first suggestion
+ * asks an agent what time it is in Kuala Lumpur: this clock is the one that is
+ * yours, and the agent's is not.
+ */
+function Clock() {
+  const now = useNow()
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const hhmm = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  const ss = now.toLocaleTimeString([], { second: '2-digit' }).padStart(2, '0')
+  const date = now.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+
+  return (
+    <div className="readout flex items-center gap-2.5 text-[0.8125rem] tracking-[0.01em] text-muted-foreground">
+      <time dateTime={now.toISOString()}>
+        {hhmm}
+        <span className="opacity-40">:{ss}</span>
+      </time>
+      <span className="text-rail" aria-hidden>
+        ·
+      </span>
+      <span>{date}</span>
+      <span className="hidden text-rail sm:inline" aria-hidden>
+        ·
+      </span>
+      <span className="hidden sm:inline">{zone.replace(/_/g, ' ')}</span>
     </div>
   )
 }
