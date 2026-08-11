@@ -22,7 +22,7 @@ import { logger } from "../../lib/logger";
  */
 
 /** How we identify ourselves to a server during initialize. */
-const CLIENT_INFO = { name: "salur", version: "1.0.0" };
+const CLIENT_INFO = { name: "pixelspace", version: "1.0.0" };
 
 /** A remote server that has not completed initialize by now is unreachable. */
 export const CONNECT_TIMEOUT_MS = 10_000;

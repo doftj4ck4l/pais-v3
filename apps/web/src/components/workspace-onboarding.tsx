@@ -2,6 +2,7 @@ import type React from 'react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useMe } from '@/hooks/use-me'
+import { Brand } from '@/components/brand'
 
 /**
  * First run: no workspaces yet, so ask for one before showing the console.
@@ -42,12 +43,10 @@ export function WorkspaceOnboarding({
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-sm">
-        <span className="mb-5 flex size-9 items-center justify-center rounded-lg bg-foreground text-background">
-          <span className="-mt-0.5 font-[family-name:var(--font-mono)] text-lg leading-none">π</span>
-        </span>
+        <Brand className="mb-5 h-7" />
 
         <h1 className="text-lg font-semibold tracking-[-0.01em]">
-          {greeting ? `Welcome, ${greeting}` : 'Welcome to SalurAI'}
+          {greeting ? `Welcome, ${greeting}` : 'Welcome to PixelSpace'}
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           A workspace holds one body of work — its agents, documents, databases and files. Name your

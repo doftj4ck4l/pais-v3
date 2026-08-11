@@ -8,15 +8,17 @@
       name="description"
       content="Pair an agent harness with a model and watch the pi agent loop run, step by step."
     />
-    <title>SalurAI — pi agent console</title>
+    <title>PixelSpace — pi agent console</title>
     <script>
       // Paint the right ground colour on the first frame, before React mounts.
       (function () {
         try {
-          // Falls back to the pre-rebrand key so the first paint after an
+          // Falls back through the pre-rebrand keys so the first paint after an
           // upgrade still matches the theme the user had chosen.
           var saved =
-            localStorage.getItem('salurai-theme') || localStorage.getItem('mixmatch-theme')
+            localStorage.getItem('pixelspace-theme') ||
+            localStorage.getItem('salurai-theme') ||
+            localStorage.getItem('mixmatch-theme')
           var dark = saved === 'dark'
           document.documentElement.classList.toggle('dark', dark)
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'

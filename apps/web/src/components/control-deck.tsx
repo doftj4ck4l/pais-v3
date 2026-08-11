@@ -11,6 +11,7 @@ import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { useWorkspace } from '@/hooks/use-workspace'
 import type { AgentRun } from '@/hooks/use-agent-board'
 import type { Meta } from '@/lib/types'
+import { Brand } from '@/components/brand'
 
 /**
  * Navigation and run inspection: which agents exist, which one is open, and how
@@ -137,12 +138,9 @@ export function ControlDeck({
 function Wordmark({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <div className="flex items-center gap-2.5 border-b px-4 py-3.5">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
-        <span className="-mt-0.5 font-[family-name:var(--font-mono)] text-base leading-none">
-          π
-        </span>
-      </span>
-      <span className="text-[0.9375rem] font-extrabold tracking-[-0.02em]">SalurAI</span>
+      {/* The lockup carries its own mark, so the π badge that used to sit here
+          would be a second one competing with it. */}
+      <Brand className="h-5 shrink-0" />
 
       <IconAction label="Settings" onClick={onOpenSettings}>
         <SettingsIcon />

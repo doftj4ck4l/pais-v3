@@ -19,6 +19,7 @@ import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { useResourcePanel } from '@/hooks/use-resource-panel'
 import { useTheme } from '@/hooks/use-theme'
 import { cn } from '@/lib/utils'
+import { Brand } from '@/components/brand'
 
 // Each one fires a real tool, so a new agent has something to show.
 const SUGGESTIONS: Suggestion[] = [
@@ -126,7 +127,7 @@ function Console() {
           >
             <PanelLeftIcon />
           </Button>
-          <span className="text-sm font-extrabold tracking-[-0.02em]">SalurAI</span>
+          <Brand className="h-4 shrink-0" />
           <span className="readout ml-auto text-[0.6875rem] text-muted-foreground">
             {board.agents.length} agent{board.agents.length === 1 ? '' : 's'}
           </span>

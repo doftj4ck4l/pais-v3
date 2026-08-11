@@ -8,7 +8,12 @@ import {
 } from '@/lib/api'
 import type { WorkspaceRow } from '@/lib/types'
 
-const KEY = 'salurai-workspace'
+const KEY = 'pixelspace-workspace'
+/** Read-only fallback, so a rebrand does not drop someone back to their first
+ *  workspace. Writes only ever go to KEY. */
+const LEGACY_KEY = 'salurai-workspace'
+
+const savedWorkspace = () => localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY)
 
 export type WorkspaceState = {
   workspaces: WorkspaceRow[]
@@ -40,7 +45,7 @@ export function useWorkspaceState(): WorkspaceState {
     const rows = await listWorkspaces()
     setWorkspaces(rows)
     setCurrentId((prev) => {
-      const saved = prev ?? localStorage.getItem(KEY)
+      const saved = prev ?? savedWorkspace()
       const valid = rows.some((w) => w.id === saved)
       return valid ? saved! : (rows[0]?.id ?? null)
     })
