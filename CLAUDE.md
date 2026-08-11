@@ -16,7 +16,7 @@ Bun, not npm. `bun test`, `bun run build`, `bunx tsc`. Node is only present to
 bootstrap Bun.
 
 ```bash
-cd apps/api && bun test                          # 463 pass, 7 fail
+cd apps/api && bun test                          # 476 pass, 7 fail
 cd apps/api && bun test src/services/mcp         # one directory
 cd apps/api && bun test -t "reapIdle"            # one test by name
 cd apps/api && bunx tsc --noEmit -p tsconfig.json
@@ -33,6 +33,33 @@ whenever the Docker daemon is unreachable from the test process. Compare against
 7 before assuming you broke something; anything in that list is pre-existing,
 anything outside it is yours. CI excludes those three files by name rather than
 tolerating failures, so any *other* red test stops a deploy.
+
+**A green run here is not a green run in CI.** CI is a fresh checkout, and
+`apps/api/data/` is not in git. A test that reaches the `db` singleton gets an
+empty database there and a fully migrated one on your machine, so a suite that
+passes locally can fail on a schema your working database happened to already
+have. Two things follow:
+
+- Under `bun test`, an unset `DB_PATH` resolves to a throwaway file rather than
+  `data/app.db` — see `db/client.ts`. Tests cannot read or write what you last
+  used `bun dev` on, and cannot borrow its schema either.
+- An app-level test that drives a route touching storage has to call
+  `ensureSchema()` in `beforeAll` after pointing `DB_PATH` somewhere, the way
+  `app.test.ts`, `profile.integration.test.ts` and `onboarding.integration.test.ts`
+  do. Adding a database read to a route that had none is what turns a wiring
+  test into one that needs this.
+
+Before claiming a suite is green, run what CI runs:
+
+```bash
+cd apps/api && find src -name '*.test.ts' \
+  ! -name 'docker.test.ts' ! -name 'docker-execution-env.test.ts' \
+  ! -name 'sandbox.service.test.ts' -print0 | xargs -0 bun test   # 476 pass, 0 fail
+```
+
+`bun test` alone shares one process across files, so the first file to import
+`db/client` fixes `DB_PATH` for every file after it. That makes ordering part
+of the result: run a file on its own before trusting that it passes.
 
 ## Where a run actually happens
 
