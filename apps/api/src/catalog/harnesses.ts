@@ -6,13 +6,6 @@ export type Harness = {
   tagline: string;
   systemPrompt: string;
   /**
-   * Which real runtime backs this harness. Currently only the real pi runtime
-   * is wired ("pi"); the opencode harness was removed.
-   */
-  driver: "prompt" | "pi";
-  /** Max tool-calling loop iterations before forcing a final answer. */
-  maxIterations: number;
-  /**
    * Optional capability gates. A harness only receives the tool groups it names,
    * so the general agent's tool list and system prompt stay small.
    */
@@ -55,8 +48,6 @@ export const HARNESSES: Harness[] = [
     description: "Real pi agent runtime (in-process): step-oriented, gathers facts before answering.",
     tagline: "Step-oriented · fact-gathering · REAL runtime",
     systemPrompt: PI_PROMPT,
-    driver: "pi",
-    maxIterations: 6,
   },
   {
     id: "db-analyst",
@@ -64,9 +55,7 @@ export const HARNESSES: Harness[] = [
     description: "Read-only SQL analyst: introspects the schema, then queries it.",
     tagline: "Schema-first · read-only SQL · REAL runtime",
     systemPrompt: DB_PROMPT,
-    driver: "pi",
     tools: ["db"],
-    maxIterations: 10,
   },
 ];
 

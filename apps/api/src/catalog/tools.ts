@@ -130,15 +130,3 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
     return `error: ${(e as Error).message}`;
   }
 }
-
-/** The tool schema objects passed to an OpenAI-compatible chat model. */
-export function toolSchemas() {
-  return TOOLS.map((t) => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    },
-  }));
-}

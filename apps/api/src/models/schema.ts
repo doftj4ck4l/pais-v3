@@ -1,8 +1,11 @@
 import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
 
 /**
- * Drizzle schema (pure ORM definitions — no runtime connection), so both the
- * Bun runtime and drizzle-kit (Node) can load it.
+ * Drizzle schema: pure ORM definitions, no runtime connection.
+ *
+ * These describe the tables to the query builder; they do not create them.
+ * `applySchema` in db/client.ts is what does, and it is the only thing that
+ * does — so a column added here also needs an explicit `ALTER TABLE` there.
  */
 
 // A single app user. Owns many workspaces.
