@@ -419,7 +419,7 @@ export function applySchema(target: Database) {
  * before workspaces, so a table that has stopped being written with one but
  * still has the column would reject every new row.
  */
-const RESCOPED_TABLES = [
+export const RESCOPED_TABLES = [
   "documents",
   "chunks",
   "db_connections",
