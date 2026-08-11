@@ -322,7 +322,6 @@ export function useAgentBoard(scope: Scope) {
           conversationId: seed.conversationId ?? undefined,
           harnessId: harnessIdRef.current,
           modelId: seed.modelId,
-          userId: scope.userId,
           workspaceId: scope.workspaceId ?? undefined,
           messages: history,
         }),

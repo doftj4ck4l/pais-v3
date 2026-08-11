@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { metaRoutes } from "./meta.routes";
+import { meRoutes } from "./me.routes";
 import { chatRoutes } from "./chat.routes";
 import { conversationRoutes } from "./conversation.routes";
 import { documentRoutes } from "./document.routes";
@@ -15,6 +16,8 @@ import { adminRoutes } from "./admin.routes";
 export const apiRoutes = new Hono();
 
 apiRoutes.route("/meta", metaRoutes);
+// Who the authenticating proxy says you are. Behind auth, unlike /meta.
+apiRoutes.route("/me", meRoutes);
 apiRoutes.route("/chat", chatRoutes);
 apiRoutes.route("/conversations", conversationRoutes);
 apiRoutes.route("/documents", documentRoutes);

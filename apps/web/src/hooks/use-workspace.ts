@@ -6,7 +6,6 @@ import {
   renameWorkspace,
   type Scope,
 } from '@/lib/api'
-import { getUserId } from '@/lib/user'
 import type { WorkspaceRow } from '@/lib/types'
 
 const KEY = 'salurai-workspace'
@@ -34,10 +33,9 @@ export function useWorkspaceState(): WorkspaceState {
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([])
   const [current, setCurrentId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const userId = useMemo(() => getUserId(), [])
 
   const refresh = useCallback(async () => {
-    const rows = await listWorkspaces(userId)
+    const rows = await listWorkspaces()
     setWorkspaces(rows)
     setCurrentId((prev) => {
       const saved = prev ?? localStorage.getItem(KEY)
@@ -46,7 +44,7 @@ export function useWorkspaceState(): WorkspaceState {
     })
     setLoading(false)
     return rows
-  }, [userId])
+  }, [])
 
   useEffect(() => {
     void refresh()
@@ -59,29 +57,29 @@ export function useWorkspaceState(): WorkspaceState {
 
   const create = useCallback(
     async (name: string) => {
-      const created = await createWorkspace(userId, name)
+      const created = await createWorkspace(name)
       await refresh()
       setCurrent(created.id)
       return created
     },
-    [userId, refresh, setCurrent],
+    [refresh, setCurrent],
   )
 
   const rename = useCallback(
     async (id: string, name: string) => {
-      await renameWorkspace(userId, id, name)
+      await renameWorkspace(id, name)
       await refresh()
     },
-    [userId, refresh],
+    [refresh],
   )
 
   const remove = useCallback(
     async (id: string) => {
-      const result = await deleteWorkspace(userId, id)
+      const result = await deleteWorkspace(id)
       if (result.error) return result
       // Land somewhere real before the panels re-fetch, or they would ask the
       // server about a workspace that no longer exists.
-      const rows = await listWorkspaces(userId)
+      const rows = await listWorkspaces()
       setWorkspaces(rows)
       if (id === current) {
         const next = rows[0]?.id ?? null
@@ -90,10 +88,10 @@ export function useWorkspaceState(): WorkspaceState {
       }
       return {}
     },
-    [userId, current],
+    [current],
   )
 
-  const scope = useMemo<Scope>(() => ({ userId, workspaceId: current }), [userId, current])
+  const scope = useMemo<Scope>(() => ({ workspaceId: current }), [current])
 
   return { workspaces, current, scope, loading, setCurrent, create, rename, remove }
 }
@@ -110,7 +108,7 @@ export const WorkspaceContext = createContext<WorkspaceState | null>(null)
  * The current workspace, for the panels that load their own data.
  *
  * A context rather than props because the resource panels already reach for
- * `getUserId()` as ambient state; the workspace is the other half of the same
+ * identity as ambient state; the workspace is the other half of the same
  * question, and threading it through four levels of layout would not make it
  * any more explicit.
  */

@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { AgentList } from '@/components/agent-list'
 import { RunStats } from '@/components/run-stats'
+import { UserBadge } from '@/components/user-badge'
 import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { useWorkspace } from '@/hooks/use-workspace'
 import type { AgentRun } from '@/hooks/use-agent-board'
@@ -127,6 +128,8 @@ export function ControlDeck({
           Resources
         </Button>
       </div>
+
+      <UserBadge />
     </div>
   )
 }
