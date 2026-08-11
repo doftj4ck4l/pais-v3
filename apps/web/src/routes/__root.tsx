@@ -1,6 +1,6 @@
 import { Outlet, createRootRoute } from '@tanstack/react-router'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { useWorkspaceState, WorkspaceContext } from '@/hooks/use-workspace'
+import { TooltipProvider } from '@/shared/ui/tooltip'
+import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/use-workspace'
 
 /**
  * Everything every route needs, and nothing any single route owns.
