@@ -256,6 +256,7 @@ export function applySchema(target: Database) {
       enabled        INTEGER NOT NULL DEFAULT 1,
       status         TEXT NOT NULL DEFAULT 'connected',
       error          TEXT,
+      error_detail   TEXT,
       tool_count     INTEGER NOT NULL DEFAULT 0,
       last_probed_at INTEGER,
       created_at     INTEGER NOT NULL
@@ -339,6 +340,15 @@ export function applySchema(target: Database) {
     CREATE INDEX IF NOT EXISTS idx_generated_images_workspace
       ON generated_images (workspace_id, created_at);
   `);
+
+  // CREATE TABLE IF NOT EXISTS above does nothing for a table that already
+  // exists, so a column added to mcp_servers after the first boot needs this.
+  // Without it Drizzle selects error_detail and SQLite hands back the column
+  // *name* as the value rather than erroring.
+  const mcpColumns = columnsOf(target, "mcp_servers");
+  if (!mcpColumns.includes("error_detail")) {
+    target.exec(`ALTER TABLE mcp_servers ADD COLUMN error_detail TEXT`);
+  }
 
   const documentColumns = columnsOf(target, "documents");
   for (const column of ["connector_id", "external_id", "external_version", "external_url"]) {

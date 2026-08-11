@@ -5,6 +5,7 @@ import {
   CloudIcon,
   KanbanIcon,
   MailIcon,
+  PencilIcon,
   PlugIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -28,6 +29,7 @@ import {
   listMcpServers,
   refreshMcpServer,
   setMcpServerEnabled,
+  updateMcpServer,
   type NewMcpServerInput,
 } from '@/lib/api'
 import { useScope } from '@/hooks/use-workspace'
@@ -48,6 +50,8 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [picking, setPicking] = useState(false)
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
+  const [editing, setEditing] = useState<McpServerRow | null>(null)
+  const [diagnosing, setDiagnosing] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scope = useScope()
@@ -136,6 +140,72 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         Connect an MCP server
       </button>
 
+      {/* Separate dialog from the picker: an edit starts from a row, not from
+          "Connect an MCP server", and sharing one dialog would mean the picker
+          could appear behind a Back press during an edit. */}
+      <Dialog
+        open={!!editing}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null)
+            setError(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          {editing ? (
+            <AddServerForm
+              busy={busy}
+              error={error}
+              editing={editing}
+              onBack={() => {
+                setEditing(null)
+                setError(null)
+              }}
+              onSubmit={async (input) => {
+                setBusy(true)
+                setError(null)
+                const { error: failed } = await updateMcpServer(scope, editing.id, input)
+                setBusy(false)
+                if (failed) {
+                  setError(failed)
+                  return false
+                }
+                await refresh()
+                setEditing(null)
+                return true
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!diagnosing}
+        onOpenChange={(open) => {
+          if (!open) setDiagnosing(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          {diagnosing ? (
+            <ConnectionReport
+              server={
+                // Re-read from the list so a retry's outcome replaces what is
+                // on screen instead of leaving the first failure frozen there.
+                servers.find((s) => s.id === diagnosing.id) ?? diagnosing
+              }
+              busy={busy}
+              onRetry={async () => {
+                setBusy(true)
+                await refreshMcpServer(scope, diagnosing.id)
+                await refresh()
+                setBusy(false)
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={picking}
         onOpenChange={(open) => {
@@ -193,6 +263,11 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
             <ServerItem
               key={s.id}
               server={s}
+              onEdit={() => {
+                setError(null)
+                setEditing(s)
+              }}
+              onDiagnose={() => setDiagnosing(s)}
               onToggle={async () => {
                 // Optimistic: the round trip is a single UPDATE, and a switch
                 // that lags behind the click reads as broken.
@@ -473,24 +548,39 @@ const ALLOWED_COMMANDS = 'npx, uvx, node, python, python3, bun, deno'
  * server has no URL and an HTTP server has no command, so showing all four at
  * once would mean two of them are always wrong to fill in.
  */
+/**
+ * The manual form, used both to add a server and to edit one.
+ *
+ * `editing` is the only difference, and it changes one rule that matters: a
+ * blank credential field means "leave the stored one alone" rather than "no
+ * credential". The API never sends a secret back, so the form has nothing to
+ * prefill and cannot tell an untouched field from an emptied one — the two are
+ * distinguished by omitting the key entirely, which is what `undefined` does
+ * once JSON.stringify drops it.
+ */
 function AddServerForm({
   busy,
   error,
+  editing,
   onSubmit,
   onBack,
 }: {
   busy: boolean
   error: string | null
+  /** The server being edited, or null when adding a new one. */
+  editing?: McpServerRow | null
   onSubmit: (input: NewMcpServerInput) => Promise<boolean>
   onBack: () => void
 }) {
-  const [transport, setTransport] = useState<'http' | 'stdio'>('http')
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
+  const [transport, setTransport] = useState<'http' | 'stdio'>(editing?.transport ?? 'http')
+  const [name, setName] = useState(editing?.name ?? '')
+  const [url, setUrl] = useState(editing?.url ?? '')
   const [authHeader, setAuthHeader] = useState('')
-  const [command, setCommand] = useState('npx')
-  const [argsText, setArgsText] = useState('')
+  const [command, setCommand] = useState(editing?.command ?? 'npx')
+  const [argsText, setArgsText] = useState((editing?.args ?? []).join(' '))
   const [envText, setEnvText] = useState('')
+
+  const storedKeys = (transport === 'http' ? editing?.headerKeys : editing?.envKeys) ?? []
 
   const reset = () => {
     setName('')
@@ -502,20 +592,27 @@ function AddServerForm({
 
   const submit = async () => {
     if (!name.trim()) return
+    // Adding: a blank field is an empty credential. Editing: it is silence, so
+    // the key is omitted and the API keeps what is stored.
+    const keepSecret = !!editing
     const input: NewMcpServerInput =
       transport === 'http'
         ? {
             name: name.trim(),
             transport,
             url: url.trim(),
-            headers: authHeader.trim() ? { Authorization: authHeader.trim() } : {},
+            headers: authHeader.trim()
+              ? { Authorization: authHeader.trim() }
+              : keepSecret
+                ? undefined
+                : {},
           }
         : {
             name: name.trim(),
             transport,
             command: command.trim(),
             args: splitArgs(argsText),
-            env: parseEnv(envText),
+            env: envText.trim() ? parseEnv(envText) : keepSecret ? undefined : {},
           }
     const done = await onSubmit(input)
     // Credentials must not sit in a live input for as long as the panel stays
@@ -541,10 +638,12 @@ function AddServerForm({
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <BackButton onClick={back} />
-          Configure manually
+          {editing ? `Edit ${editing.name}` : 'Configure manually'}
         </DialogTitle>
         <DialogDescription>
-          For a server that is not in the list. The API validates the command before it runs.
+          {editing
+            ? 'Changing the connection clears the cached tool list and reconnects.'
+            : 'For a server that is not in the list. The API validates the command before it runs.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -600,7 +699,9 @@ function AddServerForm({
                   className={FIELD_CLASS}
                 />
                 <span className="text-[0.625rem] leading-relaxed text-muted-foreground">
-                  Optional. Sent as the Authorization header on every request.
+                  {editing && storedKeys.length
+                    ? `Already stored: ${storedKeys.join(', ')}. Leave blank to keep it.`
+                    : 'Optional. Sent as the Authorization header on every request.'}
                 </span>
               </label>
             </>
@@ -638,6 +739,9 @@ function AddServerForm({
                 />
                 <span className="text-[0.625rem] leading-relaxed text-muted-foreground">
                   One KEY=value per line. Values are taken verbatim — do not quote them.
+                  {editing && storedKeys.length
+                    ? ` Already stored: ${storedKeys.join(', ')}. Leave blank to keep them; anything you type replaces the set.`
+                    : ''}
                 </span>
               </label>
             </>
@@ -651,7 +755,7 @@ function AddServerForm({
 
       <div className="flex gap-2 border-t px-5 py-3.5">
         <Button type="submit" size="sm" disabled={busy} className="flex-1">
-          {busy ? 'Connecting…' : 'Connect'}
+          {busy ? 'Connecting…' : editing ? 'Save and reconnect' : 'Connect'}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={back}>
           Back
@@ -687,11 +791,15 @@ function parseEnv(text: string): Record<string, string> {
 function ServerItem({
   server,
   onToggle,
+  onEdit,
+  onDiagnose,
   onRefresh,
   onRemove,
 }: {
   server: McpServerRow
   onToggle: () => Promise<void>
+  onEdit: () => void
+  onDiagnose: () => void
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
 }) {
@@ -714,11 +822,21 @@ function ServerItem({
   return (
     <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
       {failed ? (
+        // A button, not a tooltip. The reason a connection failed is usually a
+        // traceback: it has to be readable at length and selectable to paste
+        // somewhere, and a hover card that truncates at 16rem is neither.
         <Tooltip>
           <TooltipTrigger asChild>
-            <AlertTriangleIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <button
+              type="button"
+              onClick={onDiagnose}
+              aria-label={`Why ${server.name} failed`}
+              className="shrink-0 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40"
+            >
+              <AlertTriangleIcon className="size-3.5 text-muted-foreground" />
+            </button>
           </TooltipTrigger>
-          <TooltipContent className="max-w-64">{server.error ?? 'unreachable'}</TooltipContent>
+          <TooltipContent>See why it failed</TooltipContent>
         </Tooltip>
       ) : server.transport === 'stdio' ? (
         <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -733,9 +851,23 @@ function ServerItem({
           {server.name}
           {off ? <span className="ml-1.5 opacity-60">(off)</span> : null}
         </span>
-        <span className="readout block truncate text-[0.625rem] text-muted-foreground">
-          {detail}
-        </span>
+        {failed ? (
+          <button
+            type="button"
+            onClick={onDiagnose}
+            className={cn(
+              'readout block max-w-full truncate text-left text-[0.625rem] text-muted-foreground',
+              'underline decoration-dotted underline-offset-2 outline-none',
+              'hover:text-foreground focus-visible:text-foreground',
+            )}
+          >
+            could not connect — see details
+          </button>
+        ) : (
+          <span className="readout block truncate text-[0.625rem] text-muted-foreground">
+            {detail}
+          </span>
+        )}
       </span>
 
       <Button
@@ -746,6 +878,15 @@ function ServerItem({
         className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
       >
         <PlugIcon className={cn(off && 'opacity-40')} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onEdit}
+        aria-label={`Edit ${server.name}`}
+        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <PencilIcon />
       </Button>
       <Button
         variant="ghost"
@@ -777,4 +918,91 @@ function hostOf(url: string | null): string {
   } catch {
     return url
   }
+}
+
+/**
+ * Why a server would not connect.
+ *
+ * Three things, in the order you need them: what was attempted, what came back,
+ * and what the process said before it died. The third is the one that was
+ * missing — nothing drained the stdio pipe, so a launcher that failed during
+ * startup reported only the timeout that followed, never the cause.
+ *
+ * Everything is selectable and the output keeps its own line breaks, because
+ * the realistic next step is pasting it into a search or an issue.
+ */
+function ConnectionReport({
+  server,
+  busy,
+  onRetry,
+}: {
+  server: McpServerRow
+  busy: boolean
+  onRetry: () => Promise<void>
+}) {
+  const attempted =
+    server.transport === 'stdio'
+      ? [server.command, ...server.args].filter(Boolean).join(' ')
+      : (server.url ?? '')
+  const recovered = server.status === 'connected'
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{server.name}</DialogTitle>
+        <DialogDescription>
+          {recovered
+            ? 'Connected. This server is working now.'
+            : 'This server did not connect. Everything below is selectable.'}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className={cn(BODY_CLASS, 'flex flex-col gap-4')}>
+        <Field label={server.transport === 'stdio' ? 'Command' : 'URL'}>{attempted}</Field>
+
+        {server.error ? <Field label="Error">{server.error}</Field> : null}
+
+        {server.errorDetail ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="label text-muted-foreground">
+              {server.transport === 'stdio' ? 'Server output (stderr)' : 'Response'}
+            </span>
+            <pre className="readout max-h-64 overflow-auto rounded-md border bg-muted/40 p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap">
+              {server.errorDetail}
+            </pre>
+          </div>
+        ) : !recovered ? (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            The server produced no output before it failed. For a stdio server that usually means
+            the launcher itself never started — check that the command is spelled correctly and
+            that the package exists.
+          </p>
+        ) : null}
+
+        <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
+          {server.lastProbedAt
+            ? `Last checked ${new Date(server.lastProbedAt).toLocaleString()}.`
+            : 'Never connected successfully.'}
+        </p>
+      </div>
+
+      <div className="flex gap-2 border-t px-5 py-3.5">
+        <Button type="button" size="sm" disabled={busy} onClick={() => void onRetry()}>
+          {busy ? 'Reconnecting…' : 'Try again'}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+/** A labelled, selectable value. Mono, because all of these are machine strings. */
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="label text-muted-foreground">{label}</span>
+      <p className="readout rounded-md border bg-muted/40 p-3 text-[0.6875rem] leading-relaxed break-all">
+        {children}
+      </p>
+    </div>
+  )
 }

@@ -7,7 +7,7 @@ import {
   mcpStore,
   type NewMcpServer,
 } from "../repositories/mcp.repository";
-import { connectMcpServer, type McpServerSpec } from "../services/mcp/client";
+import { connectMcpServer, McpConnectError, type McpServerSpec } from "../services/mcp/client";
 import { listCapabilities } from "../services/mcp/probe";
 import { checkStdioCommand } from "../services/mcp/allowlist";
 import { currentUserId } from "../middleware/auth";
@@ -48,10 +48,25 @@ export async function index(c: Context) {
     byServer.set(cap.serverId, list);
   }
 
+  // Credential *names*, never values. An edit form has to show what is already
+  // configured — otherwise changing a URL means retyping every password blind —
+  // and a key like NEXTCLOUD_PASSWORD is already public in the connector
+  // catalog. The values stay behind `resolveSecrets`.
+  const secretKeys = new Map<string, { headers: string[]; env: string[] }>();
+  for (const s of servers) {
+    const secrets = await mcpStore.resolveSecrets(workspaceId, s.id);
+    secretKeys.set(s.id, {
+      headers: Object.keys(secrets?.headers ?? {}).sort(),
+      env: Object.keys(secrets?.env ?? {}).sort(),
+    });
+  }
+
   return c.json({
     servers: servers.map((s) => ({
       ...s,
       args: s.argsJson ? JSON.parse(s.argsJson) : [],
+      headerKeys: secretKeys.get(s.id)?.headers ?? [],
+      envKeys: secretKeys.get(s.id)?.env ?? [],
       capabilities: (byServer.get(s.id) ?? []).map((cap) => ({
         kind: cap.kind,
         name: cap.name,
@@ -64,7 +79,7 @@ export async function index(c: Context) {
 
 type Parsed =
   | { ok: false; status: 400 | 409 | 503; error: string }
-  | { ok: true; server: NewMcpServer };
+  | { ok: true; server: NewMcpServer; suppliedSecrets: boolean };
 
 /**
  * Validate a request body into something storable.
@@ -72,8 +87,17 @@ type Parsed =
  * The stdio allowlist is applied here as well as at connect time. Rejecting a
  * disallowed command when it is *added* tells the user immediately; the check
  * at connect time is what makes it a boundary rather than a form validation.
+ *
+ * Shared by create and edit, which is the point: an edit that skipped this
+ * would be a way to move a server onto a command the allowlist forbids, and
+ * the allowlist would have been enforced only on the path nobody attacks.
+ * `existing` keeps a server's own name from colliding with itself.
  */
-async function parseBody(c: Context, workspaceId: string): Promise<Parsed> {
+async function parseBody(
+  c: Context,
+  workspaceId: string,
+  existing?: { id: string },
+): Promise<Parsed> {
   if (!env.connectionSecret) {
     return {
       ok: false,
@@ -111,11 +135,17 @@ async function parseBody(c: Context, workspaceId: string): Promise<Parsed> {
     return { ok: false, status: 400, error: 'Transport must be "http" or "stdio"' };
   }
 
-  if (await mcpStore.findByName(workspaceId, name)) {
+  const clash = await mcpStore.findByName(workspaceId, name);
+  if (clash && clash.id !== existing?.id) {
     return { ok: false, status: 409, error: `An MCP server named "${name}" already exists` };
   }
 
-  const server: NewMcpServer = { id: newServerId(), workspaceId, name, transport: transport };
+  const server: NewMcpServer = {
+    id: existing?.id ?? newServerId(),
+    workspaceId,
+    name,
+    transport: transport,
+  };
 
   if (transport === "http") {
     const url = String(body.url ?? "").trim();
@@ -140,7 +170,13 @@ async function parseBody(c: Context, workspaceId: string): Promise<Parsed> {
     server.env = sanitiseMap(body.env);
   }
 
-  return { ok: true, server };
+  // Whether the *request* carried credentials, which is not the same question
+  // as whether `server.headers`/`server.env` ended up empty — sanitiseMap turns
+  // both "absent" and "{}" into {}. An edit needs the distinction to tell
+  // "leave my password alone" apart from "clear it".
+  const suppliedSecrets = transport === "http" ? body.headers !== undefined : body.env !== undefined;
+
+  return { ok: true, server, suppliedSecrets };
 }
 
 /** Drop anything that is not a string-to-string pair before it is encrypted. */
@@ -159,22 +195,29 @@ function sanitiseMap(map: unknown): Record<string, string> {
 async function probeAndCache(
   workspaceId: string,
   spec: McpServerSpec,
-): Promise<{ ok: boolean; error?: string; toolCount: number }> {
+): Promise<{ ok: boolean; error?: string; detail?: string | null; toolCount: number }> {
   try {
     const conn = await connectMcpServer(spec);
     try {
       const caps = await listCapabilities(conn);
       await mcpStore.saveCapabilities(workspaceId, spec.id, caps);
-      await mcpStore.markStatus(workspaceId, spec.id, "connected", null);
+      await mcpStore.markStatus(workspaceId, spec.id, "connected", null, null);
       return { ok: true, toolCount: caps.filter((cap) => cap.kind === "tool").length };
     } finally {
       await conn.close();
     }
   } catch (e) {
     const error = (e as Error)?.message ?? String(e);
-    logger.warn("mcp.probe_failed", { server: spec.name, message: error });
-    await mcpStore.markStatus(workspaceId, spec.id, "error", error);
-    return { ok: false, error, toolCount: 0 };
+    // What the process actually said, when it said anything. `connect ... timed
+    // out` names the symptom; this is the only place the cause survives.
+    const detail = e instanceof McpConnectError ? e.detail : null;
+    logger.warn("mcp.probe_failed", {
+      server: spec.name,
+      message: error,
+      detailChars: detail?.length ?? 0,
+    });
+    await mcpStore.markStatus(workspaceId, spec.id, "error", error, detail);
+    return { ok: false, error, detail, toolCount: 0 };
   }
 }
 
@@ -247,27 +290,89 @@ export async function refresh(c: Context) {
   return c.json({ server: await readBack(workspaceId, id), reachable: probe.ok });
 }
 
-/** PATCH /api/mcp/:id — enable or disable a server without deleting it. */
+/**
+ * PATCH /api/mcp/:id — toggle a server, or edit its connection.
+ *
+ * Two shapes on one verb. `{ enabled }` alone stays the cheap toggle it always
+ * was and does not touch the connection or re-probe; anything carrying `name`
+ * or `transport` is a full edit and goes through the same validation as create.
+ * Keeping the toggle intact matters — the settings panel calls it on every
+ * checkbox click, and re-probing there would turn a checkbox into a network
+ * round trip.
+ */
 export async function update(c: Context) {
   const workspaceId = await workspaceIdOf(c);
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing server id" }, 400);
 
-  let body: { enabled?: boolean };
+  let body: { enabled?: boolean; name?: string; transport?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "Expected a JSON body" }, 400);
   }
-  if (typeof body.enabled !== "boolean") {
-    return c.json({ error: '"enabled" must be true or false' }, 400);
-  }
 
   const row = (await mcpStore.list(workspaceId)).find((r) => r.id === id);
   if (!row) return c.json({ error: "Server not found" }, 404);
 
-  await mcpStore.setEnabled(workspaceId, id, body.enabled);
-  return c.json({ server: await readBack(workspaceId, id) });
+  const isEdit = body.name !== undefined || body.transport !== undefined;
+  if (!isEdit) {
+    if (typeof body.enabled !== "boolean") {
+      return c.json({ error: '"enabled" must be true or false' }, 400);
+    }
+    await mcpStore.setEnabled(workspaceId, id, body.enabled);
+    return c.json({ server: await readBack(workspaceId, id) });
+  }
+
+  // Hono caches the parsed body, so parseBody re-reading it is free.
+  const parsed = await parseBody(c, workspaceId, { id });
+  if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status);
+  const { server, suppliedSecrets } = parsed;
+
+  try {
+    const ok = await mcpStore.update(workspaceId, id, {
+      name: server.name,
+      transport: server.transport,
+      url: server.url,
+      // Undefined leaves the stored credential alone. See McpConnectionUpdate.
+      headers: suppliedSecrets ? server.headers : undefined,
+      command: server.command,
+      args: server.args,
+      env: suppliedSecrets ? server.env : undefined,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+    });
+    if (!ok) return c.json({ error: "Server not found" }, 404);
+  } catch (e) {
+    if (e instanceof DuplicateServerNameError) return c.json({ error: e.message }, 409);
+    throw e;
+  }
+
+  // The cached catalog describes the server as it was. Dropping it *before* the
+  // re-probe is what makes a failed edit safe: a bad new URL leaves the server
+  // with no tools rather than advertising the old server's tools under a
+  // connection that no longer reaches them.
+  await mcpStore.clearCapabilities(workspaceId, id);
+
+  // Secrets that were not re-sent still have to reach the probe, so they are
+  // read back from storage rather than taken from the request.
+  const secrets = await mcpStore.resolveSecrets(workspaceId, id);
+  const probe = await probeAndCache(workspaceId, {
+    id,
+    name: server.name,
+    transport: server.transport,
+    url: server.url,
+    headers: secrets?.headers ?? {},
+    command: server.command,
+    args: server.args ?? [],
+    env: secrets?.env ?? {},
+  });
+
+  logger.info("mcp.updated", { id, name: server.name, reachable: probe.ok });
+  return c.json({
+    server: await readBack(workspaceId, id),
+    reachable: probe.ok,
+    error: probe.error ?? null,
+  });
 }
 
 /** DELETE /api/mcp/:id — removes the cached capabilities too, by cascade. */

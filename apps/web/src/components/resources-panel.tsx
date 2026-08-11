@@ -47,24 +47,43 @@ export function ResourcesPanel({ filesRefreshKey }: { filesRefreshKey?: number }
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-1 border-b px-2 py-2">
+      {/*
+        A three-column grid, not a flex row.
+        `flex-1` divided 288px between five tabs — about 51px each, when
+        "Sources" alone needs ~72px with its icon and count. The labels did not
+        shrink, they overflowed: MCP was clipped mid-word and Files was pushed
+        off the panel entirely, unreachable.
+        Fixed columns wrap instead of squeezing, so a sixth source type fills
+        the empty cell and a seventh starts a row rather than stealing width
+        from the other six. Every tab keeps its label — Docs, Sources and Files
+        are all file-shaped ideas, and icons alone would not separate them.
+      */}
+      <div
+        role="tablist"
+        aria-label="Resources"
+        className="grid grid-cols-3 gap-1 border-b px-2 py-2"
+      >
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
+            role="tab"
             onClick={() => setTab(id)}
-            aria-pressed={tab === id}
+            aria-selected={tab === id}
             className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors',
+              'flex min-w-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors',
+              'outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40',
               tab === id
                 ? 'bg-accent font-medium text-foreground'
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >
             <Icon className="size-3.5 shrink-0" />
-            {label}
+            {/* Truncates rather than widening the cell: one long label must not
+                change the column width the other tabs are measured against. */}
+            <span className="truncate">{label}</span>
             {counts[id] ? (
-              <span className="readout text-[0.625rem] opacity-70">{counts[id]}</span>
+              <span className="readout shrink-0 text-[0.625rem] opacity-70">{counts[id]}</span>
             ) : null}
           </button>
         ))}

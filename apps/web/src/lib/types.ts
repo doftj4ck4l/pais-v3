@@ -186,10 +186,22 @@ export type McpServerRow = {
   enabled: number
   status: 'connected' | 'error'
   error: string | null
+  /**
+   * What the server said on the way down — a stdio launcher's stderr, or an
+   * HTTP body. `error` is the one-line summary shown in the row; this is the
+   * traceback behind the connection report.
+   */
+  errorDetail?: string | null
   toolCount: number
   lastProbedAt: number | null
   createdAt: number
   capabilities: McpCapability[]
+  /**
+   * Names of the configured credentials, never their values. The edit form
+   * shows these so changing a URL does not mean retyping a password blind.
+   */
+  headerKeys?: string[]
+  envKeys?: string[]
 }
 
 /** A container for one body of work: its agents, documents, databases, files. */

@@ -4,6 +4,7 @@ import {
   STDIO_CONNECT_TIMEOUT_MS,
   connectMcpServer,
   connectTimeoutFor,
+  McpConnectError,
 } from "./client";
 
 describe("connectTimeoutFor", () => {
@@ -40,4 +41,64 @@ describe("connectMcpServer", () => {
       ),
     ).rejects.toThrow();
   }, 15_000);
+});
+
+describe("stdio failure diagnostics", () => {
+  /**
+   * The regression this guards is a one-word deletion away: `stderr: "pipe"`
+   * was already set, but nothing read the pipe, so a launcher that died during
+   * startup reported only the transport error that followed. "Connection
+   * closed" is a symptom; the cause was being thrown away.
+   *
+   * `bun` is the launcher under test because the suite is already running
+   * under it — no package download, no network, and it is on the allowlist.
+   */
+  it("attaches what the process said on the way down", async () => {
+    let thrown: unknown;
+    try {
+      await connectMcpServer(
+        {
+          id: "t1",
+          name: "broken",
+          transport: "stdio",
+          command: "bun",
+          args: ["run", "definitely-not-a-real-script-xyz"],
+          env: {},
+        },
+        20_000,
+      );
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(McpConnectError);
+    const error = thrown as McpConnectError;
+    // The summary alone is the unhelpful message users were left with.
+    expect(error.message).toContain("Connection closed");
+    // The detail is the part that makes it actionable.
+    expect(error.detail).toContain("definitely-not-a-real-script-xyz");
+  }, 30_000);
+
+  it("does not invent a detail when the command never starts", async () => {
+    let thrown: unknown;
+    try {
+      await connectMcpServer(
+        {
+          id: "t2",
+          name: "nope",
+          transport: "stdio",
+          // Rejected by the allowlist before anything is spawned, so there is
+          // no process and therefore nothing to attach.
+          command: "definitely-not-allowed",
+          args: [],
+          env: {},
+        },
+        5_000,
+      );
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(McpConnectError);
+  });
 });
