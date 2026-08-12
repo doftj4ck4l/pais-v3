@@ -34,15 +34,30 @@ describe("resolveInWorkspace", () => {
 });
 
 describe("generatedImageId", () => {
-  it("accepts the URL generate_image returns, and a bare id", () => {
-    expect(generatedImageId("/api/images/img_abc123")).toBe("img_abc123");
-    expect(generatedImageId("img_abc123")).toBe("img_abc123");
+  // The format `image.repository` actually mints: crypto.randomUUID().
+  const real = "3f9a1c2e-7b41-4d0a-9c33-2e8b17d5a604";
+
+  it("accepts the URL generate_image returns", () => {
+    // Regression: this matched only an `img_` prefix, so no real image was
+    // ever recognised — every /api/images/ URL fell through to the file branch.
+    expect(generatedImageId(`/api/images/${real}`)).toBe(real);
+  });
+
+  it("accepts a bare id", () => {
+    expect(generatedImageId(real)).toBe(real);
+    expect(generatedImageId(`  ${real}  `)).toBe(real);
   });
 
   it("is not fooled by a path that merely mentions images", () => {
     expect(generatedImageId("screenshot.png")).toBeNull();
     expect(generatedImageId("/api/images/../../etc/passwd")).toBeNull();
-    expect(generatedImageId("img_abc/../x")).toBeNull();
+    expect(generatedImageId("sub/dir/photo.png")).toBeNull();
+  });
+
+  it("leaves an extensionless filename to the file branch", () => {
+    // Treating any word as an id would answer a missing file with
+    // "no generated image screenshot", which sends you looking in the wrong place.
+    expect(generatedImageId("screenshot")).toBeNull();
   });
 });
 
@@ -50,7 +65,7 @@ describe("read_image", () => {
   let dir: string;
   const store = {
     get: async (id: string) =>
-      id === "img_other"
+      id === "3f9a1c2e-7b41-4d0a-9c33-2e8b17d5a604"
         ? ({ id, workspaceId: "ws_other", storageKey: "k", contentType: "image/png" } as any)
         : undefined,
   } as unknown as ImageStore;
@@ -91,7 +106,7 @@ describe("read_image", () => {
   });
 
   it("will not read another workspace's generated image", async () => {
-    const out = output(await tool().execute("1", { source: "/api/images/img_other", question: "what?" }));
+    const out = output(await tool().execute("1", { source: "/api/images/3f9a1c2e-7b41-4d0a-9c33-2e8b17d5a604", question: "what?" }));
     expect(out).toContain("no generated image");
   });
 });

@@ -84,6 +84,8 @@ export type ChatRequest = {
   template?: { name: string; args?: string[] };
   workspace?: string;
   userId?: string;
+  /** Images the user attached to this message, as ids from POST /api/images. */
+  imageIds?: string[];
   /** Which workspace this run belongs to. Resolved server-side when absent. */
   workspaceId?: string;
 };

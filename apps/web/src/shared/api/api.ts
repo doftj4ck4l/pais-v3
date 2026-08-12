@@ -8,6 +8,7 @@ import type {
   Meta,
   PlaybookBullet,
   RunDetail,
+  UploadedImage,
   RunRow,
   WorkspaceFile,
   WorkspaceRow, UserProfile } from '@/shared/lib/types'
@@ -143,6 +144,21 @@ export async function uploadDocuments(scope: Scope, files: File[]): Promise<Inge
 
 export async function deleteDocument(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+}
+
+/**
+ * Attach an image the user pasted into the composer.
+ *
+ * Uploaded before the message is sent, not with it: the composer shows a
+ * thumbnail immediately, and the chat request carries an id rather than a
+ * megabyte of base64.
+ */
+export async function uploadChatImage(scope: Scope, file: File): Promise<UploadedImage> {
+  const form = new FormData()
+  form.append('file', file)
+  return json<UploadedImage>(
+    await fetch(`/api/images?${scoped(scope)}`, { method: 'POST', body: form }),
+  )
 }
 
 /** What this workspace has learned. Read and delete only — nothing writes from here. */

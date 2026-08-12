@@ -23,7 +23,8 @@ export type Meta = {
 
 /** One entry in the transcript. Order is the order the agent produced it. */
 export type Item =
-  | { kind: 'user'; text: string }
+  /** `images` are /api/images/<id> URLs the user attached to this turn. */
+  | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'iteration'; n: number }
@@ -111,6 +112,16 @@ export type WorkspaceFile = {
   path: string
   bytes: number
   modifiedAt: number
+}
+
+/** An image the user pasted into the composer, already stored server-side. */
+export type UploadedImage = {
+  id: string
+  /** `/api/images/<id>` — what the thumbnail loads and what read_image resolves. */
+  url: string
+  name: string
+  contentType: string
+  bytes: number
 }
 
 /**

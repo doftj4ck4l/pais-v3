@@ -716,6 +716,17 @@ export const generatedImages = sqliteTable(
      * real error, and integers make the sum exact.
      */
     costMicros: integer("cost_micros"),
+    /**
+     * `generated` or `uploaded`.
+     *
+     * The table is named for what first filled it, and now also holds images
+     * the user pasted into the chat. They share everything that matters — a
+     * bucket object, a workspace, and the `/api/images/<id>` URL `read_image`
+     * resolves — and differ in whether `model` and `cost_micros` mean anything.
+     * Without this column an upload is a generation whose model happened to be
+     * blank, which is the kind of thing that becomes a wrong cost report.
+     */
+    source: text("source").notNull().default("generated"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("idx_generated_images_workspace").on(t.workspaceId, t.createdAt)],
@@ -730,5 +741,6 @@ export type GeneratedImageRow = {
   contentType: string;
   bytes: number;
   costMicros: number | null;
+  source: string;
   createdAt: number;
 };
