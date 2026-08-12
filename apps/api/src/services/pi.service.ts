@@ -32,6 +32,8 @@ import { getSkills, skillsBlock, invokeSkill } from "./skill.service";
 import { createMemoryTools } from "./memory.service";
 import { createDocumentTools } from "./context-tools";
 import { createImageTools } from "./image-tools";
+import { createVisionTools } from "./vision-tools";
+import { visionConfigured } from "./vision.service";
 import { mediaConfigured } from "./media.service";
 import { documentStore } from "../repositories/document.repository";
 import { createDatabaseTools } from "./db-tools";
@@ -213,6 +215,24 @@ export async function runPiAgent(opts: {
         parameters: jsonSchemaToTypebox(it.parameters as Record<string, unknown>),
         label: it.name,
         execute: it.execute,
+      });
+    }
+  }
+
+  // --- reading an image, for a chat model that cannot see one ---
+  //
+  // Gated only on the gateway, not on RustFS: the common source is a file in
+  // the workspace, which needs no bucket. `execCwd` is passed rather than
+  // recomputed because it is the directory the system prompt already names, so
+  // a relative path the model writes resolves where the model was told it would.
+  if (visionConfigured()) {
+    for (const vt of createVisionTools(workspaceId, execCwd)) {
+      agentTools.push({
+        name: vt.name,
+        description: vt.description,
+        parameters: jsonSchemaToTypebox(vt.parameters as Record<string, unknown>),
+        label: vt.name,
+        execute: vt.execute,
       });
     }
   }
