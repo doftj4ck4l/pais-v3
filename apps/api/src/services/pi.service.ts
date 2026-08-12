@@ -248,6 +248,11 @@ export async function runPiAgent(opts: {
   try {
     mcp = await createMcpTools(workspaceId, undefined, undefined, {
       activator: mcpActivator,
+      // The agent's own working directory, so a spilled result's path is one
+      // the `read` and `bash` tools resolve — under Docker the workspace is
+      // mounted at an identical host and container path, and under the node
+      // backend there is only one path to begin with.
+      workspacePath: execCwd,
       // A connection is now opened by the first tool call that needs one, which
       // is somewhere in the middle of a run rather than at its start. Traced
       // where it happens, or the seconds it costs would go unattributed.

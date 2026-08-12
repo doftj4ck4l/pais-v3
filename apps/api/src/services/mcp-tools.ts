@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { PromptTemplate } from "@earendil-works/pi-agent-core";
 import { jsonSchemaToTypebox } from "../lib/typebox-schema";
 import { logger } from "../lib/logger";
@@ -150,15 +152,24 @@ export const RUN_CHAR_BUDGET = 120_000;
  * The notice matters as much as the cut. Silently truncated JSON parses as
  * corrupt, and a model that cannot tell truncation from "this is all there is"
  * will summarise a fraction of the data as if it were the whole.
+ *
+ * The cut is taken out of the *middle*, keeping both ends, which is what Codex's
+ * `truncate_middle_chars` does and for the reason that showed up here: a listing
+ * carries its schema and field names at the top and its totals and closing
+ * structure at the bottom. Dropping the tail is what made "how many contacts are
+ * there" unanswerable from a result that had counted every one of them.
  */
 export function capResult(text: string, cap = RESULT_CHAR_CAP): string {
   if (text.length <= cap) return text;
   const dropped = text.length - cap;
+  const head = Math.ceil(cap / 2);
   return (
-    text.slice(0, cap) +
+    text.slice(0, head) +
     `\n\n[truncated: ${dropped.toLocaleString()} of ${text.length.toLocaleString()} characters ` +
-    `were dropped to fit the context window. This output is INCOMPLETE — do not treat it as ` +
-    `the full result. Narrow the call (a more specific path, pattern, or limit) and try again.]`
+    `were dropped from the middle to fit the context window. This output is INCOMPLETE — do not ` +
+    `treat it as the full result. Narrow the call (a more specific path, pattern, or limit) and ` +
+    `try again.]\n\n` +
+    text.slice(text.length - (cap - head))
   );
 }
 
@@ -229,22 +240,139 @@ function flattenContent(content: unknown): string {
  * One of these per `createMcpTools` call, closed over by every tool it builds,
  * so the budget is per run — which is the unit that shares a context window.
  */
-export function createBudget(total = RUN_CHAR_BUDGET) {
+/**
+ * Writes an oversized result somewhere the agent can go and read it, returning
+ * the path — or `undefined` if it could not.
+ */
+export type Spill = (text: string, toolName: string) => string | undefined;
+
+/**
+ * How long a spilled result stays on disk.
+ *
+ * Without a sweep every truncated call leaves a file in the workspace for good.
+ * A week is long enough that a follow-up run days later still finds what the
+ * previous one read, and short enough that a workspace does not accumulate
+ * unboundedly. opencode's truncation directory uses the same window.
+ */
+export const SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
+
+/**
+ * Spill oversized results into `dir`.
+ *
+ * The point of this is that truncation stops destroying data. Before it, a
+ * result over the cap lost everything past the cut and a run past its budget
+ * got nothing at all — and the model, having no way to distinguish "too big"
+ * from "unavailable", reported our own cap to the user as the *remote server*
+ * rate-limiting it.
+ *
+ * `dir` is inside the sandbox workspace, which is bind-mounted at an identical
+ * host and container path (see `docker.ts`). That is the only reason a bare
+ * path is a usable pointer: the string written here is the string `read` and
+ * `bash` resolve inside the container.
+ *
+ * Failure is not propagated. A workspace that cannot be written to should
+ * degrade to plain truncation — the behaviour before this existed — rather
+ * than fail a tool call that already has its answer in hand.
+ */
+export function createSpill(dir: string): Spill {
+  let swept = false;
+  let n = 0;
+
+  return (text, toolName) => {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      // Once per run rather than on a timer: a run is already the unit that
+      // opens this directory, and a sweep costs one readdir.
+      if (!swept) {
+        swept = true;
+        sweepSpills(dir);
+      }
+      const safe = toolName.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 60);
+      const file = path.join(dir, `tool-${Date.now().toString(36)}-${n++}-${safe}.txt`);
+      fs.writeFileSync(file, text);
+      return file;
+    } catch (err) {
+      logger.warn("mcp.spill_failed", { dir, error: (err as Error).message });
+      return undefined;
+    }
+  };
+}
+
+/** Delete spills past the retention window. Best effort — never throws. */
+function sweepSpills(dir: string): void {
+  const cutoff = Date.now() - SPILL_RETENTION_MS;
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith("tool-")) continue;
+    const file = path.join(dir, entry);
+    try {
+      if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file);
+    } catch {
+      // A file that vanished or cannot be stat'd is not worth failing over.
+    }
+  }
+}
+
+/**
+ * Room held back from the per-call allowance for the notice and the pointer,
+ * so that what `take` returns actually fits the budget it was given rather than
+ * overshooting it by the length of its own explanation.
+ */
+const NOTICE_RESERVE = 520;
+
+export function createBudget(total = RUN_CHAR_BUDGET, spill?: Spill) {
   let remaining = total;
+
+  /** What the model is told when the full result is on disk. */
+  const pointer = (file: string, text: string, kept: number) =>
+    `[truncated: ${kept.toLocaleString()} of ${text.length.toLocaleString()} characters shown. ` +
+    `The full result was saved to ${file} — read it with \`read\` (use offset/limit) or search ` +
+    `it with \`bash\` grep, and do not repeat this call.]`;
+
   return {
     remaining: () => remaining,
     /** Cap `text` against both the per-call limit and what the run has left. */
-    take(text: string): string {
+    take(text: string, toolName = "tool"): string {
+      const room = Math.min(RESULT_CHAR_CAP, Math.max(remaining, 0));
+
+      // A result no larger than the pointer we would hand back instead costs
+      // the run less said outright than saved and described. This is the whole
+      // of the exception: an exhausted budget still answers a short question.
+      if (remaining <= 0 && spill && text.length <= pointer("", text, 0).length) {
+        return text;
+      }
+
+      // Spilling is only worth a write when something is actually being lost.
+      const losing = remaining <= 0 || text.length > room;
+      const file = losing ? spill?.(text, toolName) : undefined;
+
       if (remaining <= 0) {
+        // The budget is spent, but spending it is not a reason to throw the
+        // result away: hand back the path and let the run keep working. Only
+        // without somewhere to put it does this have to be a refusal.
+        if (file) return pointer(file, text, 0);
         return (
           `[skipped: this run has already read ${total.toLocaleString()} characters from MCP ` +
           `servers, which is its budget. Do not retry this call. Answer from what you already ` +
           `have, or tell the user the request is too broad and what narrower one would work.]`
         );
       }
-      const capped = capResult(text, Math.min(RESULT_CHAR_CAP, remaining));
-      remaining -= capped.length;
-      return capped;
+
+      if (!file) {
+        const capped = capResult(text, room);
+        remaining -= capped.length;
+        return capped;
+      }
+
+      const body = capResult(text, Math.max(0, room - NOTICE_RESERVE));
+      const out = `${body}\n\n${pointer(file, text, Math.min(text.length, room - NOTICE_RESERVE))}`;
+      remaining -= out.length;
+      return out;
     },
   };
 }
@@ -258,10 +386,10 @@ type Budget = ReturnType<typeof createBudget>;
  * cannot forget to bound its output — and errors go through it too, since a
  * server is equally capable of returning a 200KB stack trace.
  */
-function toolResult(budget: Budget, text: string, isError = false) {
+function toolResult(budget: Budget, text: string, isError = false, toolName = "mcp") {
   // Binary goes first: capping before eliding would spend the whole allowance
   // on photos and truncate the fields that answer the question.
-  const capped = budget.take(elideBinary(text));
+  const capped = budget.take(elideBinary(text), toolName);
   return {
     content: [{ type: "text" as const, text: capped }],
     details: { output: capped },
@@ -333,7 +461,18 @@ export type McpToolsOptions = {
   usage?: (workspaceId: string) => Promise<ToolUsage[]>;
   /** Notified when a lazy connection is opened, so a run can trace the cost. */
   onConnect?: (outcome: { server: string; ms: number; ok: boolean; error?: string }) => void;
+  /**
+   * The run's sandbox workspace. Oversized results are written under it instead
+   * of being discarded, and the path is handed to the model to read.
+   *
+   * Absent when the run has no sandbox — `SANDBOX_BACKEND=node` without one, or
+   * Docker unreachable — in which case results are truncated as before.
+   */
+  workspacePath?: string;
 };
+
+/** Where spilled results live inside a workspace. */
+export const SPILL_DIR = ".salur/tool-output";
 
 /** One entry of the catalog: an MCP tool as the model will see it. */
 type CatalogEntry = {
@@ -358,6 +497,7 @@ export async function createMcpTools(
     coreLimit = CORE_TOOL_LIMIT,
     usage = (id: string) => runRepository.toolUsage(id),
     onConnect,
+    workspacePath,
   } = options;
 
   const rows = await store.listEnabled(workspaceId);
@@ -491,7 +631,10 @@ export async function createMcpTools(
   // run: six parallel reads, each individually within the per-call cap, are
   // what exhausted a context window the first time only the per-call cap
   // existed.
-  const budget = createBudget();
+  const budget = createBudget(
+    RUN_CHAR_BUDGET,
+    workspacePath ? createSpill(path.join(workspacePath, SPILL_DIR)) : undefined,
+  );
 
   // --- one Pi tool per MCP tool, namespaced by server ---
   // Two servers may each offer "search"; without the prefix the second would
@@ -536,11 +679,16 @@ export async function createMcpTools(
             `${entry.serverName}.${entry.remoteName}`,
           );
           const text = flattenContent(result?.content);
-          return toolResult(budget, text || "(no output)", result?.isError === true);
+          return toolResult(budget, text || "(no output)", result?.isError === true, entry.name);
         } catch (e) {
           // Returned, not thrown: the model can pick another approach, and a
           // flaky server does not end the run.
-          return toolResult(budget, `MCP call failed: ${(e as Error)?.message ?? String(e)}`, true);
+          return toolResult(
+            budget,
+            `MCP call failed: ${(e as Error)?.message ?? String(e)}`,
+            true,
+            entry.name,
+          );
         }
       },
     });

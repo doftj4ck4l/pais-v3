@@ -293,6 +293,29 @@ individually under the cap, still carried 240k characters into one turn. Every
 result goes through `toolResult()`, so a tool added later cannot forget to bound
 its output.
 
+**Neither bound destroys data any more.** What is cut goes to
+`<workspace>/.salur/tool-output/` and the model is handed the path, because the
+run that motivated this did not fail on size — it failed on *refusal*. An
+exhausted `RUN_CHAR_BUDGET` returned "do not retry this call", the agent stopped
+reading, and having no way to tell our cap from the remote server's, it told the
+user Nextcloud was rate-limiting it. Nextcloud had never complained.
+
+Three things follow, and all three are load-bearing:
+
+- **The path is a bare host path on purpose.** `docker.ts` mounts the workspace
+  at `<p>:<p>`, so the string written by the API is the string `read` and `bash`
+  resolve inside the container. Break that identity and the pointer becomes a
+  path to nowhere — the same failure mode as changing `SANDBOX_ROOT`.
+- **Spilling is best-effort and silent on failure.** A workspace that cannot be
+  written to degrades to plain truncation, which is exactly the old behaviour.
+  It must never fail a tool call that already has its answer in hand.
+- **`capResult` cuts the middle, not the tail.** A listing carries its schema at
+  the top and its totals at the bottom; dropping the tail is what made "how many
+  contacts are there" unanswerable from a result that had counted every one.
+  Codex's `truncate_middle_chars` does the same thing for the same reason.
+
+Spills are swept once per run, seven days' retention (`SPILL_RETENTION_MS`).
+
 ## Image generation
 
 `generate_image` calls OpenRouter, not the gateway the chat models come from,
