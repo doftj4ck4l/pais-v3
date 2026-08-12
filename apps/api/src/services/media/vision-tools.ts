@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { env } from "../config/env";
+import { env } from "../../config/env";
 import { describeImage } from "./vision.service";
 import { getObject } from "./media.service";
-import { imageStore, type ImageStore } from "../repositories/image.repository";
+import { imageStore, type ImageStore } from "../../repositories/image.repository";
 
 /**
  * The `read_image` tool, bound to one workspace.

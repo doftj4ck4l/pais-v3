@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { applySchema } from "../db/client";
-import { env } from "../config/env";
-import { SqliteDatabaseConnectionStore } from "../repositories/database-connection.repository";
-import type { QueryOutcome } from "./db/postgres.driver";
-import type { SnapshotTable } from "./db/introspect.service";
+import { applySchema } from "../../db/client";
+import { env } from "../../config/env";
+import { SqliteDatabaseConnectionStore } from "../../repositories/database-connection.repository";
+import type { QueryOutcome } from "./postgres.driver";
+import type { SnapshotTable } from "./introspect.service";
 import { createDatabaseTools } from "./db-tools";
 
 /**

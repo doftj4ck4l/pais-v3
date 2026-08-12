@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, documents, chunks } from "../db/client";
 import type { DocumentRow, DocumentStatus } from "../models/schema";
-import type { Chunk } from "../services/chunk.service";
+import type { Chunk } from "../services/documents/chunk.service";
 
 /** A chunk that matched a search, with everything a citation needs. */
 export type ScoredChunk = {

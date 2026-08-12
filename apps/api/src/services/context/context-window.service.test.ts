@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ChatMessage } from "../types/chat";
+import type { ChatMessage } from "../../types/chat";
 import {
   COMPACT_AT,
   RESERVE_TOKENS,

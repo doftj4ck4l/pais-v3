@@ -1,4 +1,4 @@
-import { documentStore, type DocumentStore, type ScoredChunk } from "../repositories/document.repository";
+import { documentStore, type DocumentStore, type ScoredChunk } from "../../repositories/document.repository";
 
 export type { ScoredChunk };
 

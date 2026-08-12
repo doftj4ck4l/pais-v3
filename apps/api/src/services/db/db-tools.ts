@@ -2,9 +2,9 @@ import {
   databaseConnectionStore,
   type DatabaseConnectionStore,
   type TableDetail,
-} from "../repositories/database-connection.repository";
-import { toFtsQuery } from "./search.service";
-import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./db/postgres.driver";
+} from "../../repositories/database-connection.repository";
+import { toFtsQuery } from "../documents/search.service";
+import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./postgres.driver";
 
 /**
  * The agent's three database tools, bound to one user's connections.

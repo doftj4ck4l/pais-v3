@@ -1,7 +1,7 @@
-import { env } from "../config/env";
-import { logger } from "../lib/logger";
-import { effectiveApiKey } from "../catalog/llm-models";
-import { MODELS } from "../catalog/llm-models";
+import { env } from "../../config/env";
+import { logger } from "../../lib/logger";
+import { effectiveApiKey } from "../../catalog/llm-models";
+import { MODELS } from "../../catalog/llm-models";
 
 /**
  * Looking at an image, on behalf of a model that cannot.

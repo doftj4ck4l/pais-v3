@@ -1,4 +1,4 @@
-import { memoryStore, type MemoryEntry, type MemoryStore } from "../repositories/memory.repository";
+import { memoryStore, type MemoryEntry, type MemoryStore } from "../../repositories/memory.repository";
 
 const genId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 

@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { imageStore } from "../repositories/image.repository";
-import { getObject, deleteObject } from "../services/media.service";
+import { getObject, deleteObject } from "../services/media/media.service";
 import { env } from "../config/env";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";

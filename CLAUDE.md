@@ -63,10 +63,17 @@ of the result: run a file on its own before trusting that it passes.
 
 ## Where a run actually happens
 
-`pi.service.ts` (~930 lines). Not `agent.service.ts`, which is a 38-line adapter
-turning a catalog harness into `runPiAgent` arguments and nothing else — and not
-the README's four-step loop under "Flow in `services/agent.service.ts`", which
-describes a second loop that used to live there.
+`services/agent/pi.service.ts` (~1030 lines). Not `agent.service.ts` beside it,
+which is a 38-line adapter turning a catalog harness into `runPiAgent` arguments
+and nothing else — and not the README's four-step loop under "Flow in
+`services/agent.service.ts`", which describes a second loop that used to live
+there.
+
+`services/` is one directory per domain. Two of those names are close enough to
+mislead: **`context/` is token accounting** — how big the window is and when to
+compact — while **`documents/` is the searchable corpus** and owns the
+`search_docs` tool. `documents/document-tools.ts` was called `context-tools.ts`
+for exactly as long as that was confusing.
 
 That loop was reached when `harness.driver` was anything but `"pi"`. Every
 harness the catalog shipped was `"pi"`, so it was unreachable for as long as it
@@ -82,7 +89,7 @@ just `catalog/tools.ts` as the README's "Adding a tool" implies:
 | pi built-ins (`bash`, `read`, `write`, `edit`) | always |
 | `catalog/tools.ts` | always |
 | `memory.service` (`remember` / `recall`) | always |
-| `context-tools` (document search) | always |
+| `documents/document-tools` (document search) | always |
 | `image-tools` | `OPENROUTER_API_KEY` **and** RustFS configured |
 | `vision-tools` (`read_image`) | the gateway is configured — *not* RustFS |
 | `db-tools` | `harness.tools` includes `"db"` |

@@ -7,9 +7,9 @@ import {
   type ExecutionEnv,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { env as appEnv } from "../config/env";
-import { SKILLS_MOUNT } from "./sandbox/docker";
-import { logger } from "../lib/logger";
+import { env as appEnv } from "../../config/env";
+import { SKILLS_MOUNT } from "../sandbox/docker";
+import { logger } from "../../lib/logger";
 
 /** Placeholder a skill's `run` command uses to locate its own directory. */
 const SKILL_DIR = "$SKILL_DIR";

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createVisionTools, generatedImageId, resolveInWorkspace } from "./vision-tools";
-import type { ImageStore } from "../repositories/image.repository";
+import type { ImageStore } from "../../repositories/image.repository";
 
 describe("resolveInWorkspace", () => {
   const root = "/srv/workspaces/ws1";

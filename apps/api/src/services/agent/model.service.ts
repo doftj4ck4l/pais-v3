@@ -1,5 +1,5 @@
-import { MODELS, getModel, isLikelyConfigured, type ModelConfig } from "../catalog/llm-models";
-import { HARNESSES, getHarness, type Harness } from "../catalog/harnesses";
+import { MODELS, getModel, isLikelyConfigured, type ModelConfig } from "../../catalog/llm-models";
+import { HARNESSES, getHarness, type Harness } from "../../catalog/harnesses";
 
 /** Shape returned by GET /api/meta — the catalog the UI renders. */
 export type MetaPayload = {

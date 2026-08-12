@@ -1,12 +1,12 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { runAgent } from "../services/agent.service";
-import { resolveRun } from "../services/model.service";
-import { TranscriptRecorder } from "../services/transcript.service";
+import { runAgent } from "../services/agent/agent.service";
+import { resolveRun } from "../services/agent/model.service";
+import { TranscriptRecorder } from "../services/agent/transcript.service";
 import { conversationRepository } from "../repositories/conversation.repository";
 import { runRepository } from "../repositories/run.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
-import { fitToWindow } from "../services/context-budget.service";
+import { fitToWindow } from "../services/context/context-budget.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";

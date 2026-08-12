@@ -1,7 +1,7 @@
-import type { Harness } from "../catalog/harnesses";
-import type { ModelConfig } from "../catalog/llm-models";
-import type { ChatMessage } from "../types/chat";
-import type { AgentEvent, AgentOptions } from "../types/agent";
+import type { Harness } from "../../catalog/harnesses";
+import type { ModelConfig } from "../../catalog/llm-models";
+import type { ChatMessage } from "../../types/chat";
+import type { AgentEvent, AgentOptions } from "../../types/agent";
 import { runPiAgent } from "./pi.service";
 
 /**
