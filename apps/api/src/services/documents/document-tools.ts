@@ -1,5 +1,5 @@
 import { searchDocuments } from "./search.service";
-import { documentStore, type DocumentStore } from "../repositories/document.repository";
+import { documentStore, type DocumentStore } from "../../repositories/document.repository";
 
 /**
  * The `search_docs` tool, bound to one workspace's uploaded documents.

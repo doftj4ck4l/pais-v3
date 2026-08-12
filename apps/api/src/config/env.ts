@@ -116,6 +116,30 @@ export const env = {
   imageMaxPerCall: Number(process.env.IMAGE_MAX_PER_CALL ?? 4),
 
   /**
+   * The model that looks at an image on behalf of a chat model that cannot.
+   *
+   * Served by the same gateway as the chat models, so this needs no key of its
+   * own — but it is a *different* model from the one running the conversation,
+   * which is the entire point. `ds4-flash` answers "DeepSeek-V4-Flash-0731 is
+   * not a multimodal model" to an image, and `nemotron-3.5-lightning` the same;
+   * `qwen3.6-35b`, `qwen3.5-397b-instruct`, `vrs_smart` and
+   * `gemini-3.1-flash-image` all read one. Measured, not assumed.
+   *
+   * The default is the cheap end deliberately: this tool is reachable from any
+   * prompt, and the 397B describes a logo's typography unasked when the
+   * question was "what does it say".
+   */
+  visionModel: process.env.VISION_MODEL ?? "qwen3.6-35b",
+  /**
+   * Largest image sent to the vision model, before base64 expansion.
+   *
+   * A data URI is ~4/3 of the bytes, and the whole thing rides in a JSON body,
+   * so the cap is on the source. Past this the tool says so rather than letting
+   * the gateway reject a multi-megabyte request with something unhelpful.
+   */
+  visionMaxBytes: Number(process.env.VISION_MAX_BYTES ?? 12_000_000),
+
+  /**
    * RustFS — S3-compatible object storage for generated media.
    *
    * Bytes go here rather than into SQLite or the sandbox volume: the database

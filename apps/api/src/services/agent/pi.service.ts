@@ -18,33 +18,35 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { ExecutionEnv } from "@earendil-works/pi-agent-core";
-import { env as appEnv } from "../config/env";
-import { DockerExecutionEnv } from "./sandbox/docker-execution-env";
-import { sandboxService } from "./sandbox/sandbox.service";
+import { env as appEnv } from "../../config/env";
+import { DockerExecutionEnv } from "../sandbox/docker-execution-env";
+import { sandboxService } from "../sandbox/sandbox.service";
 import path from "node:path";
 import fs from "node:fs";
-import type { AgentEvent } from "../types/agent";
-import type { ModelConfig } from "../catalog/llm-models";
-import { effectiveApiKey } from "../catalog/llm-models";
-import type { ChatMessage } from "../types/chat";
-import { TOOLS, runTool } from "../catalog/tools";
-import { getSkills, skillsBlock, invokeSkill } from "./skill.service";
-import { createMemoryTools } from "./memory.service";
-import { createDocumentTools } from "./context-tools";
-import { createImageTools } from "./image-tools";
-import { mediaConfigured } from "./media.service";
-import { documentStore } from "../repositories/document.repository";
-import { createDatabaseTools } from "./db-tools";
-import { databaseConnectionStore } from "../repositories/database-connection.repository";
-import { createMcpTools, createToolActivator, type McpRuntime } from "./mcp-tools";
-import { playbookStore } from "../repositories/playbook.repository";
-import { renderPlaybook } from "./playbook/prompt";
-import { reflect } from "./playbook/reflector";
-import type { ToolCallRecord } from "./playbook/signals";
+import type { AgentEvent } from "../../types/agent";
+import type { ModelConfig } from "../../catalog/llm-models";
+import { effectiveApiKey } from "../../catalog/llm-models";
+import type { ChatMessage } from "../../types/chat";
+import { TOOLS, runTool } from "../../catalog/tools";
+import { getSkills, skillsBlock, invokeSkill } from "../skills/skill.service";
+import { createMemoryTools } from "../memory/memory.service";
+import { createDocumentTools } from "../documents/document-tools";
+import { createImageTools } from "../media/image-tools";
+import { createVisionTools } from "../media/vision-tools";
+import { visionConfigured } from "../media/vision.service";
+import { mediaConfigured } from "../media/media.service";
+import { documentStore } from "../../repositories/document.repository";
+import { createDatabaseTools } from "../db/db-tools";
+import { databaseConnectionStore } from "../../repositories/database-connection.repository";
+import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
+import { playbookStore } from "../../repositories/playbook.repository";
+import { renderPlaybook } from "../playbook/prompt";
+import { reflect } from "../playbook/reflector";
+import type { ToolCallRecord } from "../playbook/signals";
 import { describeEnvironment } from "./environment-prompt";
-import { usableWindow } from "./context-window.service";
-import { jsonSchemaToTypebox } from "../lib/typebox-schema";
-import { logger, startTimer } from "../lib/logger";
+import { usableWindow } from "../context/context-window.service";
+import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
+import { logger, startTimer } from "../../lib/logger";
 
 type Emit = (event: AgentEvent) => void;
 
@@ -213,6 +215,24 @@ export async function runPiAgent(opts: {
         parameters: jsonSchemaToTypebox(it.parameters as Record<string, unknown>),
         label: it.name,
         execute: it.execute,
+      });
+    }
+  }
+
+  // --- reading an image, for a chat model that cannot see one ---
+  //
+  // Gated only on the gateway, not on RustFS: the common source is a file in
+  // the workspace, which needs no bucket. `execCwd` is passed rather than
+  // recomputed because it is the directory the system prompt already names, so
+  // a relative path the model writes resolves where the model was told it would.
+  if (visionConfigured()) {
+    for (const vt of createVisionTools(workspaceId, execCwd)) {
+      agentTools.push({
+        name: vt.name,
+        description: vt.description,
+        parameters: jsonSchemaToTypebox(vt.parameters as Record<string, unknown>),
+        label: vt.name,
+        execute: vt.execute,
       });
     }
   }

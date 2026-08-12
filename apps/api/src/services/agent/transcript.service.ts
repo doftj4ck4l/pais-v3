@@ -1,5 +1,5 @@
-import type { AgentEvent } from "../types/agent";
-import type { ChatMessage } from "../types/chat";
+import type { AgentEvent } from "../../types/agent";
+import type { ChatMessage } from "../../types/chat";
 
 /**
  * One entry in a stored transcript. Mirrors the shape the console renders, so a

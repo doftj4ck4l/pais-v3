@@ -1,30 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { PromptTemplate } from "@earendil-works/pi-agent-core";
-import { jsonSchemaToTypebox } from "../lib/typebox-schema";
-import { logger } from "../lib/logger";
+import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
+import { logger } from "../../lib/logger";
 import {
   mcpStore,
   type McpStore,
   type NewCapability,
-} from "../repositories/mcp.repository";
-import { runRepository, type ToolUsage } from "../repositories/run.repository";
-import type { McpCapabilityRow } from "../models/schema";
+} from "../../repositories/mcp.repository";
+import { runRepository, type ToolUsage } from "../../repositories/run.repository";
+import type { McpCapabilityRow } from "../../models/schema";
 import {
   CALL_TIMEOUT_MS,
   connectMcpServer,
   type Connector,
   type McpConnection,
   type McpServerSpec,
-} from "./mcp/client";
-import { listCapabilities } from "./mcp/probe";
+} from "./client";
+import { listCapabilities } from "./probe";
 import {
   argNamesOf,
   buildIndex,
   coreToolNames,
   searchTools,
   type ToolDoc,
-} from "./mcp/tool-search";
+} from "./tool-search";
 
 /**
  * Every MCP server a workspace has enabled, adapted into what a pi run needs:

@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { documentStore } from "../repositories/document.repository";
-import { ingestPdf } from "../services/ingest.service";
-import { searchDocuments } from "../services/search.service";
+import { ingestPdf } from "../services/documents/ingest.service";
+import { searchDocuments } from "../services/documents/search.service";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";

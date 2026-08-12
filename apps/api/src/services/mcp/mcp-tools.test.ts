@@ -15,10 +15,10 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { applySchema } from "../db/client";
-import { env } from "../config/env";
-import { SqliteMcpStore } from "../repositories/mcp.repository";
-import type { Connector, McpConnection } from "./mcp/client";
+import { applySchema } from "../../db/client";
+import { env } from "../../config/env";
+import { SqliteMcpStore } from "../../repositories/mcp.repository";
+import type { Connector, McpConnection } from "./client";
 import {
   BINARY_RUN_MIN,
   RESULT_CHAR_CAP,

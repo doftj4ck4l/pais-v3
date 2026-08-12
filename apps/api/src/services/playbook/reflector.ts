@@ -1,6 +1,6 @@
 import type { ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
-import { chatOnce } from "../provider.service";
+import { chatOnce } from "../agent/provider.service";
 import { playbookStore, type ApplyResult, type PlaybookStore } from "../../repositories/playbook.repository";
 import { logger } from "../../lib/logger";
 import { extractJsonArray, parseDeltas } from "./delta";

@@ -1,7 +1,7 @@
-import { env } from "../config/env";
-import { logger } from "../lib/logger";
+import { env } from "../../config/env";
+import { logger } from "../../lib/logger";
 import { putObject } from "./media.service";
-import { imageStore, type ImageStore, type NewImage } from "../repositories/image.repository";
+import { imageStore, type ImageStore, type NewImage } from "../../repositories/image.repository";
 
 /**
  * Image generation through OpenRouter (Gemini by default).

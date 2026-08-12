@@ -100,8 +100,19 @@ apps/api/src
   config/env.ts               every env var, read once
   routes/                     URL → controller
   controllers/                HTTP in/out only (meta, chat, conversation)
-  services/                   logic: agent loop, pi runtime, provider, models,
-                              memory tools, skills
+  services/                   logic, one directory per domain:
+    agent/                    the run itself — pi runtime, provider, models,
+                              transcript, environment prompt
+    context/                  token accounting: window size and compaction
+    documents/                the searchable corpus: ingest, extract, chunk,
+                              search, and the search_docs tool
+    media/                    images in and out: storage, generation, and
+                              read_image
+    mcp/                      MCP clients, allowlist, tool catalog and search
+    db/                       connected databases: introspection, SQL guard
+    sandbox/                  per-workspace containers
+    playbook/                 what a workspace has learned from its own runs
+    memory/  skills/  connectors/
   repositories/               DB access (conversation, memory)
   models/schema.ts            Drizzle tables + row types
   catalog/                    static catalogs: harnesses, llm-models, tools

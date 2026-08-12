@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../types/chat";
+import type { ChatMessage } from "../../types/chat";
 
 /**
  * Context budgeting for a threaded conversation.

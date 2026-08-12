@@ -63,10 +63,17 @@ of the result: run a file on its own before trusting that it passes.
 
 ## Where a run actually happens
 
-`pi.service.ts` (~930 lines). Not `agent.service.ts`, which is a 38-line adapter
-turning a catalog harness into `runPiAgent` arguments and nothing else — and not
-the README's four-step loop under "Flow in `services/agent.service.ts`", which
-describes a second loop that used to live there.
+`services/agent/pi.service.ts` (~1030 lines). Not `agent.service.ts` beside it,
+which is a 38-line adapter turning a catalog harness into `runPiAgent` arguments
+and nothing else — and not the README's four-step loop under "Flow in
+`services/agent.service.ts`", which describes a second loop that used to live
+there.
+
+`services/` is one directory per domain. Two of those names are close enough to
+mislead: **`context/` is token accounting** — how big the window is and when to
+compact — while **`documents/` is the searchable corpus** and owns the
+`search_docs` tool. `documents/document-tools.ts` was called `context-tools.ts`
+for exactly as long as that was confusing.
 
 That loop was reached when `harness.driver` was anything but `"pi"`. Every
 harness the catalog shipped was `"pi"`, so it was unreachable for as long as it
@@ -74,7 +81,7 @@ existed while still answering every search for where a turn is taken. It is
 gone, along with `Harness.driver` and `Harness.maxIterations`, which existed
 only to feed it. A harness is now a system prompt plus optional tool groups.
 
-The model's tool list is assembled in one place there, from six sources — not
+The model's tool list is assembled in one place there, from seven sources — not
 just `catalog/tools.ts` as the README's "Adding a tool" implies:
 
 | Source | Gate |
@@ -82,8 +89,9 @@ just `catalog/tools.ts` as the README's "Adding a tool" implies:
 | pi built-ins (`bash`, `read`, `write`, `edit`) | always |
 | `catalog/tools.ts` | always |
 | `memory.service` (`remember` / `recall`) | always |
-| `context-tools` (document search) | always |
+| `documents/document-tools` (document search) | always |
 | `image-tools` | `OPENROUTER_API_KEY` **and** RustFS configured |
+| `vision-tools` (`read_image`) | the gateway is configured — *not* RustFS |
 | `db-tools` | `harness.tools` includes `"db"` |
 | `mcp-tools` | a workspace has servers — deliberately *not* harness-gated |
 
@@ -315,6 +323,41 @@ Three things follow, and all three are load-bearing:
   Codex's `truncate_middle_chars` does the same thing for the same reason.
 
 Spills are swept once per run, seven days' retention (`SPILL_RETENTION_MS`).
+
+## Reading an image
+
+`read_image` is a chat model borrowing a different model's eyes. The tool runs
+in the API process, posts the bytes to `env.visionModel` on the same gateway,
+and returns **prose**. Nothing about the run's own model changes — a run on
+`ds4-flash` reads a screenshot fine, and `ds4-flash` cannot see images at all.
+
+Returning the picture instead would fail three ways at once, which is why it
+does not: `flattenContent` renders an image content block as the literal
+`[image]`, the pi model is declared `input: ["text"]`, and one base64 PNG
+measured 135,944 characters against a 40,000 `RESULT_CHAR_CAP`.
+
+Which gateway models can actually see, measured by handing each the same PNG:
+
+| model | image input |
+| --- | --- |
+| `qwen3.5-397b-instruct`, `qwen3.6-35b`, `vrs_smart`, `gemini-3.1-flash-image` | yes |
+| `ds4-flash`, `nemotron-3.5-lightning` | `... is not a multimodal model` (HTTP 400) |
+
+Two things that are load-bearing:
+
+- **`resolveInWorkspace` is a security boundary, not tidiness.** `bash` and
+  `read` are confined to the sandbox container; this tool is not. It runs with
+  the API's privileges, and `SANDBOX_ROOT` is bind-mounted into the API
+  container at an identical path — so an unchecked `../..` would read
+  `apps/api/.env` and post it to a model. The prefix check also rejects
+  `ws1-backup` for `ws1`, which a bare `startsWith` accepts.
+- **No `max_tokens` on the vision call.** Same trap `image.service` documents
+  for generation: reasoning comes out of the same budget, so a small cap
+  returns `finish_reason: "length"` with empty content and no error.
+
+An arbitrary `http(s)` source is deliberately unsupported — fetching a
+caller-supplied URL from the API process would let any prompt reach anything on
+the compose network.
 
 ## Image generation
 

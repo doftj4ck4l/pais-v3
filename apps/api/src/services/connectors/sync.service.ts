@@ -6,7 +6,7 @@ import {
   type OAuthTokens,
 } from "../../repositories/connector.repository";
 import { documentStore, type DocumentStore } from "../../repositories/document.repository";
-import { ingestPdf, ingestText, type DocumentSource } from "../ingest.service";
+import { ingestPdf, ingestText, type DocumentSource } from "../documents/ingest.service";
 import * as drive from "./google-drive";
 
 /**

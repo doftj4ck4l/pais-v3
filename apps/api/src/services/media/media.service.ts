@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import { env } from "../config/env";
-import { logger } from "../lib/logger";
+import { env } from "../../config/env";
+import { logger } from "../../lib/logger";
 
 /**
  * Object storage for generated media, over RustFS (S3-compatible).

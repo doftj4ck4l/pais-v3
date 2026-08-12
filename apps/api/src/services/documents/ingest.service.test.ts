@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { applySchema } from "../db/client";
-import { SqliteDocumentStore } from "../repositories/document.repository";
+import { applySchema } from "../../db/client";
+import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { ingestPdf } from "./ingest.service";
 import { searchDocuments } from "./search.service";
-import { makeImageOnlyPdf, makePdf } from "./testing/make-pdf";
+import { makeImageOnlyPdf, makePdf } from "../testing/make-pdf";
 
 function freshStore() {
   const sqlite = new Database(":memory:");

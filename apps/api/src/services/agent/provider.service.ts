@@ -1,6 +1,6 @@
-import type { ModelConfig } from "../catalog/llm-models";
-import { effectiveApiKey } from "../catalog/llm-models";
-import type { AssistantChunk, ChatMessage, ToolSchema } from "../types/chat";
+import type { ModelConfig } from "../../catalog/llm-models";
+import { effectiveApiKey } from "../../catalog/llm-models";
+import type { AssistantChunk, ChatMessage, ToolSchema } from "../../types/chat";
 
 /**
  * A message as the provider takes it.

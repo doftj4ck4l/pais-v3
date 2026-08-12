@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { applySchema } from "../db/client";
-import { SqliteDocumentStore } from "../repositories/document.repository";
+import { applySchema } from "../../db/client";
+import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { searchDocuments, toFtsQuery } from "./search.service";
 
 /**

@@ -1,8 +1,8 @@
-import type { ModelConfig } from "../catalog/llm-models";
-import type { ChatMessage } from "../types/chat";
-import type { AgentEvent } from "../types/agent";
-import { chatOnce } from "./provider.service";
-import { logger } from "../lib/logger";
+import type { ModelConfig } from "../../catalog/llm-models";
+import type { ChatMessage } from "../../types/chat";
+import type { AgentEvent } from "../../types/agent";
+import { chatOnce } from "../agent/provider.service";
+import { logger } from "../../lib/logger";
 import {
   applyCompaction,
   COMPACT_AT,

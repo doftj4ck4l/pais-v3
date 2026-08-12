@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { applySchema } from "../db/client";
-import { SqliteImageStore } from "../repositories/image.repository";
+import { applySchema } from "../../db/client";
+import { SqliteImageStore } from "../../repositories/image.repository";
 import { decodeDataUri, generateImage } from "./image.service";
 
 /**

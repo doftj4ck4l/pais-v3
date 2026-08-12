@@ -1,8 +1,8 @@
-import { documentStore, type DocumentStore } from "../repositories/document.repository";
-import type { DocumentStatus } from "../models/schema";
+import { documentStore, type DocumentStore } from "../../repositories/document.repository";
+import type { DocumentStatus } from "../../models/schema";
 import { chunkPages, type PageText } from "./chunk.service";
 import { extractPdf } from "./extract.service";
-import { logger } from "../lib/logger";
+import { logger } from "../../lib/logger";
 
 /**
  * Where a document came from, when it did not come from an upload.
