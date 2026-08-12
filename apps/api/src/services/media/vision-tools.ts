@@ -33,10 +33,30 @@ const EXTENSIONS: Record<string, string> = {
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: { output: s } });
 
-/** `/api/images/img_x`, `img_x` → `img_x`. Null when it is not an image reference. */
+const IMAGE_URL_PREFIX = "/api/images/";
+/** An id as `image.repository` mints them: `crypto.randomUUID()`, no dots, no slashes. */
+const BARE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Anything after the URL prefix that could be an id at all. */
+const URL_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * `/api/images/<id>` or a bare id → the id. Null when it is a file path.
+ *
+ * The shapes are checked rather than assumed: ids come from
+ * `crypto.randomUUID()`, so an earlier version of this that matched only an
+ * `img_` prefix never recognised a single real image — every `/api/images/…`
+ * URL fell through to the file branch and failed as "outside your workspace".
+ *
+ * A bare id must look like a UUID. Loosening that to "any word" would swallow
+ * a file called `screenshot`, and answer a missing file with the wrong error.
+ */
 export function generatedImageId(source: string): string | null {
-  const match = /^(?:\/api\/images\/)?(img_[A-Za-z0-9_-]+)$/.exec(source.trim());
-  return match ? match[1]! : null;
+  const trimmed = source.trim();
+  if (trimmed.startsWith(IMAGE_URL_PREFIX)) {
+    const id = trimmed.slice(IMAGE_URL_PREFIX.length);
+    return URL_ID.test(id) ? id : null;
+  }
+  return BARE_ID.test(trimmed) ? trimmed : null;
 }
 
 /**

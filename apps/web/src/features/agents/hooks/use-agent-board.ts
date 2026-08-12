@@ -7,7 +7,14 @@ import {
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
 import type { Scope } from '@/shared/api/api'
-import type { ConversationRow, Item, Meta, Slots, TraceLine } from '@/shared/lib/types'
+import type {
+  ConversationRow,
+  Item,
+  Meta,
+  Slots,
+  TraceLine,
+  UploadedImage,
+} from '@/shared/lib/types'
 
 export type AgentStatus = 'running' | 'done' | 'stopped' | 'error'
 
@@ -253,7 +260,7 @@ export function useAgentBoard(scope: Scope) {
   }, [])
 
   /** Spawn a new agent running `task` on `modelId`. Returns the new agent id. */
-  function spawn(task: string, modelId: string) {
+  function spawn(task: string, modelId: string, images: UploadedImage[] = []) {
     const id = Math.random().toString(36).slice(2, 8)
     const agent: AgentRun = {
       id,
@@ -261,7 +268,7 @@ export function useAgentBoard(scope: Scope) {
       modelId,
       task,
       status: 'running',
-      items: [{ kind: 'user', text: task }],
+      items: [{ kind: 'user', text: task, images: images.map((i) => i.url) }],
       trace: [],
       slots: null,
       notice: null,
@@ -275,7 +282,7 @@ export function useAgentBoard(scope: Scope) {
     streamRefs.current.set(id, { thinking: null, text: null })
     setAgents((prev) => [...prev, agent])
     setSelectedId(id)
-    void run(id, agent, [{ role: 'user', content: agent.task }])
+    void run(id, agent, [{ role: 'user', content: agent.task }], images)
     return id
   }
 
@@ -286,7 +293,7 @@ export function useAgentBoard(scope: Scope) {
    * conversation id goes with it so the server extends that row instead of
    * opening a new one.
    */
-  function sendFollowUp(agentId: string, text: string) {
+  function sendFollowUp(agentId: string, text: string, images: UploadedImage[] = []) {
     const agent = agentsRef.current.find((a) => a.id === agentId)
     if (!agent || agent.status === 'running') return
 
@@ -294,7 +301,7 @@ export function useAgentBoard(scope: Scope) {
     if (!items) return
 
     const history = [...historyFrom(items), { role: 'user' as const, content: text }]
-    items.push({ kind: 'user', text })
+    items.push({ kind: 'user', text, images: images.map((i) => i.url) })
     streamRefs.current.set(agentId, { thinking: null, text: null })
     patchAgent(agentId, {
       status: 'running',
@@ -303,13 +310,14 @@ export function useAgentBoard(scope: Scope) {
       startedAt: Date.now(),
       elapsed: 0,
     })
-    void run(agentId, agent, history)
+    void run(agentId, agent, history, images)
   }
 
   async function run(
     id: string,
     seed: AgentRun,
     history: { role: 'user' | 'assistant'; content: string }[],
+    images: UploadedImage[] = [],
   ) {
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
@@ -324,6 +332,10 @@ export function useAgentBoard(scope: Scope) {
           modelId: seed.modelId,
           workspaceId: scope.workspaceId ?? undefined,
           messages: history,
+          // Ids only. The bytes are already in the bucket; the server turns
+          // these into a note on the user message telling the model to call
+          // read_image.
+          imageIds: images.length ? images.map((i) => i.id) : undefined,
         }),
         signal: controller.signal,
       })

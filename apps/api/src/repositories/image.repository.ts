@@ -12,6 +12,8 @@ export type NewImage = {
   contentType: string;
   bytes: number;
   costMicros: number | null;
+  /** Defaults to `generated`, which is what every writer before uploads meant. */
+  source?: "generated" | "uploaded";
 };
 
 export interface ImageStore {
@@ -29,7 +31,7 @@ export class SqliteImageStore implements ImageStore {
   async save(image: NewImage): Promise<void> {
     await this.dbImpl
       .insert(generatedImages)
-      .values({ ...image, createdAt: Date.now() })
+      .values({ ...image, source: image.source ?? "generated", createdAt: Date.now() })
       .run();
   }
 

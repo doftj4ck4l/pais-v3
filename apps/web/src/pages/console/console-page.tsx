@@ -10,6 +10,7 @@ import { ResourcesHandle } from '@/features/resources/components/resources-handl
 import { SettingsModal } from '@/pages/console/components/settings-modal'
 import { EmptyState } from '@/pages/console/components/empty-state'
 import { TraceSheet } from '@/features/agents/components/trace-sheet'
+import type { UploadedImage } from '@/shared/lib/types'
 import { Transcript } from '@/features/agents/components/transcript'
 import { WorkspaceOnboarding } from '@/features/workspace/components/workspace-onboarding'
 import { useAgentBoard } from '@/features/agents/hooks/use-agent-board'
@@ -48,9 +49,9 @@ export function Console() {
    * parallel agent stays available as an explicit action (the + in the deck),
    * which is what the board is for.
    */
-  const send = (text: string) => {
-    if (selected && selected.status !== 'running') board.sendFollowUp(selected.id, text)
-    else board.spawn(text, board.modelIdForNew)
+  const send = (text: string, images: UploadedImage[] = []) => {
+    if (selected && selected.status !== 'running') board.sendFollowUp(selected.id, text, images)
+    else board.spawn(text, board.modelIdForNew, images)
     setDeckOpen(false)
   }
 

@@ -359,6 +359,32 @@ An arbitrary `http(s)` source is deliberately unsupported — fetching a
 caller-supplied URL from the API process would let any prompt reach anything on
 the compose network.
 
+**Image ids are `crypto.randomUUID()`.** `generatedImageId` once required an
+`img_` prefix, so it matched no real image at all: every `/api/images/<id>` URL
+fell through to the file branch and failed as "outside your workspace". Its
+tests passed because they asserted the invented format. If you touch that
+function, check what `image.repository` actually mints.
+
+## Pasting an image into the chat
+
+An image pasted into the composer is uploaded before the message is sent
+(`POST /api/images`), so the thumbnail appears while the user is still typing
+and the chat request carries an id rather than a megabyte of base64. It lands in
+the same bucket and table as a generated one — `source` distinguishes them,
+because otherwise an upload is a generation whose model happened to be blank,
+and that is how a cost report goes wrong.
+
+**The model learns about it from the message text, not a field.** The chat
+controller appends a note naming the `/api/images/<id>` URLs and telling it to
+call `read_image`. Text, because that needs no change to `pi.service`, survives
+into the stored transcript so turn five still knows what turn one was shown, and
+gives the console the URLs to draw thumbnails from. `transcript.tsx` hides the
+note and renders the pictures — the regex there and the wording in
+`describeAttachments` are one contract, so changing the sentence changes the UI.
+
+SVG is not uploadable. It is a document that can carry script, and these bytes
+are served back from the console's own origin.
+
 ## Image generation
 
 `generate_image` calls OpenRouter, not the gateway the chat models come from,

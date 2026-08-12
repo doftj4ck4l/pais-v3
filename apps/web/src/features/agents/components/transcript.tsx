@@ -58,10 +58,27 @@ function TranscriptRow({
   stub: boolean
 }) {
   if (item.kind === 'user') {
+    // A stored turn has no `images` — it comes back as the note the server
+    // appended, so the URLs are recovered from the text. A live turn has both,
+    // and the ids match, so this stays one code path rather than two.
+    const attached = item.images?.length ? item.images : attachedImageUrls(item.text)
     return (
       <RailRow glyph={<NodeSquare filled />} stub={stub}>
         <div className="inline-block max-w-full rounded-lg rounded-tl-none bg-primary px-3.5 py-2.5 text-[0.9375rem] leading-relaxed font-medium text-primary-foreground">
-          <p className="whitespace-pre-wrap break-words">{item.text}</p>
+          {attached.length ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {attached.map((url) => (
+                <a key={url} href={url} target="_blank" rel="noreferrer" className="block">
+                  <img
+                    src={url}
+                    alt="Attached"
+                    className="max-h-40 max-w-full rounded border border-primary-foreground/20 object-contain"
+                  />
+                </a>
+              ))}
+            </div>
+          ) : null}
+          <p className="whitespace-pre-wrap break-words">{withoutAttachmentNote(item.text)}</p>
         </div>
       </RailRow>
     )
@@ -171,4 +188,25 @@ function TranscriptRow({
       />
     </RailRow>
   )
+}
+
+/**
+ * The note the server appends to a user message carrying attachments.
+ *
+ * It is written into the message text on purpose — that is how the model sees
+ * it and how a reloaded conversation still knows an image was there. It is
+ * addressed to the model, though, so the console hides it and draws the
+ * pictures instead.
+ */
+const ATTACHMENT_NOTE = /\n*\[The user attached (?:an image|\d+ images) to this message:[^\]]*\]\s*$/
+
+const IMAGE_URL = /\/api\/images\/[A-Za-z0-9_-]+/g
+
+function attachedImageUrls(text: string): string[] {
+  const note = text.match(ATTACHMENT_NOTE)?.[0]
+  return note ? [...new Set(note.match(IMAGE_URL) ?? [])] : []
+}
+
+function withoutAttachmentNote(text: string): string {
+  return text.replace(ATTACHMENT_NOTE, '').trimEnd()
 }

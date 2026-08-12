@@ -7,6 +7,7 @@ import { conversationRepository } from "../repositories/conversation.repository"
 import { runRepository } from "../repositories/run.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { fitToWindow } from "../services/context/context-budget.service";
+import { describeAttachments } from "../services/media/upload.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";
@@ -55,6 +56,16 @@ export function stream(c: Context) {
       // client-supplied value is checked against ownership.
       const workspace = await workspaceRegistry.resolve(userId, body.workspaceId);
       const history = body.messages ?? [];
+
+      // Attachments become part of the last user message, before the recorder
+      // is built from `history` — so the note is what gets stored, and every
+      // later turn of the conversation still knows an image was there.
+      if (body.imageIds?.length) {
+        const note = await describeAttachments(workspace.id, body.imageIds);
+        const last = [...history].reverse().find((m) => m.role === "user");
+        if (note && last) last.content = `${last.content ?? ""}${note}`;
+      }
+
       const runId = newRunId();
       const timer = startTimer();
 
