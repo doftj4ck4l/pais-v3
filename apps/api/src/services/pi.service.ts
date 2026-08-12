@@ -670,6 +670,10 @@ export async function runPiAgent(opts: {
           });
           emit({
             type: "tool_result",
+            // Carried for the same reason the start time and arguments are held
+            // per call id above: tools run in parallel and finish out of order,
+            // so the name alone does not say which call this answers.
+            id: event.toolCallId,
             name: event.toolName,
             content: text,
             calls: 1,

@@ -418,8 +418,16 @@ export function useAgentBoard(scope: Scope) {
         break
 
       case 'tool_result': {
-        const idx = items.findIndex(
-          (x) => x.kind === 'tool' && x.name === event.name && x.result === undefined,
+        // Pair on the call id, not the tool name: parallel calls to one tool
+        // finish out of order, and matching the earliest unanswered call by
+        // name showed each result under another call's arguments. Falls back to
+        // the name walk for a stream that carries no id.
+        const idx = items.findIndex((x) =>
+          x.kind !== 'tool' || x.result !== undefined
+            ? false
+            : event.id !== undefined
+              ? x.id === event.id
+              : x.name === event.name,
         )
         if (idx >= 0) {
           items[idx] = {
