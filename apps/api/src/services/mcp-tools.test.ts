@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -22,6 +25,8 @@ import {
   RUN_CHAR_BUDGET,
   capResult,
   createBudget,
+  createSpill,
+  SPILL_RETENTION_MS,
   createMcpTools,
   createToolActivator,
   elideBinary,
@@ -211,7 +216,7 @@ describe("capResult", () => {
 
   it("truncates and says so, with the real numbers", () => {
     const out = capResult("z".repeat(100_000), 1_000);
-    expect(out.startsWith("z".repeat(1_000))).toBe(true);
+    expect(out.startsWith("z".repeat(500))).toBe(true);
     expect(out).toContain("99,000");
     expect(out).toContain("100,000");
     expect(out).toContain("Narrow the call");
@@ -221,6 +226,73 @@ describe("capResult", () => {
     // Silent truncation is the actual danger: a model that cannot tell a cut
     // result from a complete one summarises a fraction as if it were the whole.
     expect(capResult("q".repeat(50), 10)).toContain("INCOMPLETE");
+  });
+
+  it("keeps the end as well as the beginning", () => {
+    // A listing carries its schema at the top and its totals at the bottom, and
+    // dropping the tail is how "how many are there" became unanswerable. Cut
+    // the middle instead, the way Codex's truncate_middle_chars does.
+    const body = `{"head":"${"h".repeat(5_000)}","total":42}`;
+    const out = capResult(body, 1_000);
+    expect(out).toContain('{"head":"hhh');
+    expect(out).toContain('"total":42}');
+  });
+});
+
+describe("createSpill", () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "salur-spill-"));
+
+  it("writes the whole result and hands back a path the sandbox can read", () => {
+    // The container mounts the workspace at an identical host and container
+    // path, so the path written here is the path `read` resolves in the
+    // sandbox. That is the only reason a bare path is a usable pointer.
+    const dir = tmp();
+    const spill = createSpill(dir);
+    const body = "n".repeat(200_000);
+
+    const file = spill(body, "nas__nc_webdav_list_directory");
+
+    expect(file).toBeTruthy();
+    expect(file!.startsWith(dir)).toBe(true);
+    expect(fs.readFileSync(file!, "utf8")).toBe(body);
+  });
+
+  it("names the file after the tool that produced it", () => {
+    const dir = tmp();
+    const file = createSpill(dir)("body", "nas__nc_webdav_list_directory");
+    expect(path.basename(file!)).toContain("nc_webdav_list_directory");
+  });
+
+  it("removes spills older than the retention window", () => {
+    // Without this every truncated call leaves a file in the workspace for
+    // good. opencode sweeps its truncation dir on the same principle.
+    const dir = tmp();
+    const stale = path.join(dir, "tool-old-stale_tool.txt");
+    fs.writeFileSync(stale, "old");
+    const longAgo = new Date(Date.now() - SPILL_RETENTION_MS - 60_000);
+    fs.utimesSync(stale, longAgo, longAgo);
+
+    const fresh = createSpill(dir)("body", "some_tool");
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(fresh!)).toBe(true);
+  });
+
+  it("keeps spills that are still inside the retention window", () => {
+    const dir = tmp();
+    const recent = path.join(dir, "tool-recent-some_tool.txt");
+    fs.writeFileSync(recent, "recent");
+
+    createSpill(dir)("body", "some_tool");
+
+    expect(fs.existsSync(recent)).toBe(true);
+  });
+
+  it("returns undefined rather than throwing when the directory is unusable", () => {
+    // Spilling is a convenience on top of the result. A read-only workspace
+    // must degrade to plain truncation, never fail the tool call.
+    const spill = createSpill("/proc/nonexistent/spill");
+    expect(spill("body", "some_tool")).toBeUndefined();
   });
 });
 
@@ -317,6 +389,72 @@ describe("createBudget", () => {
     const last = b.take("b".repeat(100_000));
     expect(b.remaining()).toBeLessThanOrEqual(0);
     expect(last.length).toBeLessThan(1_000);
+  });
+
+  describe("with a spill directory", () => {
+    const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "salur-budget-"));
+
+    it("points a truncated result at the full text instead of destroying it", () => {
+      const dir = tmp();
+      const b = createBudget(10_000, createSpill(dir));
+      const body = "z".repeat(100_000);
+
+      const out = b.take(body, "nas__nc_webdav_list_directory");
+
+      expect(out.length).toBeLessThan(10_000);
+      const file = out.match(/(\/\S*salur-budget-\S+)/)?.[1];
+      expect(file).toBeTruthy();
+      expect(fs.readFileSync(file!, "utf8")).toBe(body);
+    });
+
+    it("keeps answering after the run budget is spent", () => {
+      // The failure this exists to remove: an exhausted budget refused the call
+      // outright, the run stopped reading, and the model reported it to the
+      // user as the NAS rate-limiting it. The data was never the problem.
+      const dir = tmp();
+      const b = createBudget(100, createSpill(dir));
+      b.take("y".repeat(500), "first_tool");
+      expect(b.remaining()).toBeLessThanOrEqual(0);
+
+      const body = `{"data that mattered":"${"m".repeat(5_000)}"}`;
+      const after = b.take(body, "second_tool");
+
+      expect(after).not.toContain("Do not retry");
+      const file = after.match(/(\/\S*salur-budget-\S+)/)?.[1];
+      expect(fs.readFileSync(file!, "utf8")).toBe(body);
+    });
+
+    it("tells the model to read the file rather than repeat the call", () => {
+      const dir = tmp();
+      const b = createBudget(100, createSpill(dir));
+      b.take("y".repeat(500), "first_tool");
+      const after = b.take("m".repeat(5_000), "second_tool");
+      // "read" alone would pass against the old refusal text, which happens to
+      // say "already read 100 characters".
+      expect(after).toContain("saved to");
+      expect(after).toContain("do not repeat this call");
+    });
+
+    it("answers a small result inline rather than spending more on a pointer to it", () => {
+      // A pointer costs ~300 characters. Spilling a 35-character answer and
+      // charging the run for a path to it is strictly worse than just saying it.
+      const dir = tmp();
+      const b = createBudget(100, createSpill(dir));
+      b.take("y".repeat(500), "first_tool");
+
+      const answer = JSON.stringify({ total: "128,400.55" });
+      const after = b.take(answer, "nas__nc_webdav_read_file");
+
+      expect(after).toBe(answer);
+    });
+
+    it("still refuses when spilling fails, rather than pretending it worked", () => {
+      // The case that matters: nowhere to put a large result means the old
+      // refusal, not dumping 200k characters into the turn.
+      const b = createBudget(100, createSpill("/proc/nonexistent/spill"));
+      b.take("y".repeat(500), "first_tool");
+      expect(b.take("m".repeat(200_000), "second_tool")).toContain("Do not retry");
+    });
   });
 });
 

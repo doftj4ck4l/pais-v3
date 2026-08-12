@@ -10,7 +10,16 @@ export type TranscriptItem =
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "iteration"; n: number }
-  | { kind: "tool"; name: string; args: unknown; result?: string; ms?: number; ok?: boolean };
+  | {
+      kind: "tool";
+      /** The call id, used to pair the result. Not serialized into the row. */
+      id?: string;
+      name: string;
+      args: unknown;
+      result?: string;
+      ms?: number;
+      ok?: boolean;
+    };
 
 /**
  * One recorded span.
@@ -90,13 +99,24 @@ export class TranscriptRecorder {
 
       case "tool_call":
         this.open = { thinking: null, text: null };
-        this.items.push({ kind: "tool", name: event.name, args: event.args });
+        this.items.push({ kind: "tool", id: event.id, name: event.name, args: event.args });
         break;
 
       case "tool_result": {
-        // Match the earliest call of this tool that is still awaiting a result.
-        const idx = this.items.findIndex(
-          (i) => i.kind === "tool" && i.name === event.name && i.result === undefined,
+        // Pair on the call id. Matching on tool name and "earliest unanswered"
+        // is request order, but results arrive in completion order: six
+        // parallel `nc_webdav_list_directory` calls came back permuted, each
+        // row holding another call's listing under its own arguments. Nothing
+        // downstream could detect that — every field was individually valid.
+        //
+        // The name-ordered walk stays as the fallback for a result with no id,
+        // which is the only shape a replayed pre-fix transcript has.
+        const idx = this.items.findIndex((i) =>
+          i.kind !== "tool" || i.result !== undefined
+            ? false
+            : event.id !== undefined
+              ? i.id === event.id
+              : i.name === event.name,
         );
         const pending = idx >= 0 ? this.items[idx] : undefined;
         if (pending && pending.kind === "tool") {

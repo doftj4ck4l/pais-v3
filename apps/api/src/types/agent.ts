@@ -5,6 +5,13 @@ export type AgentEvent =
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | {
       type: "tool_result";
+      /**
+       * The call this answers. Optional only because a result can be replayed
+       * from a stored transcript that predates it; live runs always carry it,
+       * and without it a batch of parallel calls to one tool cannot be paired
+       * back to its arguments.
+       */
+      id?: string;
       name: string;
       content: string;
       calls: number;
