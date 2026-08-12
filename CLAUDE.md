@@ -483,6 +483,13 @@ Merging is a release, so treat a merge to `main` as one. The rsync runs
 *and* from deletion — that is the only thing standing between a deploy and the
 live SQLite database.
 
+**CI pins bun, and the pin is in the workflow, not in a manifest.** `BUN_VERSION`
+in `deploy.yml` decides what CI runs; nothing checks it against what you have.
+Upgrading bun locally without bumping it means the suite you watched pass is not
+the suite that gates the deploy. The binary comes from npm's platform package
+rather than `bun.sh/install`, because that script pulls ~35MB from github.com and
+a deploy has already died on `curl: (56)` doing it.
+
 ## Conventions
 
 Comments explain **why**, not what, and are written where the reasoning is
