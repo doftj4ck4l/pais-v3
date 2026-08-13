@@ -111,7 +111,9 @@ export function PanelEmpty({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-4 rounded-xl border bg-card px-6 py-16 text-center',
+        // No border of its own: on a page with nothing else on it, a box drawn
+        // around the message is a second empty rectangle inside the first.
+        'flex flex-col items-center justify-center gap-4 px-6 py-20 text-center',
         className,
       )}
     >

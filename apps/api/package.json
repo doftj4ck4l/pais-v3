@@ -1,11 +1,11 @@
 {
-  "name": "@salurai/api",
+  "name": "@pixelspace/api",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
-    "sandbox:build": "docker build -t ${SANDBOX_IMAGE:-salurai-sandbox:1} -f sandbox/Dockerfile sandbox/"
+    "sandbox:build": "docker build -t ${SANDBOX_IMAGE:-pixelspace-sandbox:1} -f sandbox/Dockerfile sandbox/"
   },
   "dependencies": {
     "@cline/sdk": "^0.0.69",

@@ -48,7 +48,7 @@ import {
 export const DB_PATH =
   process.env.DB_PATH ??
   (process.env.NODE_ENV === "test"
-    ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "salur-test-db-")), "app.db")
+    ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-test-db-")), "app.db")
     : path.resolve(process.cwd(), "data", "app.db"));
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
