@@ -26,7 +26,8 @@ export type Item =
   /** `images` are /api/images/<id> URLs the user attached to this turn. */
   | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'assistant'; text: string }
-  | { kind: 'thinking'; text: string }
+  /** `ms` is how long the reasoning streamed for — `Thought for 6 seconds`. */
+  | { kind: 'thinking'; text: string; ms?: number }
   | { kind: 'iteration'; n: number }
   | {
       kind: 'tool'

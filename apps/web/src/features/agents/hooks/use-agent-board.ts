@@ -38,6 +38,18 @@ export type AgentRun = {
   context: ContextUsage | null
 }
 
+/** Where each channel's open item sits in the transcript, while it streams. */
+type StreamRef = {
+  thinking: number | null
+  text: number | null
+  /** When the open reasoning block started, for its `Thought for …` label. */
+  thinkingStart: number | null
+}
+
+function freshStream(): StreamRef {
+  return { thinking: null, text: null, thinkingStart: null }
+}
+
 export type ContextUsage = {
   used: number
   window: number
@@ -89,7 +101,7 @@ export function useAgentBoard(scope: Scope) {
   const controllersRef = useRef<Map<string, AbortController>>(new Map())
   const itemsRef = useRef<Map<string, Item[]>>(new Map())
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
-  const streamRefs = useRef<Map<string, { thinking: number | null; text: number | null }>>(new Map())
+  const streamRefs = useRef<Map<string, StreamRef>>(new Map())
   const harnessIdRef = useRef(harnessId)
   const agentsRef = useRef<AgentRun[]>([])
 
@@ -279,7 +291,7 @@ export function useAgentBoard(scope: Scope) {
     }
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
-    streamRefs.current.set(id, { thinking: null, text: null })
+    streamRefs.current.set(id, freshStream())
     setAgents((prev) => [...prev, agent])
     setSelectedId(id)
     void run(id, agent, [{ role: 'user', content: agent.task }], images)
@@ -302,7 +314,7 @@ export function useAgentBoard(scope: Scope) {
 
     const history = [...historyFrom(items), { role: 'user' as const, content: text }]
     items.push({ kind: 'user', text, images: images.map((i) => i.url) })
-    streamRefs.current.set(agentId, { thinking: null, text: null })
+    streamRefs.current.set(agentId, freshStream())
     patchAgent(agentId, {
       status: 'running',
       notice: null,
@@ -410,9 +422,19 @@ export function useAgentBoard(scope: Scope) {
         items.push({ kind: 'iteration', n: event.iteration })
         break
 
-      case 'reasoning':
+      case 'reasoning': {
+        // Nothing marks the end of a reasoning block, so the duration is
+        // restamped on every delta: it counts up live and is already final by
+        // the time the next event closes the block.
+        const opening = ref.thinking == null || items[ref.thinking]?.kind !== 'thinking'
+        if (opening) ref.thinkingStart = Date.now()
         ref.thinking = pushDelta(items, ref, 'thinking', event.delta)
+        if (ref.thinking != null) {
+          const block = items[ref.thinking] as Extract<Item, { kind: 'thinking' }>
+          items[ref.thinking] = { ...block, ms: Date.now() - (ref.thinkingStart ?? Date.now()) }
+        }
         break
+      }
 
       case 'text':
         ref.text = pushDelta(items, ref, 'assistant', event.delta)
@@ -478,7 +500,7 @@ export function useAgentBoard(scope: Scope) {
 
   function pushDelta(
     items: Item[],
-    ref: { thinking: number | null; text: number | null },
+    ref: StreamRef,
     kind: 'thinking' | 'assistant',
     delta: string,
   ): number | null {

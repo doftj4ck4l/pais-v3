@@ -457,6 +457,24 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 `@earendil-works/pi-ai` (`createModels`, `createProvider`, the API adapters) is
 **not** part of the rewrite and is safe to build on.
 
+## Reading a transcript
+
+Everything the agent *does* — reasoning, tool calls — is one collapsed line in
+`transcript.tsx`, phrased as an action rather than as a runtime event. The
+phrasing lives in `lib/tool-summary.ts`: one table matched on the tool name,
+past tense once the result is in and present tense while the call is in flight.
+An MCP tool arrives as `server__tool_name` and is matched on the segment after
+`__`; anything unmatched falls through to `Called <name>` with an argument, so a
+tool added later still reads as a sentence rather than breaking the pattern.
+
+**A stored `thinking` row is text, or JSON.** It was bare text, and rows written
+then still are; a timed one is `{text, ms}`, which is where `Thought for 6
+seconds` comes from on a reloaded conversation. `parseThinking` in
+`lib/transcript.ts` treats anything that is not exactly that shape as the
+thought itself — a thought that opens with `{` is a thought, not a record.
+Nothing marks where reasoning *ends*, so the duration is restamped on every
+delta rather than closed on an event that does not exist.
+
 ## Web routing
 
 TanStack Router, file-based, routes in `apps/web/src/routes/`. `routeTree.gen.ts`
