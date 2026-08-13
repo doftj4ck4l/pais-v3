@@ -3,7 +3,6 @@ import { Button } from '@/shared/ui/button'
 import { AgentHeader } from '@/features/agents/components/agent-header'
 import { AppShell } from '@/features/navigation/components/app-shell'
 import { Composer } from '@/features/agents/components/composer'
-import { ControlDeck } from '@/pages/console/components/control-deck'
 import { EmptyState } from '@/pages/console/components/empty-state'
 import type { UploadedImage } from '@/shared/lib/types'
 import { Transcript } from '@/features/agents/components/transcript'
@@ -35,7 +34,7 @@ export function Console() {
   }
 
   return (
-    <AppShell asideLabel="Agents" aside={<ControlDeck />}>
+    <AppShell>
       {selected ? (
         <AgentHeader
           agent={selected}

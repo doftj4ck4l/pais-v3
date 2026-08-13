@@ -15,13 +15,11 @@ import { cn } from '@/shared/lib/utils'
 import type { WorkspaceRow } from '@/shared/lib/types'
 
 /**
- * Which body of work the console is showing. Everything the rail leads to —
- * agents, documents, databases, files — belongs to the selection.
+ * Which body of work the console is showing. Everything under it — agents,
+ * documents, databases, files — belongs to the selection.
  *
- * It sits at the head of the rail rather than inside settings because it is the
- * frame the rest of the console is drawn inside, not a preference. The mark is
- * the workspace's own initials: on a rail this narrow a name would truncate to
- * nothing, and two workspaces truncated to nothing look identical.
+ * It sits at the head of the sidebar rather than inside settings because it is
+ * the frame everything below it is drawn inside, not a preference.
  */
 export function WorkspacePicker() {
   const { workspaces, current, loading, setCurrent, create } = useWorkspace()
@@ -54,17 +52,19 @@ export function WorkspacePicker() {
           disabled={loading}
           aria-label={open ? `Workspace: ${open.name}` : 'Workspace'}
           className={cn(
-            'group relative flex size-9 items-center justify-center rounded-lg',
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left',
+            'transition-colors hover:bg-accent',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
           )}
         >
           <Monogram name={open?.name ?? '—'} />
-          {/* Small enough to read as a hint rather than a control: the whole
-              square is the button. */}
-          <ChevronDownIcon className="absolute -right-0.5 -bottom-0.5 size-3 rounded-full bg-sidebar p-px text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            {open?.name ?? (loading ? 'Loading…' : 'No workspace')}
+          </span>
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent side="right" align="start">
+        <DropdownMenuContent side="bottom" align="start" className="min-w-60">
           <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
           {workspaces.map((workspace, i) => (
             <WorkspaceItem
@@ -112,7 +112,7 @@ function WorkspaceItem({
 }) {
   return (
     <DropdownMenuItem onSelect={onSelect} className={cn(active && 'bg-accent/60')}>
-      <Monogram name={workspace.name} size="sm" />
+      <Monogram name={workspace.name} />
       <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
       {index < 9 ? <DropdownMenuShortcut>{modKey()}{index + 1}</DropdownMenuShortcut> : null}
     </DropdownMenuItem>
@@ -121,17 +121,13 @@ function WorkspaceItem({
 
 /**
  * The workspace's initials on the brand ramp — the one place colour appears in
- * the console, and the only thing distinguishing two workspaces at rail width.
+ * the console, and what tells two workspaces apart in the menu at a glance.
  */
-function Monogram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
+function Monogram({ name }: { name: string }) {
   return (
     <span
       aria-hidden
-      className={cn(
-        'flex shrink-0 items-center justify-center rounded-md font-semibold uppercase',
-        'bg-gradient-to-br from-brand-from to-brand-to text-white',
-        size === 'sm' ? 'size-6 text-[0.625rem]' : 'size-8 text-xs',
-      )}
+      className="flex size-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-brand-from to-brand-to text-[0.625rem] font-semibold uppercase text-white"
     >
       {initials(name)}
     </span>

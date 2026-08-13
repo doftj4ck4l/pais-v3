@@ -493,12 +493,19 @@ again. `apps/web/src/routes/index.tsx` renders the chat page, but it does not
 own the runs.
 
 Every page is wrapped in `AppShell` (`features/navigation`), which draws the
-icon rail, owns the settings modal, and takes an optional second column —
-`aside` — for a page that has its own navigation. Only the chat page passes
-one. A page reached from the rail is a route file plus a thin component around
-one of the panels in `features/resources`; those panels were sidebar tabs, so
-each still carries its own counts row but no longer its own heading, which the
-page header now supplies.
+sidebar and owns the settings modal. There is **one** sidebar, and it holds both
+kinds of navigation: the destinations at the top, the runs underneath. It was
+briefly an icon rail beside a second column of agents, which meant reaching
+either one meant reading both.
+
+A page in that list is a route file plus a thin component around one of the
+panels in `features/resources`; those panels were tabs in a drawer, so each
+still carries its own counts row but no longer its own heading, which the page
+header now supplies.
+
+Because the run list is on every page, choosing a run also navigates — see
+`openAgent` in `sidebar.tsx`. Without that, opening a run from Docs would
+change what an invisible page was showing and look like nothing happened.
 
 ## Deploying
 
