@@ -9,8 +9,8 @@ export function FilesPage() {
 
   return (
     <ResourcePage
-      title="Files"
-      description="What the agent has written in this workspace's sandbox."
+      title="Assets"
+      description="Everything the agent has written in this workspace's sandbox, and the chat it came from."
     >
       <FilesPanel refreshKey={board.runsCompleted} />
     </ResourcePage>

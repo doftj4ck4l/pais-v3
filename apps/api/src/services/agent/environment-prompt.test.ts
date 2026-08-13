@@ -23,6 +23,18 @@ describe("describeEnvironment", () => {
     for (const tool of ["bash", "read", "write", "edit"]) expect(out).toContain(`"${tool}"`);
   });
 
+  it("says the user cannot open a path on it, whatever else is configured", () => {
+    // A run drew a picture and handed over its workspace path. Correct and
+    // unreachable: the user has no shell on this container, so finished work
+    // read as a fabrication.
+    for (const external of [true, false]) {
+      const out = describeEnvironment({ ...docker, hasExternalServices: external });
+      expect(out).toContain("cannot see this filesystem");
+      expect(out).toContain('"share_file"');
+      expect(out).toContain("never a bare path");
+    }
+  });
+
   it("makes the local machine the default when external services exist", () => {
     const out = describeEnvironment(docker);
     expect(out).toContain("unless the request names the service");

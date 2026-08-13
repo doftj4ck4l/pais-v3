@@ -21,7 +21,7 @@ import type { WorkspaceRow } from '@/shared/lib/types'
  * It sits at the head of the sidebar rather than inside settings because it is
  * the frame everything below it is drawn inside, not a preference.
  */
-export function WorkspacePicker() {
+export function WorkspacePicker({ compact = false }: { compact?: boolean } = {}) {
   const { workspaces, current, loading, setCurrent, create } = useWorkspace()
   const [adding, setAdding] = useState(false)
 
@@ -48,20 +48,29 @@ export function WorkspacePicker() {
   return (
     <>
       <DropdownMenu>
+        {/* Two shapes, one control: a labelled row where there is width for a
+            name, and the monogram alone on the icon rail — where the name is
+            still reachable, as the menu's own heading. */}
         <DropdownMenuTrigger
           disabled={loading}
           aria-label={open ? `Workspace: ${open.name}` : 'Workspace'}
           className={cn(
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left',
             'transition-colors hover:bg-accent',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+            compact
+              ? 'mb-1 flex size-9 items-center justify-center rounded-lg'
+              : 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left',
           )}
         >
           <Monogram name={open?.name ?? '—'} />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {open?.name ?? (loading ? 'Loading…' : 'No workspace')}
-          </span>
-          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          {compact ? null : (
+            <>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {open?.name ?? (loading ? 'Loading…' : 'No workspace')}
+              </span>
+              <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            </>
+          )}
         </DropdownMenuTrigger>
 
         <DropdownMenuContent side="bottom" align="start" className="min-w-60">

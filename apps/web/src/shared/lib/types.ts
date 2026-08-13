@@ -113,6 +113,14 @@ export type WorkspaceFile = {
   path: string
   bytes: number
   modifiedAt: number
+  /**
+   * The chat that wrote this file, where a transcript names it.
+   *
+   * Null is the common and honest case: a file `bash` produced is named
+   * nowhere, and guessing from its timestamp would misattribute anything two
+   * parallel runs touched.
+   */
+  origin?: { conversationId: string; title: string } | null
 }
 
 /** An image the user pasted into the composer, already stored server-side. */
@@ -123,6 +131,25 @@ export type UploadedImage = {
   name: string
   contentType: string
   bytes: number
+}
+
+/**
+ * A stored image, as `/api/images` lists it.
+ *
+ * `source` is the only thing separating three quite different histories: an
+ * image the model drew, one the user pasted, and one the agent handed over from
+ * its workspace with `share_file`. The panel labels them differently for the
+ * same reason the column exists — a paste is not a generation.
+ */
+export type SessionImage = {
+  id: string
+  conversationId: string | null
+  prompt: string
+  model: string
+  contentType: string
+  bytes: number
+  source: 'generated' | 'uploaded' | 'shared'
+  createdAt: number
 }
 
 /**

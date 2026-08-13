@@ -292,7 +292,11 @@ export function useAgentBoard(scope: Scope) {
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
     streamRefs.current.set(id, freshStream())
-    setAgents((prev) => [...prev, agent])
+    // Prepended, because the list is newest-first: restored runs arrive in that
+    // order and the reader's own new chat is the newest thing there is.
+    // Appending put it under everything else in Today, which read as the run
+    // having gone somewhere else.
+    setAgents((prev) => [agent, ...prev])
     setSelectedId(id)
     void run(id, agent, [{ role: 'user', content: agent.task }], images)
     return id

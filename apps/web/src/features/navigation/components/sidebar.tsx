@@ -1,30 +1,36 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { PanelLeftIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { MessageSquareIcon, PanelLeftIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { AgentList } from '@/features/agents/components/agent-list'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
 import { RunStats } from '@/features/agents/components/run-stats'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { UserMenu } from '@/features/navigation/components/user-menu'
 import { WorkspacePicker } from '@/features/navigation/components/workspace-picker'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
 import { useCloseAside } from '@/features/navigation/lib/aside-context'
+import { useOnChats } from '@/features/navigation/lib/rail'
 import { cn } from '@/shared/lib/utils'
-import { Brand } from '@/shared/components/brand'
 
 /**
- * One column, holding everywhere you can go and everything you have run.
+ * Two columns: where you can go, and what is in the place you are.
  *
- * This replaced an icon rail beside a second column of agents. Two columns of
- * navigation is one too many: the rail said where the pages were, the column
- * beside it said where the agents were, and reaching either meant reading both.
- * Destinations are a short labelled list at the top; the runs are underneath,
- * where they are the thing the sidebar is mostly showing.
+ * The rail is icons only because the labels were the crowding — six words down
+ * the left of every page, above a list of runs that is what the sidebar is
+ * mostly for. Each icon says its name on hover, so nothing is hidden, it is
+ * just not all shouted at once.
+ *
+ * The second column belongs to Chats and only to Chats: it lists every session,
+ * newest first, and choosing one opens it. Going anywhere else closes it,
+ * which is why nothing here holds "is the panel open" — the route decides. An
+ * explicit open/closed state is what made the earlier version of this hard to
+ * reason about: two things could disagree about whether you were in Chats.
  */
 export function Sidebar({
   onOpenSettings,
   onCollapse,
 }: {
   onOpenSettings: () => void
-  /** Hides the sidebar. Null on narrow screens, where the sheet closes itself. */
+  /** Hides the second column. Null on narrow screens, where the sheet closes itself. */
   onCollapse: (() => void) | null
 }) {
   const board = useBoard()
@@ -32,9 +38,9 @@ export function Sidebar({
   const navigate = useNavigate()
 
   /**
-   * Opening a run is also a navigation: the agent list is on every page, so
-   * choosing one from Docs has to land on the transcript rather than silently
-   * changing what a page you cannot see is showing.
+   * Opening a run is also a navigation: the sessions list is reachable from
+   * every page, so choosing one from Docs has to land on the transcript rather
+   * than silently changing what a page you cannot see is showing.
    */
   const openAgent = (id: string | null) => {
     board.select(id)
@@ -42,94 +48,153 @@ export function Sidebar({
     closeAside()
   }
 
+  const onChat = useOnChats()
+
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-2 px-3 py-3">
-        <Brand className="ml-1 h-5 shrink-0" />
-        {onCollapse ? (
-          <button
-            type="button"
-            onClick={onCollapse}
-            aria-label="Hide the sidebar"
-            className="ml-auto flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-          >
-            <PanelLeftIcon className="size-4" />
-          </button>
-        ) : null}
-      </div>
+    <div className="flex h-full bg-sidebar text-sidebar-foreground">
+      <nav
+        aria-label="Console"
+        className="flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3"
+      >
+        {/* The workspace is the frame everything else is drawn inside, so it
+            sits at the head of the rail rather than in settings. The wordmark
+            does not: at rail width it would be a smear, and the top bar already
+            carries it. */}
+        <WorkspacePicker compact />
 
-      <div className="px-2">
-        <WorkspacePicker />
-      </div>
+        <RailButton
+          label="Chats"
+          icon={MessageSquareIcon}
+          active={onChat}
+          onClick={() => openAgent(board.selectedId)}
+        />
 
-      <nav aria-label="Console" className="flex flex-col gap-0.5 px-2 py-2">
-        <button type="button" onClick={() => openAgent(null)} className={rowClass()}>
-          <PlusIcon className="size-4 shrink-0 text-muted-foreground" />
-          New agent
-        </button>
-
-        {NAV_ITEMS.map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            // Without this every route matches `/`, so Chat would be lit on
-            // every page.
-            activeOptions={{ exact: item.to === '/' }}
-            onClick={closeAside}
-            className={rowClass()}
-            activeProps={{ className: 'bg-accent font-medium text-foreground' }}
-          >
-            <item.icon className="size-4 shrink-0 text-muted-foreground" />
-            {item.label}
-          </Link>
+        {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
+          <RailLink key={item.to} to={item.to} label={item.label} icon={item.icon} />
         ))}
+
+        <div className="mt-auto flex flex-col items-center gap-1">
+          <RailButton label="Settings" icon={SettingsIcon} onClick={onOpenSettings} />
+          <UserMenu />
+        </div>
       </nav>
 
-      <div className="mt-1 flex min-h-0 flex-1 flex-col px-3">
-        <div className="mb-2 flex items-center gap-2 px-1">
-          <h2 className="label text-muted-foreground">Recents</h2>
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {board.agents.length}
-          </span>
-        </div>
+      {/*
+        Only on Chats. A second column that is empty on five pages out of six is
+        a column that teaches you to stop looking at it.
+      */}
+      {onChat ? (
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 px-3 py-3">
+            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Chats</h2>
+            <button
+              type="button"
+              onClick={() => openAgent(null)}
+              className={cn(
+                'flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground',
+                'transition-colors hover:bg-accent hover:text-foreground',
+                'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+              )}
+            >
+              <PlusIcon className="size-3.5" />
+              New
+            </button>
+            {onCollapse ? (
+              <button
+                type="button"
+                onClick={onCollapse}
+                aria-label="Hide the chat list"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              >
+                <PanelLeftIcon className="size-4" />
+              </button>
+            ) : null}
+          </div>
 
-        <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 pb-2">
-          <AgentList
-            meta={board.meta}
-            agents={board.agents}
-            selectedId={board.selectedId}
-            onSelect={openAgent}
-            onRemove={board.remove}
-          />
-        </div>
-      </div>
+          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-4 pb-2">
+            <AgentList
+              meta={board.meta}
+              agents={board.agents}
+              selectedId={board.selectedId}
+              onSelect={openAgent}
+              onRemove={board.remove}
+            />
+          </div>
 
-      {board.selected ? (
-        <div className="border-t px-4 py-3">
-          <h2 className="label mb-2 text-muted-foreground">This agent</h2>
-          <RunStats agent={board.selected} />
+          {board.selected ? (
+            <div className="border-t px-4 py-3">
+              <h2 className="label mb-2 text-muted-foreground">This agent</h2>
+              <RunStats agent={board.selected} />
+            </div>
+          ) : null}
         </div>
       ) : null}
-
-      <div className="flex items-center gap-2 border-t px-3 py-2.5">
-        <UserMenu />
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          aria-label="Settings"
-          className="ml-auto flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
-        >
-          <SettingsIcon className="size-4" />
-        </button>
-      </div>
     </div>
   )
 }
 
-/** Every row in the sidebar is the same row: icon, label, one hover state. */
-function rowClass() {
+/** A rail destination. The label is the tooltip, so the icon can stand alone. */
+function RailLink({
+  to,
+  label,
+  icon: Icon,
+}: {
+  to: string
+  label: string
+  icon: typeof MessageSquareIcon
+}) {
+  const closeAside = useCloseAside()
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          to={to}
+          onClick={closeAside}
+          aria-label={label}
+          className={railClass()}
+          activeProps={{ className: 'bg-accent text-foreground' }}
+        >
+          <Icon className="size-[1.125rem]" />
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The same control for the things that are not routes: Chats, and settings. */
+function RailButton({
+  label,
+  icon: Icon,
+  active = false,
+  onClick,
+}: {
+  label: string
+  icon: typeof MessageSquareIcon
+  active?: boolean
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={label}
+          className={cn(railClass(), active && 'bg-accent text-foreground')}
+        >
+          <Icon className="size-[1.125rem]" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Every rail control is the same square: one icon, one hover state. */
+function railClass() {
   return cn(
-    'flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground',
+    'flex size-9 items-center justify-center rounded-lg text-muted-foreground',
     'transition-colors hover:bg-accent hover:text-foreground',
     'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
   )

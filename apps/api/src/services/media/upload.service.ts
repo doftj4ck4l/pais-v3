@@ -42,6 +42,12 @@ export async function storeUploadedImage(
     contentType: string;
     /** The browser's filename, kept only as a human label. */
     name?: string;
+    /**
+     * How the bytes got here. Defaults to a paste from the composer;
+     * `share_file` passes "shared" so a file the agent produced is not counted
+     * as something the user sent.
+     */
+    source?: "uploaded" | "shared";
   },
   store: ImageStore = imageStore,
   putImpl: typeof putObject = putObject,
@@ -89,7 +95,7 @@ export async function storeUploadedImage(
     contentType,
     bytes: input.bytes.byteLength,
     costMicros: null,
-    source: "uploaded",
+    source: input.source ?? "uploaded",
   });
 
   logger.info("upload.stored", {

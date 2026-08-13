@@ -1,14 +1,17 @@
 /**
  * Splitting the agent list into days.
  *
- * Grouped by day key rather than by walking the array, because the array is
- * not in time order: restored agents are prepended newest-first while a newly
- * spawned one is appended to the end. Walking it would print "Today", then
- * "Yesterday", then "Today" again the moment someone starts an agent.
+ * Grouped by day key rather than by walking the array. The list is newest-first
+ * — restored runs in that order, a newly spawned one prepended — but nothing
+ * enforces that, and walking the array would print "Today", then "Yesterday",
+ * then "Today" again the moment one entry sat out of order.
  *
- * Days are ordered newest first. Order *within* a day is left exactly as the
- * list had it, so this changes what the sidebar is labelled with and never
- * what it contains or in what order.
+ * Days are ordered newest first, and so is each day's contents. Sorting here
+ * rather than trusting the caller's array is deliberate: the list is assembled
+ * from two sources — rows restored from the API and runs spawned in this tab —
+ * and a new chat landing at the bottom of Today because one of them appended is
+ * not a bug the reader can see the cause of. There is one rule now, in one
+ * place: newest first, everywhere.
  */
 
 export type DayGroup<T> = { key: string; label: string; items: T[] }
@@ -63,6 +66,6 @@ export function groupByDay<T>(
     .map(([day, group]) => ({
       key: String(day),
       label: dayLabel(day, now),
-      items: group,
+      items: [...group].sort((a, b) => startedAt(b) - startedAt(a)),
     }))
 }

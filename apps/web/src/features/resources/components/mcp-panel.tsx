@@ -123,14 +123,14 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         busy={busy}
         summary={
           enabled.length
-            ? `${enabled.length} server${enabled.length === 1 ? '' : 's'} · ${toolTotal} tools`
+            ? `${enabled.length} connected · ${toolTotal} tools`
             : null
         }
         action={
           servers.length ? (
             <Button size="sm" onClick={openPicker}>
               <PlusIcon data-icon="inline-start" />
-              Connect a server
+              Connect a service
             </Button>
           ) : null
         }
@@ -139,19 +139,19 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
       {servers.length === 0 ? (
         <PanelEmpty
           icon={PlugIcon}
-          title="No MCP servers"
-          description="Connect a server and its tools become the agent's — your files, your calendar, your tracker, whatever it speaks for."
+          title="No connectors yet"
+          description="Connect a service and its tools become the agent's — your files, your calendar, your tracker, whatever it speaks for."
           action={
             <Button size="sm" onClick={openPicker}>
               <PlusIcon data-icon="inline-start" />
-              Connect a server
+              Connect a service
             </Button>
           }
         />
       ) : null}
 
       {/* Separate dialog from the picker: an edit starts from a row, not from
-          "Connect an MCP server", and sharing one dialog would mean the picker
+          "Connect a service", and sharing one dialog would mean the picker
           could appear behind a Back press during an edit. */}
       <Dialog
         open={!!editing}
@@ -356,7 +356,7 @@ function ConnectorPicker({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Connect an MCP server</DialogTitle>
+        <DialogTitle>Connect a service</DialogTitle>
         <DialogDescription>
           Pick a known one and fill in only its credentials, or configure it yourself.
         </DialogDescription>

@@ -32,6 +32,7 @@ import { getSkills, skillsBlock, invokeSkill } from "../skills/skill.service";
 import { createMemoryTools } from "../memory/memory.service";
 import { createDocumentTools } from "../documents/document-tools";
 import { createImageTools } from "../media/image-tools";
+import { createShareTools } from "../media/share-tools";
 import { createVisionTools } from "../media/vision-tools";
 import { visionConfigured } from "../media/vision.service";
 import { mediaConfigured } from "../media/media.service";
@@ -67,6 +68,8 @@ export async function runPiAgent(opts: {
   template?: { name: string; args?: string[] };
   workspace?: string;
   workspaceId?: string;
+  /** Stamped onto anything the run stores, so the console can group by session. */
+  conversationId?: string;
 }): Promise<number> {
   const {
     model,
@@ -79,6 +82,7 @@ export async function runPiAgent(opts: {
     template,
     workspace,
     workspaceId = "default",
+    conversationId,
   } = opts;
 
   const key = effectiveApiKey(model);
@@ -208,7 +212,7 @@ export async function runPiAgent(opts: {
   // Gated on storage as well as the key: generating an image bills immediately,
   // so a tool that can produce bytes it cannot then keep is worse than absent.
   if (appEnv.openrouterApiKey && mediaConfigured()) {
-    for (const it of createImageTools(workspaceId)) {
+    for (const it of createImageTools(workspaceId, conversationId)) {
       agentTools.push({
         name: it.name,
         description: it.description,
@@ -235,6 +239,22 @@ export async function runPiAgent(opts: {
         execute: vt.execute,
       });
     }
+  }
+
+  // --- handing a file back to the user ---
+  //
+  // Ungated on purpose, and the only tool here that is. Every other media tool
+  // needs a bucket or a gateway; this one degrades to a workspace download URL
+  // that the API serves either way. A run that produces a file and cannot say
+  // where it is has not finished, whatever else is configured.
+  for (const st of createShareTools(workspaceId, execCwd, undefined, conversationId)) {
+    agentTools.push({
+      name: st.name,
+      description: st.description,
+      parameters: jsonSchemaToTypebox(st.parameters as Record<string, unknown>),
+      label: st.name,
+      execute: st.execute,
+    });
   }
 
   // --- context layer: read-only database access, only where a harness asks ---

@@ -59,8 +59,16 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
     // and the ids match, so this stays one code path rather than two.
     const attached = item.images?.length ? item.images : attachedImageUrls(item.text)
     return (
-      <div className="mt-8 mb-4 first:mt-0">
-        <div className="inline-block max-w-full rounded-lg rounded-tl-none bg-primary px-3.5 py-2.5 text-[0.9375rem] leading-relaxed font-medium text-primary-foreground">
+      // Flushed right, and the only thing in the transcript that is. The agent's
+      // side of the conversation is prose — answers, code, lists, images — and
+      // prose reads from one left margin; the question is short and needs no
+      // margin of its own. Sides are what separate them, so neither needs a
+      // "You"/"Assistant" label, and the answer keeps the full column width.
+      //
+      // Capped rather than full width: a bubble that reaches both edges has no
+      // side to be on, and a pasted paragraph would look like the agent's own.
+      <div className="mt-8 mb-4 flex justify-end first:mt-0">
+        <div className="max-w-[85%] rounded-lg rounded-tr-none bg-primary px-3.5 py-2.5 text-[0.9375rem] leading-relaxed font-medium text-primary-foreground">
           {attached.length ? (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {attached.map((url) => (
@@ -80,16 +88,14 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
     )
   }
 
-  if (item.kind === 'iteration') {
-    // A step boundary is a hairline, not a heading: it separates the activity
-    // above from the activity below and claims no more attention than that.
-    return (
-      <div className="my-3 flex items-center gap-3">
-        <span className="readout text-[0.625rem] text-muted-foreground/70">Step {item.n}</span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
-    )
-  }
+  // A step boundary draws nothing. It was a hairline and a "Step 3" label, and
+  // it turned the transcript into a runtime log: the reader was being shown the
+  // agent's loop counter, which is a number they can do nothing with and which
+  // interrupted the narrative every few lines to say so.
+  //
+  // The item is still produced and still stored — `run-stats` counts these to
+  // report how many steps a run took, which is the one place the number belongs.
+  if (item.kind === 'iteration') return null
 
   if (item.kind === 'thinking') return <ThinkingLine item={item} streaming={streaming} />
   if (item.kind === 'tool') return <ToolLine item={item} />

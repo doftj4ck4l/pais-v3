@@ -6,6 +6,7 @@ import { SettingsModal } from '@/pages/console/components/settings-modal'
 import { Sidebar } from '@/features/navigation/components/sidebar'
 import { WorkspaceOnboarding } from '@/features/workspace/components/workspace-onboarding'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
+import { useOnChats } from '@/features/navigation/lib/rail'
 import { useSidebar } from '@/features/navigation/hooks/use-sidebar'
 import { useTheme } from '@/shared/hooks/use-theme'
 import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
@@ -30,6 +31,8 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
   const board = useBoard()
   const { theme, toggle } = useTheme()
   const sidebar = useSidebar()
+  // The second column only exists on Chats, so only Chats reserves its width.
+  const onChats = useOnChats()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -45,16 +48,20 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
       <div className="relative flex h-full">
         {/* Always mounted, and animated by width rather than by unmounting:
             the sidebar holds the run list, and rebuilding it on every collapse
-            would refetch and flash. `w-0` with the content held at its full
-            width inside is what makes it slide rather than reflow. */}
+            would refetch and flash. The content is held at its full width
+            inside, which is what makes it slide rather than reflow.
+
+            Collapsing takes the chat list, never the rail: the rail is how you
+            leave the page you are on, and a console with no visible way out is
+            a console you have to guess at. */}
         <aside
           className={cn(
-            'hidden shrink-0 overflow-hidden transition-[width] duration-300 ease-out lg:block',
+            'hidden shrink-0 overflow-hidden border-r transition-[width] duration-300 ease-out lg:block',
             'motion-reduce:transition-none',
-            sidebar.open ? 'w-64 border-r' : 'w-0',
+            sidebar.open && onChats ? 'w-[19.5rem]' : 'w-14',
           )}
         >
-          <div className="h-full w-64">
+          <div className="h-full w-[19.5rem]">
             <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={sidebar.toggle} />
           </div>
         </aside>
@@ -70,14 +77,21 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
           <header
             className={cn(
               'flex h-12 shrink-0 items-center gap-3 border-b px-3',
-              sidebar.open && !topbar && 'lg:hidden',
+              sidebar.open && onChats && !topbar && 'lg:hidden',
             )}
           >
             <button
               type="button"
               onClick={() => (isWide() ? sidebar.toggle() : setSheetOpen(true))}
-              aria-label={sidebar.open ? 'Hide the sidebar' : 'Show the sidebar'}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              aria-label={sidebar.open ? 'Hide the chat list' : 'Show the chat list'}
+              // Off the wide layout everywhere but Chats: there the only thing
+              // it can collapse is the chat list, and elsewhere it would be a
+              // button that visibly does nothing. Below `lg` it stays — that is
+              // the only way to reach the sidebar sheet at all.
+              className={cn(
+                'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+                !onChats && 'lg:hidden',
+              )}
             >
               <PanelLeftIcon className="size-4" />
             </button>
@@ -97,7 +111,7 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="left" className="w-72 gap-0 p-0 sm:max-w-72">
+        <SheetContent side="left" className="w-[19.5rem] gap-0 p-0 sm:max-w-[19.5rem]">
           <SheetTitle className="sr-only">Navigation and agents</SheetTitle>
           <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={null} />
         </SheetContent>

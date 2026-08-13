@@ -1,6 +1,5 @@
 import {
   BrainIcon,
-  CloudIcon,
   DatabaseIcon,
   FileIcon,
   FileTextIcon,
@@ -31,12 +30,19 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Chat', hint: 'Agents and transcripts', icon: MessageSquareIcon },
   { to: '/docs', label: 'Docs', hint: 'Uploaded documents', icon: FileTextIcon },
-  // Next to Docs on purpose: a connector's files land in the same index as an
-  // upload, so the two are two ways to fill one drawer.
-  { to: '/sources', label: 'Sources', hint: 'Connected content sources', icon: CloudIcon },
+  // Sources is deliberately absent, not deleted: connectors are unfinished, and
+  // a destination that half works is worse than one that is not offered yet.
+  // The route and its panel are still here — put the entry back to restore it.
   { to: '/data', label: 'Data', hint: 'Database connections', icon: DatabaseIcon },
-  { to: '/mcp', label: 'MCP', hint: 'MCP servers and their tools', icon: PlugIcon },
-  { to: '/files', label: 'Files', hint: 'Files the agent has written', icon: FileIcon },
+  // Labelled for what it does, not for the protocol that does it. "MCP" names
+  // a wire format; what the reader is choosing is which of their own services
+  // the agent can reach. The route, the tables and the code stay MCP — that is
+  // the accurate name for the thing being spoken.
+  { to: '/mcp', label: 'Connectors', hint: 'Services the agent can use', icon: PlugIcon },
+  // The route stays `/files`: it is in links and bookmarks, and the label is
+  // what anyone actually reads. "Assets" because the page holds pictures as
+  // well as documents, and because the chat's own panel is the per-session view.
+  { to: '/files', label: 'Assets', hint: 'Everything the agent has written', icon: FileIcon },
   // Last, and the only page nothing is attached to: it fills itself.
   { to: '/learned', label: 'Learned', hint: 'What this workspace has learned', icon: BrainIcon },
 ]

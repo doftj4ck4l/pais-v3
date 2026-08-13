@@ -8,6 +8,7 @@ import type {
   Meta,
   PlaybookBullet,
   RunDetail,
+  SessionImage,
   UploadedImage,
   RunRow,
   WorkspaceFile,
@@ -153,12 +154,33 @@ export async function deleteDocument(scope: Scope, id: string): Promise<void> {
  * thumbnail immediately, and the chat request carries an id rather than a
  * megabyte of base64.
  */
-export async function uploadChatImage(scope: Scope, file: File): Promise<UploadedImage> {
+export async function uploadChatImage(
+  scope: Scope,
+  file: File,
+  conversationId?: string | null,
+): Promise<UploadedImage> {
   const form = new FormData()
   form.append('file', file)
+  // Null for the first message of a run, which has no conversation yet. The
+  // image is still in the transcript; it just misses the session panel until
+  // the next paste, which is a smaller loss than blocking the send on a row.
+  if (conversationId) form.append('conversationId', conversationId)
   return json<UploadedImage>(
     await fetch(`/api/images?${scoped(scope)}`, { method: 'POST', body: form }),
   )
+}
+
+/**
+ * Images belonging to one chat session — generated, pasted, or shared.
+ *
+ * Scoped to a conversation rather than the workspace: the panel sits beside a
+ * transcript, and a picture drawn in some other run is not part of this one.
+ */
+export async function listImages(scope: Scope, conversationId: string): Promise<SessionImage[]> {
+  const { images } = await json<{ images: SessionImage[] }>(
+    await fetch(`/api/images?${scoped(scope, { conversationId })}`),
+  )
+  return images
 }
 
 /** What this workspace has learned. Read and delete only — nothing writes from here. */

@@ -13,9 +13,16 @@ const workspaceIdOf = async (c: Context) => {
   return workspace.id;
 };
 
-/** GET /api/images — a workspace's generated images, newest first. */
+/**
+ * GET /api/images — a workspace's images, newest first.
+ *
+ * `?conversationId=` narrows it to one session, which is what the artifact
+ * panel beside a transcript asks for: an image belongs to the conversation
+ * that produced it, not to whatever else the workspace has drawn since.
+ */
 export async function index(c: Context) {
-  const images = await imageStore.list(await workspaceIdOf(c));
+  const conversationId = c.req.query("conversationId") || undefined;
+  const images = await imageStore.list(await workspaceIdOf(c), { conversationId });
   return c.json({ images });
 }
 

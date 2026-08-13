@@ -20,11 +20,14 @@ export function Composer({
   notice,
   onDismissNotice,
   onSend,
+  conversationId = null,
   docked = true,
 }: {
   notice: string | null
   onDismissNotice: () => void
   onSend: (text: string, images: UploadedImage[]) => void
+  /** The open session, so a pasted image is stored against it. Null on a new run. */
+  conversationId?: string | null
   /** False while it sits mid-page waiting for the first question, where a rule
    *  across the window would divide a page that has nothing above it. */
   docked?: boolean
@@ -51,7 +54,7 @@ export function Composer({
       setUploading((n) => n + files.length)
       for (const file of files) {
         try {
-          const uploaded = await uploadChatImage(scope, file)
+          const uploaded = await uploadChatImage(scope, file, conversationId)
           setImages((prev) => [...prev, uploaded])
         } catch (e) {
           // The API's message names the actual problem ("image is 20MB, over
@@ -62,7 +65,7 @@ export function Composer({
         }
       }
     },
-    [scope],
+    [scope, conversationId],
   )
 
   const submit = () => {

@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { list, resolve } from "../repositories/workspace.repository";
+import { fileOrigins } from "../services/media/file-origins";
 import { env } from "../config/env";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";
@@ -17,9 +18,20 @@ const workspaceIdOf = async (c: Context) => {
   return workspace.id;
 };
 
-/** GET /api/workspace/files — what the agent has produced, newest first. */
+/**
+ * GET /api/workspace/files — what the agent has produced, newest first.
+ *
+ * Each file carries the chat that wrote it where a transcript says so. The
+ * origins are looked up once for the whole listing rather than per file, and a
+ * failure to find one is not an error: most of a long-lived workspace predates
+ * anything that named it.
+ */
 export async function index(c: Context) {
-  return c.json({ files: await list(await workspaceIdOf(c)) });
+  const workspaceId = await workspaceIdOf(c);
+  const [files, origins] = await Promise.all([list(workspaceId), fileOrigins(workspaceId)]);
+  return c.json({
+    files: files.map((file) => ({ ...file, origin: origins.get(file.path) ?? null })),
+  });
 }
 
 /**
