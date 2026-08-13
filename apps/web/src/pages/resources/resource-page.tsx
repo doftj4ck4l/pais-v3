@@ -5,10 +5,11 @@ import type { ReactNode } from 'react'
 /**
  * One kind of thing the agent can reach, on a page of its own.
  *
- * Reads as a document rather than a dashboard: the title scrolls with the
- * content, the column is the width of something you would actually read, and
- * the type is a page's type — see `.page-scale`, which undoes the sidebar
- * sizing these panels were drawn at.
+ * The name lives in the top bar beside the sidebar toggle, not in a banner
+ * above the content: a display-sized heading over a list of four rows spends
+ * the top of the window on a word you already clicked. The content then takes
+ * the full width — these are tables and lists, and a reading column down the
+ * middle of a wide screen left the right half empty.
  *
  * The body is keyed on the workspace, so switching remounts it: each panel
  * fetches on mount, and re-rendering with a new scope would show the previous
@@ -26,22 +27,22 @@ export function ResourcePage({
   const workspace = useWorkspace()
 
   return (
-    <AppShell>
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-4xl px-6 pt-10 pb-20 sm:px-8">
-          <h1 className="text-2xl leading-tight font-bold tracking-[-0.02em]">{title}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-
-          {/* One surface per page. The panels are lists of rows, and a list
-              with nothing under it reads as a page that failed to load. */}
-          <div
-            key={workspace.current ?? 'none'}
-            className="page-scale mt-8 rounded-xl border bg-card p-5 sm:p-6"
-          >
-            {children}
-          </div>
+    <AppShell
+      topbar={
+        <div className="flex min-w-0 items-baseline gap-3">
+          <h1 className="shrink-0 text-sm font-semibold">{title}</h1>
+          {/* Dropped rather than wrapped on a narrow screen: the title is the
+              part you navigated for. */}
+          <p className="hidden truncate text-xs text-muted-foreground lg:block">{description}</p>
+        </div>
+      }
+    >
+      <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div
+          key={workspace.current ?? 'none'}
+          className="page-scale rounded-xl border bg-card p-5 sm:p-6"
+        >
+          {children}
         </div>
       </main>
     </AppShell>

@@ -19,8 +19,13 @@ import type { ReactNode } from 'react'
  * The sidebar is here rather than in each page so navigating does not tear it
  * down and rebuild it — the agent list would flash on every click — and so the
  * settings modal, which every page can open, has one owner.
+ *
+ * `topbar` is what a page puts in the bar beside the sidebar toggle — its name,
+ * usually. A page that passes one always has the bar; a page that does not (the
+ * chat, which names the open agent in its own header) only gets it when there
+ * is a sidebar to bring back.
  */
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ topbar, children }: { topbar?: ReactNode; children: ReactNode }) {
   const workspace = useWorkspace()
   const board = useBoard()
   const { theme, toggle } = useTheme()
@@ -58,26 +63,33 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/*
             One bar, two jobs, and which one depends on the width: below `lg`
             the sidebar is a sheet, above it is a column that can be collapsed.
-            It is not rendered at all when the column is already showing on a
-            wide screen — a control for something you can see is one more thing
-            to read.
+            Without a `topbar` it is not rendered while the column is already
+            showing on a wide screen — a control for something you can see is
+            one more thing to read.
           */}
           <header
             className={cn(
-              'flex items-center gap-3 border-b px-3 py-2.5',
-              sidebar.open && 'lg:hidden',
+              'flex h-12 shrink-0 items-center gap-3 border-b px-3',
+              sidebar.open && !topbar && 'lg:hidden',
             )}
           >
             <button
               type="button"
-              onClick={() => (isWide() ? sidebar.setOpen(true) : setSheetOpen(true))}
-              aria-label="Show the sidebar"
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+              onClick={() => (isWide() ? sidebar.toggle() : setSheetOpen(true))}
+              aria-label={sidebar.open ? 'Hide the sidebar' : 'Show the sidebar'}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
             >
               <PanelLeftIcon className="size-4" />
             </button>
 
-            <Brand className="h-4 shrink-0" />
+            {topbar ? (
+              <>
+                <span className="h-4 w-px shrink-0 bg-border" aria-hidden />
+                {topbar}
+              </>
+            ) : (
+              <Brand className="h-4 shrink-0" />
+            )}
           </header>
 
           {children}
