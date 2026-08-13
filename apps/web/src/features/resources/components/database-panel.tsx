@@ -85,7 +85,6 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">Databases</h2>
         {connected.length ? (
           <span className="readout text-[0.625rem] text-muted-foreground">
             {connected.length} db{connected.length === 1 ? '' : 's'} · {tableTotal} tables

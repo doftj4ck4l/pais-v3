@@ -47,7 +47,6 @@ export function FilesPanel({
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">Files</h2>
         {files.length ? (
           <span className="readout text-[0.625rem] text-muted-foreground">{files.length}</span>
         ) : null}

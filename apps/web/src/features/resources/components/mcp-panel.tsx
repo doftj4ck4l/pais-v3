@@ -113,7 +113,6 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">MCP servers</h2>
         {enabled.length ? (
           <span className="readout text-[0.625rem] text-muted-foreground">
             {enabled.length} server{enabled.length === 1 ? '' : 's'} · {toolTotal} tools

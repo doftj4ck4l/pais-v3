@@ -58,7 +58,6 @@ export function PlaybookPanel({ onCountChange }: { onCountChange?: (n: number) =
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">Learned</h2>
         {bullets.length ? (
           <span className="readout text-[0.625rem] text-muted-foreground">
             {active} of {bullets.length} in use

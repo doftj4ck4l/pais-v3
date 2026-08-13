@@ -65,7 +65,6 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   return (
     <div className="flex flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">Context</h2>
         {indexed.length ? (
           <span className="readout text-[0.625rem] text-muted-foreground">
             {indexed.length} doc{indexed.length === 1 ? '' : 's'} · {chunkTotal} chunks

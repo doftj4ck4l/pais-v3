@@ -1,5 +1,6 @@
 import { Outlet, createRootRoute } from '@tanstack/react-router'
 import { TooltipProvider } from '@/shared/ui/tooltip'
+import { AgentBoardContext, useAgentBoard } from '@/features/agents/hooks/use-agent-board'
 import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/use-workspace'
 import { MeContext, useMeState } from '@/features/workspace/hooks/use-me'
 
@@ -12,6 +13,10 @@ import { MeContext, useMeState } from '@/features/workspace/hooks/use-me'
  *
  * The profile is here for a second reason as well: the display name is shown
  * in two places at once, so both have to read the same copy of it.
+ *
+ * The agent board is here for a third: a run is a live stream held in that
+ * hook, and mounting it inside the chat route meant opening any other page
+ * abandoned the run that was still arriving.
  */
 export const Route = createRootRoute({
   component: RootLayout,
@@ -21,12 +26,15 @@ export const Route = createRootRoute({
 function RootLayout() {
   const workspace = useWorkspaceState()
   const me = useMeState()
+  const board = useAgentBoard(workspace.scope)
 
   return (
     <TooltipProvider>
       <MeContext.Provider value={me}>
         <WorkspaceContext.Provider value={workspace}>
-          <Outlet />
+          <AgentBoardContext.Provider value={board}>
+            <Outlet />
+          </AgentBoardContext.Provider>
         </WorkspaceContext.Provider>
       </MeContext.Provider>
     </TooltipProvider>

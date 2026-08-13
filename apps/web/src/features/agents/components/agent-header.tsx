@@ -1,4 +1,4 @@
-import { PanelRightIcon, SquareIcon } from 'lucide-react'
+import { SquareIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ModelLogo } from '@/shared/components/model-logo'
 import { ContextRing } from '@/features/agents/components/context-ring'
@@ -15,13 +15,10 @@ export function AgentHeader({
   agent,
   model,
   onStop,
-  onToggleResources,
 }: {
   agent: AgentRun
   model?: Model
   onStop: () => void
-  /** Opens the documents / databases / files panel. */
-  onToggleResources: () => void
 }) {
   const running = agent.status === 'running'
 
@@ -40,16 +37,6 @@ export function AgentHeader({
       </div>
 
       <ContextRing context={agent.context} />
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleResources}
-        aria-label="Toggle documents, databases and files"
-        className="text-muted-foreground"
-      >
-        <PanelRightIcon />
-      </Button>
 
       {running ? (
         <Button variant="outline" size="sm" onClick={onStop}>
