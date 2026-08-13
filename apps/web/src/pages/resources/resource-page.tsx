@@ -5,14 +5,14 @@ import type { ReactNode } from 'react'
 /**
  * One kind of thing the agent can reach, on a page of its own.
  *
- * These were six tabs in a 288px drawer, which is why they are all lists of
- * one line each. The page keeps the reading column narrow — a table of
- * documents does not get better at 1600px — but the panels can now grow into
- * something wider than a sidebar when they need to.
+ * Reads as a document rather than a dashboard: the title scrolls with the
+ * content, the column is the width of something you would actually read, and
+ * the type is a page's type — see `.page-scale`, which undoes the sidebar
+ * sizing these panels were drawn at.
  *
- * Keyed on the workspace by the caller's `key`, so switching remounts the body:
- * each panel fetches on mount, and re-rendering with a new scope would show the
- * previous workspace's rows until every request came back.
+ * The body is keyed on the workspace, so switching remounts it: each panel
+ * fetches on mount, and re-rendering with a new scope would show the previous
+ * workspace's rows until every request came back.
  */
 export function ResourcePage({
   title,
@@ -27,16 +27,21 @@ export function ResourcePage({
 
   return (
     <AppShell>
-      <header className="border-b px-6 py-4">
-        <div className="mx-auto w-full max-w-3xl">
-          <h1 className="text-[0.9375rem] leading-snug font-bold tracking-[-0.01em]">{title}</h1>
-          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-        </div>
-      </header>
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-4xl px-6 pt-10 pb-20 sm:px-8">
+          <h1 className="text-2xl leading-tight font-bold tracking-[-0.02em]">{title}</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {description}
+          </p>
 
-      <main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div key={workspace.current ?? 'none'} className="mx-auto w-full max-w-3xl">
-          {children}
+          {/* One surface per page. The panels are lists of rows, and a list
+              with nothing under it reads as a page that failed to load. */}
+          <div
+            key={workspace.current ?? 'none'}
+            className="page-scale mt-8 rounded-xl border bg-card p-5 sm:p-6"
+          >
+            {children}
+          </div>
         </div>
       </main>
     </AppShell>
