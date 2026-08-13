@@ -39,7 +39,7 @@ const patch = (headers: Record<string, string>, body: unknown) =>
 const profile = async (res: Response) => (await res.json()) as Profile;
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "salur-profile-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-profile-"));
   process.env.DB_PATH = path.join(dir, "app.db");
   // The server applies the schema at boot; this stands in for that.
   const { ensureSchema } = await import("./db/client");

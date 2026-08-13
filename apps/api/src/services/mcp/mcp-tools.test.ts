@@ -161,7 +161,7 @@ function filesServer() {
 /** Connect a client to an in-process server over a linked transport pair. */
 async function linkedConnection(spec: any, server: Server): Promise<McpConnection> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "salur-test", version: "1.0.0" }, { capabilities: {} });
+  const client = new Client({ name: "pixelspace-test", version: "1.0.0" }, { capabilities: {} });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return {
     spec,
@@ -240,7 +240,7 @@ describe("capResult", () => {
 });
 
 describe("createSpill", () => {
-  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "salur-spill-"));
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-spill-"));
 
   it("writes the whole result and hands back a path the sandbox can read", () => {
     // The container mounts the workspace at an identical host and container
@@ -392,7 +392,7 @@ describe("createBudget", () => {
   });
 
   describe("with a spill directory", () => {
-    const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "salur-budget-"));
+    const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-budget-"));
 
     it("points a truncated result at the full text instead of destroying it", () => {
       const dir = tmp();
@@ -402,7 +402,7 @@ describe("createBudget", () => {
       const out = b.take(body, "nas__nc_webdav_list_directory");
 
       expect(out.length).toBeLessThan(10_000);
-      const file = out.match(/(\/\S*salur-budget-\S+)/)?.[1];
+      const file = out.match(/(\/\S*pixelspace-budget-\S+)/)?.[1];
       expect(file).toBeTruthy();
       expect(fs.readFileSync(file!, "utf8")).toBe(body);
     });
@@ -420,7 +420,7 @@ describe("createBudget", () => {
       const after = b.take(body, "second_tool");
 
       expect(after).not.toContain("Do not retry");
-      const file = after.match(/(\/\S*salur-budget-\S+)/)?.[1];
+      const file = after.match(/(\/\S*pixelspace-budget-\S+)/)?.[1];
       expect(fs.readFileSync(file!, "utf8")).toBe(body);
     });
 

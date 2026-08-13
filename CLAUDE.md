@@ -1,6 +1,6 @@
 # Working in this repo
 
-Orientation for an agent. The README explains what Salur *is* and how to run it;
+Orientation for an agent. The README explains what Pixelspace *is* and how to run it;
 this file records what is easy to get wrong. Read the README first for
 architecture, then this for the traps.
 
@@ -107,7 +107,7 @@ running in any of these:
 | Where | What runs there |
 | --- | --- |
 | **API process** | MCP tools (stdio child or HTTP fetch), `calculator`, `remember`, `search_docs` |
-| **Sandbox container** (`salurai-<workspaceId>`) | `bash`, `read`, `write`, `edit`, `call_skill`, via `docker exec` |
+| **Sandbox container** (`pixelspace-<workspaceId>`) | `bash`, `read`, `write`, `edit`, `call_skill`, via `docker exec` |
 | **Model provider** | the turn itself |
 
 **MCP never touches the sandbox.** stdio MCP servers are child processes of the
@@ -302,7 +302,7 @@ result goes through `toolResult()`, so a tool added later cannot forget to bound
 its output.
 
 **Neither bound destroys data any more.** What is cut goes to
-`<workspace>/.salur/tool-output/` and the model is handed the path, because the
+`<workspace>/.pixelspace/tool-output/` and the model is handed the path, because the
 run that motivated this did not fail on size — it failed on *refusal*. An
 exhausted `RUN_CHAR_BUDGET` returned "do not retry this call", the agent stopped
 reading, and having no way to tell our cap from the remote server's, it told the
@@ -511,6 +511,30 @@ Upgrading bun locally without bumping it means the suite you watched pass is not
 the suite that gates the deploy. The binary comes from npm's platform package
 rather than `bun.sh/install`, because that script pulls ~35MB from github.com and
 a deploy has already died on `curl: (56)` doing it.
+
+## The old name
+
+The product was called Salur. Three things still say so, and each of them is a
+migration rather than an edit:
+
+- **`SALT` in `lib/crypto.ts`** derives the key every stored secret was
+  encrypted with. A new salt derives a different key, and every MCP header,
+  database URL and connector token in `app.db` becomes undecryptable.
+- **`S3_BUCKET` defaults to `salur-media`** because that is where the images
+  already are. Point it somewhere new and every `/api/images/<id>` in an old
+  transcript 404s.
+- **The compose project is `name: salurai`**, which is what the running
+  containers and the `rustfs` named volume are keyed by. Renaming it starts a
+  second, empty stack beside the first.
+
+`.forgejo/workflows/deploy.yml` also still deploys to `salur@/opt/salur`: that
+is a user and a directory on the deploy host, not a string in this repo.
+
+Everything else — package names, the sandbox container prefix, the sandbox
+image tag, `SANDBOX_ROOT`, the spill directory — is Pixelspace. A machine that
+ran the old build keeps its old workspace directory and image tag, so a dev box
+wants `mv ~/salurai-workspaces ~/pixelspace-workspaces` and a
+`docker tag salurai-sandbox:1 pixelspace-sandbox:1` once.
 
 ## Conventions
 

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { describeEnvironment } from "./environment-prompt";
 
-const docker = { backend: "docker" as const, cwd: "/srv/salur/sandboxes/ws1", hasExternalServices: true };
+const docker = { backend: "docker" as const, cwd: "/srv/pixelspace/sandboxes/ws1", hasExternalServices: true };
 
 describe("describeEnvironment", () => {
   it("names the working directory the file tools actually resolve against", () => {
     // A model told it has a filesystem but not where it is will guess /home or
     // /app and read nothing.
-    expect(describeEnvironment(docker)).toContain("/srv/salur/sandboxes/ws1");
+    expect(describeEnvironment(docker)).toContain("/srv/pixelspace/sandboxes/ws1");
   });
 
   it("claims the locatives that used to resolve to the MCP server", () => {
@@ -34,7 +34,7 @@ describe("describeEnvironment", () => {
     expect(out).not.toContain("MCP");
     expect(out).not.toContain("unless the request names the service");
     // The directory still has to be named — that part is not conditional.
-    expect(out).toContain("/srv/salur/sandboxes/ws1");
+    expect(out).toContain("/srv/pixelspace/sandboxes/ws1");
   });
 
   it("distinguishes the container from the API host", () => {

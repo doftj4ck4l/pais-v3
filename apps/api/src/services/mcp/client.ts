@@ -52,7 +52,7 @@ export const CALL_TIMEOUT_MS = 60_000;
  * working directory that does not survive a restart cannot accumulate one
  * server's leftovers into another server's startup.
  */
-export const MCP_CWD_ROOT = process.env.MCP_CWD_ROOT || path.join(os.tmpdir(), "salur-mcp");
+export const MCP_CWD_ROOT = process.env.MCP_CWD_ROOT || path.join(os.tmpdir(), "pixelspace-mcp");
 
 /**
  * The directory a stdio server's process starts in.

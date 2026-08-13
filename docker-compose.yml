@@ -1,4 +1,4 @@
-# Salur, deployed on this host.
+# Pixelspace, deployed on this host.
 #
 # Two services. `web` is the only one published: Caddy serves the built console
 # and proxies /api to `api` over the compose network, so the API has no host
@@ -13,6 +13,10 @@
 # Socket access is root-equivalent on the host. This is a deliberate trade for
 # real per-workspace isolation; see README under "Deploying".
 
+# Left at the old name deliberately: the compose project name is what the
+# running containers and the `rustfs` named volume are keyed by. Renaming it
+# starts a second, empty stack and orphans the volume every generated image
+# lives in. Renaming it is a migration, not an edit.
 name: salurai
 
 services:
@@ -38,7 +42,7 @@ services:
     environment:
       PORT: "4000"
       SANDBOX_BACKEND: docker
-      SANDBOX_IMAGE: "${SANDBOX_IMAGE:-salurai-sandbox:1}"
+      SANDBOX_IMAGE: "${SANDBOX_IMAGE:-pixelspace-sandbox:1}"
       # Both must be host paths, mounted below at the same path inside.
       SANDBOX_ROOT: "${SANDBOX_ROOT:?set SANDBOX_ROOT in .env}"
       SKILLS_ROOT: "${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills"
