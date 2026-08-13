@@ -38,11 +38,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <AsideCloseContext.Provider value={() => setSheetOpen(false)}>
       <div className="relative flex h-full">
-        {sidebar.open ? (
-          <aside className="hidden w-64 shrink-0 border-r lg:block">
+        {/* Always mounted, and animated by width rather than by unmounting:
+            the sidebar holds the run list, and rebuilding it on every collapse
+            would refetch and flash. `w-0` with the content held at its full
+            width inside is what makes it slide rather than reflow. */}
+        <aside
+          className={cn(
+            'hidden shrink-0 overflow-hidden transition-[width] duration-300 ease-out lg:block',
+            'motion-reduce:transition-none',
+            sidebar.open ? 'w-64 border-r' : 'w-0',
+          )}
+        >
+          <div className="h-full w-64">
             <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={sidebar.toggle} />
-          </aside>
-        ) : null}
+          </div>
+        </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/*
