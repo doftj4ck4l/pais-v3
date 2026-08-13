@@ -1,11 +1,22 @@
-import { ChevronRightIcon, WrenchIcon } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { ChevronRightIcon, LightbulbIcon } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
-import { NodeHead, NodeRing, NodeSquare, NodeTick, RailRow } from '@/features/agents/components/loop-rail'
 import { Spinner } from '@/shared/ui/spinner'
+import { describeTool, thoughtLabel } from '@/features/agents/lib/tool-summary'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
 import { cn } from '@/shared/lib/utils'
+import type { ReactNode } from 'react'
 import type { Item } from '@/shared/lib/types'
 
+/**
+ * The transcript reads as a narrative: what the user asked, what the agent
+ * said, and between them a quiet log of what it did to get there.
+ *
+ * Everything the agent *does* — reasoning, tool calls — is one collapsed line
+ * with an icon, phrased as an action rather than as a runtime event. The
+ * payloads are all still here, one click away; they are just no longer the
+ * loudest thing on screen. The answer is what the run was for.
+ */
 export function Transcript({
   items,
   running,
@@ -16,54 +27,39 @@ export function Transcript({
   runSummary: string | null
 }) {
   // A model that goes straight to a tool call opens an empty text block first.
-  // It has nothing to say, so it gets no node on the rail.
+  // It has nothing to say, so it gets no line.
   const visible = items.filter((i) => i.kind !== 'assistant' || i.text.trim() !== '')
 
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
   // not by this component. Following from in here would mean scrolling an
   // ancestor it does not own, and would override the reader unconditionally.
   return (
-    // Top-aligned: the agent header anchors the top of this column, so the rail
-    // should start right under it rather than float above the composer.
+    // Top-aligned: the agent header anchors the top of this column, so the
+    // transcript starts right under it rather than floating above the composer.
     <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
-      {visible.map((item, i) => {
-        const last = i === visible.length - 1
-        return (
-          <TranscriptRow
-            key={i}
-            item={item}
-            streaming={running && last}
-            // Without a live head below it, the rail should stop at the last node.
-            stub={last && !running}
-          />
-        )
-      })}
+      {visible.map((item, i) => (
+        <TranscriptRow key={i} item={item} streaming={running && i === visible.length - 1} />
+      ))}
 
       {running ? (
-        <RailRow glyph={<NodeHead />} stub>
-          <p className="readout pt-0.5 text-muted-foreground">{runSummary ?? 'working…'}</p>
-        </RailRow>
+        <ActivityLine icon={<span className="rail-head size-2 rounded-full bg-foreground/50" />}>
+          <span className="shimmer flex min-h-5 items-center text-[0.8125rem]">
+            {runSummary ?? 'working…'}
+          </span>
+        </ActivityLine>
       ) : null}
     </div>
   )
 }
 
-function TranscriptRow({
-  item,
-  streaming,
-  stub,
-}: {
-  item: Item
-  streaming: boolean
-  stub: boolean
-}) {
+function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) {
   if (item.kind === 'user') {
     // A stored turn has no `images` — it comes back as the note the server
     // appended, so the URLs are recovered from the text. A live turn has both,
     // and the ids match, so this stays one code path rather than two.
     const attached = item.images?.length ? item.images : attachedImageUrls(item.text)
     return (
-      <RailRow glyph={<NodeSquare filled />} stub={stub}>
+      <div className="mt-8 mb-4 first:mt-0">
         <div className="inline-block max-w-full rounded-lg rounded-tl-none bg-primary px-3.5 py-2.5 text-[0.9375rem] leading-relaxed font-medium text-primary-foreground">
           {attached.length ? (
             <div className="mb-2 flex flex-wrap gap-1.5">
@@ -80,85 +76,135 @@ function TranscriptRow({
           ) : null}
           <p className="whitespace-pre-wrap break-words">{withoutAttachmentNote(item.text)}</p>
         </div>
-      </RailRow>
+      </div>
     )
   }
 
   if (item.kind === 'iteration') {
+    // A step boundary is a hairline, not a heading: it separates the activity
+    // above from the activity below and claims no more attention than that.
     return (
-      <RailRow
-        glyph={<NodeTick />}
-        marker={String(item.n).padStart(2, '0')}
-        stub={stub}
+      <div className="my-3 flex items-center gap-3">
+        <span className="readout text-[0.625rem] text-muted-foreground/70">Step {item.n}</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+    )
+  }
+
+  if (item.kind === 'thinking') return <ThinkingLine item={item} streaming={streaming} />
+  if (item.kind === 'tool') return <ToolLine item={item} />
+
+  return (
+    <div
+      className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
+      dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
+    />
+  )
+}
+
+/** One line of agent activity: an icon in the gutter, the sentence beside it. */
+function ActivityLine({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2.5 py-[0.1875rem]">
+      <span
+        className="mt-0.5 flex size-4 shrink-0 items-center justify-center text-muted-foreground/70"
+        aria-hidden
       >
-        <div className="flex items-center gap-3 pt-[0.3rem]">
-          <span className="label text-muted-foreground">Step {item.n}</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-      </RailRow>
-    )
-  }
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
 
-  if (item.kind === 'thinking') {
-    return (
-      <RailRow dashed stub={stub}>
-        <Collapsible>
-          <CollapsibleTrigger className="group flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
-            <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-<span className="label">Thinking</span>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <pre className="readout mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words pl-5 leading-relaxed text-muted-foreground">
-              {item.text}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
-      </RailRow>
-    )
-  }
+function ThinkingLine({
+  item,
+  streaming,
+}: {
+  item: Extract<Item, { kind: 'thinking' }>
+  streaming: boolean
+}) {
+  // Open while the thought is still arriving, closed once it has landed —
+  // unless the reader has taken a side, which then wins for good.
+  const [manual, setManual] = useState<boolean | null>(null)
+  const open = manual ?? streaming
+  const scroller = useRef<HTMLPreElement>(null)
 
-  if (item.kind === 'tool') {
-    const pending = item.result === undefined
-    return (
-      <RailRow glyph={<NodeSquare filled={!pending} />} stub={stub}>
-        {/*
-          Collapsed by default. A tool call's arguments and result are often
-          hundreds of lines of JSON, and a transcript that shows every one of
-          them in full buries the answer the run was actually for. The header
-          keeps what you need to skim — which tool, how long, did it fail — and
-          the payload is one click away.
-        */}
-        <Collapsible className="overflow-hidden rounded-lg border bg-card">
-          <CollapsibleTrigger
-            className={cn(
-              'group flex w-full items-center gap-2 bg-muted/40 px-3 py-2 text-left',
-              'transition-colors hover:bg-muted/70',
-              'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
-            )}
+  // Follow the tail of a thought as it streams, inside this box only.
+  useLayoutEffect(() => {
+    if (!streaming || !open || !scroller.current) return
+    scroller.current.scrollTop = scroller.current.scrollHeight
+  }, [item.text, streaming, open])
+
+  return (
+    <ActivityLine icon={<LightbulbIcon className="size-3.5" />}>
+      <Collapsible open={open} onOpenChange={setManual}>
+        <TriggerRow
+          label={streaming ? 'Thinking…' : thoughtLabel(item.ms)}
+          muted={!streaming}
+          live={streaming}
+        />
+        <CollapsibleContent>
+          <pre
+            ref={scroller}
+            className="mt-1.5 max-h-56 overflow-auto rounded-lg border bg-muted/30 px-3 py-2 text-[0.8125rem] leading-relaxed whitespace-pre-wrap break-words text-muted-foreground"
           >
-            <ChevronRightIcon
-              className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
-            />
-            <WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="readout truncate font-medium text-card-foreground">{item.name}</span>
-            {pending ? (
-              <Spinner className="ml-auto size-3.5 text-muted-foreground" />
-            ) : (
-              <span className="readout ml-auto flex shrink-0 items-center gap-1.5 text-[0.625rem]">
+            {item.text}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
+    </ActivityLine>
+  )
+}
+
+function ToolLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
+  const pending = item.result === undefined
+  const { Icon, done, running } = describeTool(item.name, item.args)
+
+  return (
+    <ActivityLine icon={pending ? <Spinner className="size-3.5" /> : <Icon className="size-3.5" />}>
+      {/*
+        Collapsed by default. A tool call's arguments and result are often
+        hundreds of lines of JSON, and a transcript that shows every one of them
+        in full buries the answer the run was actually for. The line keeps what
+        you need to skim — what it did, how long, did it fail — and the payload
+        is one click away.
+      */}
+      <Collapsible>
+        <TriggerRow
+          label={done}
+          prefix="Used tool:"
+          meta={
+            pending ? null : (
+              <>
                 {item.ok === false ? <span className="text-destructive">failed</span> : null}
                 {/* Cost of the call, so a slow tool is visible without opening it. */}
                 {item.ms !== undefined ? (
-                  <span className="tabular-nums text-muted-foreground">
+                  <span className="readout text-[0.625rem] text-muted-foreground/70">
                     {item.ms >= 1000 ? `${(item.ms / 1000).toFixed(1)}s` : `${item.ms}ms`}
                   </span>
                 ) : null}
-              </span>
-            )}
-          </CollapsibleTrigger>
+              </>
+            )
+          }
+        />
 
-          <CollapsibleContent>
+        {/* While it runs, the same action in the present tense — the one place
+            the transcript says what is happening rather than what happened. */}
+        {pending ? (
+          <p className="shimmer truncate pt-0.5 text-[0.8125rem]">
+            {/* A phrase whose argument was already cut ends in an ellipsis of
+                its own; a second one reads as a typo. */}
+            {running.endsWith('…') ? running : `${running}…`}
+          </p>
+        ) : null}
+
+        <CollapsibleContent>
+          <div className="mt-1.5 overflow-hidden rounded-lg border bg-muted/30">
+            <div className="readout border-b px-3 py-1.5 text-muted-foreground/70">{item.name}</div>
+
             {item.args !== '{}' ? (
-              <pre className="readout overflow-x-auto border-t px-3 py-2 leading-relaxed text-muted-foreground">
+              <pre className="readout overflow-x-auto px-3 py-2 leading-relaxed text-muted-foreground">
                 {item.args}
               </pre>
             ) : null}
@@ -167,26 +213,57 @@ function TranscriptRow({
               <div className="readout flex gap-2 border-t px-3 py-2 leading-relaxed">
                 <span className="shrink-0 text-muted-foreground">→</span>
                 {/* Capped and scrollable: a single MCP result can run to tens of
-                    thousands of characters, and an expanded card should not push
+                    thousands of characters, and an expanded line should not push
                     the rest of the transcript off screen. */}
                 <span className="max-h-72 min-w-0 overflow-auto break-words whitespace-pre-wrap">
                   {item.result}
                 </span>
               </div>
             ) : null}
-          </CollapsibleContent>
-        </Collapsible>
-      </RailRow>
-    )
-  }
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </ActivityLine>
+  )
+}
 
+/** The clickable sentence: `Used tool: Searched "moai statues"` and a chevron. */
+function TriggerRow({
+  label,
+  prefix,
+  meta,
+  muted = false,
+  live = false,
+}: {
+  label: string
+  prefix?: string
+  meta?: ReactNode
+  muted?: boolean
+  /** The label is about to be replaced — sweep a highlight across it. */
+  live?: boolean
+}) {
   return (
-    <RailRow glyph={<NodeRing />} stub={stub}>
-      <div
-        className={cn('prose-agent max-w-none break-words', streaming && 'caret')}
-        dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-      />
-    </RailRow>
+    <CollapsibleTrigger
+      className={cn(
+        'group flex w-full items-center gap-1.5 rounded text-left text-[0.8125rem] leading-5',
+        'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+      )}
+    >
+      {prefix ? <span className="shrink-0 text-muted-foreground/70">{prefix}</span> : null}
+      <span
+        className={cn(
+          'truncate transition-colors group-hover:text-foreground',
+          muted ? 'text-muted-foreground' : 'font-medium text-foreground',
+          live && 'shimmer',
+        )}
+      >
+        {label}
+      </span>
+      <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/50 transition-transform group-data-[state=open]:rotate-90" />
+      {/* Beside the sentence rather than flushed right: on a wide column a
+          duration at the far edge reads as belonging to nothing. */}
+      {meta ? <span className="flex shrink-0 items-center gap-1.5">{meta}</span> : null}
+    </CollapsibleTrigger>
   )
 }
 

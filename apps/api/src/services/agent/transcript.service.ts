@@ -8,7 +8,8 @@ import type { ChatMessage } from "../../types/chat";
 export type TranscriptItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "thinking"; text: string }
+  /** `ms` is how long the block streamed for; the console labels it. */
+  | { kind: "thinking"; text: string; ms?: number }
   | { kind: "iteration"; n: number }
   | {
       kind: "tool";
@@ -58,6 +59,8 @@ export class TranscriptRecorder {
     thinking: null,
     text: null,
   };
+  /** When the open reasoning block started. Nothing marks where one ends. */
+  private thinkingStart = 0;
 
   /**
    * `seqOffset` is where this run's rows start in the stored transcript. A first
@@ -173,9 +176,15 @@ export class TranscriptRecorder {
 
     if (current && current.kind === kind) {
       current.text += delta;
+      // Restamped per delta rather than closed on some end event: no such event
+      // exists, and by the time the next one arrives this is already final.
+      if (current.kind === "thinking") current.ms = Date.now() - this.thinkingStart;
       return;
     }
-    this.items.push({ kind, text: delta } as TranscriptItem);
+    if (kind === "thinking") this.thinkingStart = Date.now();
+    this.items.push(
+      kind === "thinking" ? { kind, text: delta, ms: 0 } : { kind, text: delta },
+    );
     this.open[channel] = this.items.length - 1;
   }
 
@@ -193,6 +202,12 @@ export class TranscriptRecorder {
 
 function serialize(item: TranscriptItem): string {
   if (item.kind === "iteration") return String(item.n);
+  // Reasoning was stored as bare text, and rows written then still are. The
+  // duration needs a field, so a timed block is stored as JSON and the reader
+  // falls back to treating the row as text — which is what an old row is.
+  if (item.kind === "thinking" && item.ms !== undefined) {
+    return JSON.stringify({ text: item.text, ms: item.ms });
+  }
   if (item.kind === "tool") {
     return JSON.stringify({
       name: item.name,

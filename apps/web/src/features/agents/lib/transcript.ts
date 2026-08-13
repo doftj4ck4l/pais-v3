@@ -19,8 +19,11 @@ export function itemsFromRows(rows: MessageRow[]): Item[] {
     switch (row.kind) {
       case 'user':
       case 'assistant':
-      case 'thinking':
         items.push({ kind: row.kind, text })
+        break
+
+      case 'thinking':
+        items.push({ kind: 'thinking', ...parseThinking(text) })
         break
 
       case 'iteration': {
@@ -56,6 +59,31 @@ export function itemsFromRows(rows: MessageRow[]): Item[] {
   }
 
   return items
+}
+
+/**
+ * A stored reasoning row.
+ *
+ * Rows written before reasoning was timed hold the thought as bare text, and
+ * still do; a timed one holds `{text, ms}`. Anything that isn't that exact
+ * shape is the thought itself, so it is returned untouched.
+ */
+function parseThinking(text: string): { text: string; ms?: number } {
+  if (!text.startsWith('{')) return { text }
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as { text?: unknown }).text === 'string' &&
+      typeof (parsed as { ms?: unknown }).ms === 'number'
+    ) {
+      return parsed as { text: string; ms: number }
+    }
+  } catch {
+    // Not JSON — a thought that happens to open with a brace.
+  }
+  return { text }
 }
 
 export function traceFromRows(rows: TraceRow[]): TraceLine[] {
