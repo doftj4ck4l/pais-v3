@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { DownloadIcon, FileIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { listWorkspaceFiles, workspaceFileUrl } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { WorkspaceFile } from '@/shared/lib/types'
@@ -46,47 +47,43 @@ export function FilesPanel({
 
   return (
     <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        {files.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">{files.length}</span>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => void refresh()}
-          disabled={busy}
-          aria-label="Refresh files"
-          className="ml-auto text-muted-foreground"
-        >
-          <RefreshCwIcon className={busy ? 'animate-spin' : undefined} />
-        </Button>
-      </div>
+      <PanelHeader
+        summary={files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : null}
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refresh()}
+            disabled={busy}
+            aria-label="Refresh files"
+          >
+            <RefreshCwIcon data-icon="inline-start" className={busy ? 'animate-spin' : undefined} />
+            Refresh
+          </Button>
+        }
+      />
 
       {files.length ? (
-        <ul className="flex flex-col gap-0.5">
+        <PanelGrid>
           {files.map((file) => (
-            <li key={file.path}>
-              <a
-                href={workspaceFileUrl(scope, file.path)}
-                download
-                className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
-              >
-                <FileIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs">{file.path}</span>
-                  <span className="readout block text-[0.625rem] text-muted-foreground">
-                    {fmtBytes(file.bytes)}
-                  </span>
-                </span>
-                <DownloadIcon className="size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
-              </a>
-            </li>
+            <ItemCard
+              key={file.path}
+              href={workspaceFileUrl(scope, file.path)}
+              download
+              label={`Download ${file.path}`}
+              leading={<FileIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+              title={file.path}
+              meta={fmtBytes(file.bytes)}
+              actions={<DownloadIcon className="size-4 text-muted-foreground" />}
+            />
           ))}
-        </ul>
+        </PanelGrid>
       ) : (
-        <p className="px-2 text-xs text-muted-foreground">
-          Nothing yet. Files the agent writes appear here.
-        </p>
+        <PanelEmpty
+          icon={FileIcon}
+          title="No files yet"
+          description="Anything the agent writes in this workspace — a spreadsheet, a document, a script — lands here to download."
+        />
       )}
     </div>
   )

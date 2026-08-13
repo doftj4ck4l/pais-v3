@@ -38,10 +38,9 @@ export function ResourcePage({
       }
     >
       <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-        <div
-          key={workspace.current ?? 'none'}
-          className="page-scale rounded-xl border bg-card p-5 sm:p-6"
-        >
+        {/* No surface of its own: what a page lists is a grid of cards, and a
+            card holding cards is a border around a border. */}
+        <div key={workspace.current ?? 'none'} className="page-scale">
           {children}
         </div>
       </main>

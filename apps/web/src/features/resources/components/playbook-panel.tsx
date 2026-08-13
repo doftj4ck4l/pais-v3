@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { deletePlaybookBullet, listPlaybook } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { PlaybookBullet } from '@/shared/lib/types'
+import { PanelEmpty, PanelHeader } from '@/features/resources/components/panel-kit'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -57,22 +58,16 @@ export function PlaybookPanel({ onCountChange }: { onCountChange?: (n: number) =
 
   return (
     <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        {bullets.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {active} of {bullets.length} in use
-          </span>
-        ) : null}
-      </div>
+      <PanelHeader summary={bullets.length ? `${active} of ${bullets.length} in use` : null} />
 
       {bullets.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-          <BrainIcon className="mx-auto mb-1.5 size-4 opacity-60" />
-          Nothing learned yet. After each run the agent writes down what it worked out — facts you
-          told it, tools that worked, and dead ends worth avoiding.
-        </p>
+        <PanelEmpty
+          icon={BrainIcon}
+          title="Nothing learned yet"
+          description="After each run the agent writes down what it worked out — facts you told it, tools that worked, and dead ends worth avoiding."
+        />
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-5 rounded-xl border bg-card p-4">
           {(Object.keys(KINDS) as (keyof typeof KINDS)[]).map((kind) => {
             const group = bullets.filter((b) => b.kind === kind)
             if (!group.length) return null
