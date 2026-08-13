@@ -83,7 +83,7 @@ check(
 // the point here is to prove the guard itself fired, before the statement
 // ever reached the server.
 const GUARD_REJECTION = /only SELECT, WITH, and EXPLAIN are permitted|this connection is read-only/i;
-const blocked = await runReadOnly(url, "CREATE TABLE salurai_should_not_exist (id int)");
+const blocked = await runReadOnly(url, "CREATE TABLE pixelspace_should_not_exist (id int)");
 check(
   "guard rejects a write",
   !blocked.ok && GUARD_REJECTION.test(blocked.error),
@@ -103,7 +103,7 @@ let engineBlocked = false;
 let engineDetail = "";
 try {
   await sql.unsafe("BEGIN TRANSACTION READ ONLY");
-  await sql.unsafe("CREATE TABLE salurai_should_not_exist (id int)");
+  await sql.unsafe("CREATE TABLE pixelspace_should_not_exist (id int)");
 } catch (e: any) {
   engineDetail = e?.message ?? String(e);
   engineBlocked = READ_ONLY_REJECTION.test(engineDetail);

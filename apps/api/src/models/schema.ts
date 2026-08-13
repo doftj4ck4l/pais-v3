@@ -717,10 +717,11 @@ export const generatedImages = sqliteTable(
      */
     costMicros: integer("cost_micros"),
     /**
-     * `generated` or `uploaded`.
+     * `generated`, `uploaded`, or `shared`.
      *
      * The table is named for what first filled it, and now also holds images
-     * the user pasted into the chat. They share everything that matters — a
+     * the user pasted into the chat and images the agent drew in its workspace
+     * and handed over with `share_file`. They share everything that matters — a
      * bucket object, a workspace, and the `/api/images/<id>` URL `read_image`
      * resolves — and differ in whether `model` and `cost_micros` mean anything.
      * Without this column an upload is a generation whose model happened to be

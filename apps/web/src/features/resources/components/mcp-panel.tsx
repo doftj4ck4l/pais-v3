@@ -14,7 +14,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
-import { Spinner } from '@/shared/ui/spinner'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import {
   Dialog,
   DialogContent,
@@ -107,41 +107,51 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     setError(null)
   }
 
+  const openPicker = () => {
+    setChosen(null)
+    setManual(false)
+    setError(null)
+    setPicking(true)
+  }
+
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
 
   return (
     <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">MCP servers</h2>
-        {enabled.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {enabled.length} server{enabled.length === 1 ? '' : 's'} · {toolTotal} tools
-          </span>
-        ) : null}
-        {busy ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
-      </div>
+      <PanelHeader
+        busy={busy}
+        summary={
+          enabled.length
+            ? `${enabled.length} connected · ${toolTotal} tools`
+            : null
+        }
+        action={
+          servers.length ? (
+            <Button size="sm" onClick={openPicker}>
+              <PlusIcon data-icon="inline-start" />
+              Connect a service
+            </Button>
+          ) : null
+        }
+      />
 
-      <button
-        type="button"
-        onClick={() => {
-          setChosen(null)
-          setManual(false)
-          setError(null)
-          setPicking(true)
-        }}
-        className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2.5',
-          'text-xs text-muted-foreground transition-colors',
-          'hover:border-foreground/30 hover:text-foreground',
-        )}
-      >
-        <PlusIcon className="size-3.5" />
-        Connect an MCP server
-      </button>
+      {servers.length === 0 ? (
+        <PanelEmpty
+          icon={PlugIcon}
+          title="No connectors yet"
+          description="Connect a service and its tools become the agent's — your files, your calendar, your tracker, whatever it speaks for."
+          action={
+            <Button size="sm" onClick={openPicker}>
+              <PlusIcon data-icon="inline-start" />
+              Connect a service
+            </Button>
+          }
+        />
+      ) : null}
 
       {/* Separate dialog from the picker: an edit starts from a row, not from
-          "Connect an MCP server", and sharing one dialog would mean the picker
+          "Connect a service", and sharing one dialog would mean the picker
           could appear behind a Back press during an edit. */}
       <Dialog
         open={!!editing}
@@ -258,7 +268,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
       </Dialog>
 
       {servers.length ? (
-        <ul className="mt-2 flex flex-col gap-0.5">
+        <PanelGrid>
           {servers.map((s) => (
             <ServerItem
               key={s.id}
@@ -293,7 +303,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
               }}
             />
           ))}
-        </ul>
+        </PanelGrid>
       ) : null}
     </div>
   )
@@ -346,7 +356,7 @@ function ConnectorPicker({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Connect an MCP server</DialogTitle>
+        <DialogTitle>Connect a service</DialogTitle>
         <DialogDescription>
           Pick a known one and fill in only its credentials, or configure it yourself.
         </DialogDescription>
@@ -820,93 +830,95 @@ function ServerItem({
         .join(' · ')
 
   return (
-    <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
-      {failed ? (
-        // A button, not a tooltip. The reason a connection failed is usually a
-        // traceback: it has to be readable at length and selectable to paste
-        // somewhere, and a hover card that truncates at 16rem is neither.
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={onDiagnose}
-              aria-label={`Why ${server.name} failed`}
-              className="shrink-0 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40"
-            >
-              <AlertTriangleIcon className="size-3.5 text-muted-foreground" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>See why it failed</TooltipContent>
-        </Tooltip>
-      ) : server.transport === 'stdio' ? (
-        <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      ) : (
-        <PlugIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
-
-      <span className="min-w-0 flex-1">
-        <span
-          className={cn('block truncate text-xs', (failed || off) && 'text-muted-foreground')}
-        >
+    <ItemCard
+      leading={
+        failed ? (
+          // A button, not a tooltip. The reason a connection failed is usually
+          // a traceback: it has to be readable at length and selectable to
+          // paste somewhere, and a hover card that truncates at 16rem is
+          // neither.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onDiagnose}
+                aria-label={`Why ${server.name} failed`}
+                className="relative z-10 mt-0.5 shrink-0 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40"
+              >
+                <AlertTriangleIcon className="size-4 text-muted-foreground" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>See why it failed</TooltipContent>
+          </Tooltip>
+        ) : server.transport === 'stdio' ? (
+          <TerminalIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <PlugIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        )
+      }
+      title={
+        <span className={cn((failed || off) && 'text-muted-foreground')}>
           {server.name}
           {off ? <span className="ml-1.5 opacity-60">(off)</span> : null}
         </span>
-        {failed ? (
+      }
+      meta={
+        failed ? (
           <button
             type="button"
             onClick={onDiagnose}
             className={cn(
-              'readout block max-w-full truncate text-left text-[0.625rem] text-muted-foreground',
-              'underline decoration-dotted underline-offset-2 outline-none',
-              'hover:text-foreground focus-visible:text-foreground',
+              'relative z-10 max-w-full truncate text-left underline decoration-dotted underline-offset-2',
+              'outline-none hover:text-foreground focus-visible:text-foreground',
             )}
           >
             could not connect — see details
           </button>
         ) : (
-          <span className="readout block truncate text-[0.625rem] text-muted-foreground">
-            {detail}
-          </span>
-        )}
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void onToggle()}
-        aria-label={`${server.enabled ? 'Disable' : 'Enable'} ${server.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <PlugIcon className={cn(off && 'opacity-40')} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onEdit}
-        aria-label={`Edit ${server.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <PencilIcon />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void onRefresh()}
-        aria-label={`Refresh ${server.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <RefreshCwIcon />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void onRemove()}
-        aria-label={`Remove ${server.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <Trash2Icon />
-      </Button>
-    </li>
+          detail
+        )
+      }
+      actions={
+        <>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onToggle()}
+            aria-label={`${server.enabled ? 'Disable' : 'Enable'} ${server.name}`}
+            className="text-muted-foreground"
+          >
+            <PlugIcon className={cn(off && 'opacity-40')} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onEdit}
+            aria-label={`Edit ${server.name}`}
+            className="text-muted-foreground"
+          >
+            <PencilIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onRefresh()}
+            aria-label={`Reconnect ${server.name}`}
+            className="text-muted-foreground"
+          >
+            <RefreshCwIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onRemove()}
+            aria-label={`Remove ${server.name}`}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2Icon />
+          </Button>
+        </>
+      }
+    />
   )
 }
 

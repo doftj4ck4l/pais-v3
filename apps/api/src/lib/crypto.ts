@@ -12,6 +12,12 @@ import { env } from "../config/env";
  * limitations section of the connector design.
  */
 
+/**
+ * Keeps the old product name on purpose. This salt derives the key that every
+ * stored secret was encrypted with — MCP headers, database URLs, connector
+ * tokens. Renaming it to match the console would not re-encrypt anything; it
+ * would derive a different key and make every one of them undecryptable.
+ */
 const SALT = "salurai.connection.v1";
 
 // scrypt takes ~100ms, and a key is derived on every tool call. Cached by the

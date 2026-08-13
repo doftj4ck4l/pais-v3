@@ -33,6 +33,20 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     `are running on: "here", "this server", "this machine", "the workspace", and bare shell ` +
     `requests such as "ls" all mean this filesystem.`;
 
+  // The other half of knowing where you are: knowing the user is not there.
+  //
+  // A run once drew a picture and reported its workspace path. The path was
+  // correct and useless — it names a directory inside this container, which the
+  // user has no shell on — so a finished piece of work read as a fabrication.
+  // Naming the tool here rather than leaving it to the tool list is deliberate:
+  // the failure was never that the model could not find `share_file`, it was
+  // that a path felt like an answer.
+  out +=
+    ` The user cannot see this filesystem and cannot open a path on it. Any file you want ` +
+    `them to have — an image, a document, a spreadsheet — has to go through the "share_file" ` +
+    `tool, which returns a URL; give them that URL and never a bare path. Images come back as ` +
+    `a link to embed as markdown so the picture shows in your reply.`;
+
   // Only worth saying when there is something to confuse it with. A workspace
   // with no MCP server has no ambiguity to resolve.
   if (env.hasExternalServices) {

@@ -10,20 +10,17 @@ import { firstName, partOfDay } from './greeting'
  * It used to open with a slogan. A slogan is what a landing page needs; what a
  * console needs is to say where you are — so it now answers who is signed in
  * and what the time is, and only then offers something to run.
+ *
+ * Split in two because the composer sits between them: the greeting is above
+ * the box you type in, the suggestions are under it, and the whole arrangement
+ * is what collapses when the first question turns this into a transcript.
  */
-export function EmptyState({
-  harnessId,
-  onPick,
-}: {
-  harnessId: string | null
-  onPick: (text: string) => void
-}) {
+export function Greeting() {
   const me = useMe()
   const name = firstName(me)
-  const suggestions = useSuggestions(harnessId)
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-4 py-12 sm:px-6">
+    <div className="mx-auto w-full max-w-5xl px-4 pb-5 sm:px-6">
       <Clock />
 
       <h1 className="mt-4 text-[clamp(1.9rem,4.5vw,2.6rem)] leading-[1.08] font-extrabold tracking-[-0.03em]">
@@ -34,8 +31,22 @@ export function EmptyState({
       <p className="mt-3 max-w-lg text-[0.9375rem] text-muted-foreground">
         Every question starts its own agent. Watch them all from the sidebar.
       </p>
+    </div>
+  )
+}
 
-      <div className="mt-7 grid gap-2.5 sm:grid-cols-2">
+export function Suggestions({
+  harnessId,
+  onPick,
+}: {
+  harnessId: string | null
+  onPick: (text: string) => void
+}) {
+  const suggestions = useSuggestions(harnessId)
+
+  return (
+    <div className="mx-auto w-full max-w-5xl px-4 pt-1 pb-8 sm:px-6">
+      <div className="grid gap-2.5 sm:grid-cols-2">
         {suggestions.map((s) => (
           <button
             key={s.text}
@@ -51,8 +62,6 @@ export function EmptyState({
           </button>
         ))}
       </div>
-
-      <p className="mt-6 text-sm text-muted-foreground">Or type your own below.</p>
     </div>
   )
 }

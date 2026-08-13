@@ -11,6 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as DataRouteImport } from './routes/data'
+import { Route as DocsRouteImport } from './routes/docs'
+import { Route as FilesRouteImport } from './routes/files'
+import { Route as LearnedRouteImport } from './routes/learned'
+import { Route as McpRouteImport } from './routes/mcp'
+import { Route as SourcesRouteImport } from './routes/sources'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +28,110 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DataRoute = DataRouteImport.update({
+  id: '/data',
+  path: '/data',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FilesRoute = FilesRouteImport.update({
+  id: '/files',
+  path: '/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LearnedRoute = LearnedRouteImport.update({
+  id: '/learned',
+  path: '/learned',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SourcesRoute = SourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/data': typeof DataRoute
+  '/docs': typeof DocsRoute
+  '/files': typeof FilesRoute
+  '/learned': typeof LearnedRoute
+  '/mcp': typeof McpRoute
+  '/sources': typeof SourcesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/data': typeof DataRoute
+  '/docs': typeof DocsRoute
+  '/files': typeof FilesRoute
+  '/learned': typeof LearnedRoute
+  '/mcp': typeof McpRoute
+  '/sources': typeof SourcesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/data': typeof DataRoute
+  '/docs': typeof DocsRoute
+  '/files': typeof FilesRoute
+  '/learned': typeof LearnedRoute
+  '/mcp': typeof McpRoute
+  '/sources': typeof SourcesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/data'
+    | '/docs'
+    | '/files'
+    | '/learned'
+    | '/mcp'
+    | '/sources'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin'
-  id: '__root__' | '/' | '/admin'
+  to:
+    | '/'
+    | '/admin'
+    | '/data'
+    | '/docs'
+    | '/files'
+    | '/learned'
+    | '/mcp'
+    | '/sources'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/data'
+    | '/docs'
+    | '/files'
+    | '/learned'
+    | '/mcp'
+    | '/sources'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  DataRoute: typeof DataRoute
+  DocsRoute: typeof DocsRoute
+  FilesRoute: typeof FilesRoute
+  LearnedRoute: typeof LearnedRoute
+  McpRoute: typeof McpRoute
+  SourcesRoute: typeof SourcesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +150,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/data': {
+      id: '/data'
+      path: '/data'
+      fullPath: '/data'
+      preLoaderRoute: typeof DataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/files': {
+      id: '/files'
+      path: '/files'
+      fullPath: '/files'
+      preLoaderRoute: typeof FilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/learned': {
+      id: '/learned'
+      path: '/learned'
+      fullPath: '/learned'
+      preLoaderRoute: typeof LearnedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sources': {
+      id: '/sources'
+      path: '/sources'
+      fullPath: '/sources'
+      preLoaderRoute: typeof SourcesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  DataRoute: DataRoute,
+  DocsRoute: DocsRoute,
+  FilesRoute: FilesRoute,
+  LearnedRoute: LearnedRoute,
+  McpRoute: McpRoute,
+  SourcesRoute: SourcesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

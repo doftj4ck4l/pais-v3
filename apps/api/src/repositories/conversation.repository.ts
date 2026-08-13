@@ -148,6 +148,34 @@ export const conversationRepository = {
       .orderBy(sql`seq asc`);
   },
 
+  /**
+   * Every tool call this workspace has made, newest first, with the
+   * conversation that made it.
+   *
+   * One query rather than a listing per conversation: the caller is answering
+   * "which chat wrote this file" for a whole directory at once, and doing that
+   * per file would be a query per file. Bounded because it is read on a page
+   * load and the answer only gets less interesting the further back it goes.
+   */
+  async listToolCalls(
+    workspaceId: string,
+    limit = 2000,
+  ): Promise<{ conversationId: string; title: string; ts: number; text: string }[]> {
+    const rows = await db
+      .select({
+        conversationId: messages.conversationId,
+        title: conversations.title,
+        ts: messages.ts,
+        text: messages.text,
+      })
+      .from(messages)
+      .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+      .where(and(eq(conversations.workspaceId, workspaceId), eq(messages.kind, "tool")))
+      .orderBy(sql`messages.ts desc, messages.seq desc`)
+      .limit(limit);
+    return rows.filter((r): r is typeof r & { text: string } => r.text !== null);
+  },
+
   /** List a conversation's traces, oldest first. */
   async listTraces(conversationId: string) {
     return db

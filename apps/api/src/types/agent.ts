@@ -67,6 +67,12 @@ export type AgentOptions = {
    * would mean running against a scope nobody owns.
    */
   workspaceId?: string;
+  /**
+   * The chat session this run continues. Carried only so anything the run
+   * produces — an image so far — is stamped with it, which is what lets the
+   * console show one session's artifacts rather than the whole workspace's.
+   */
+  conversationId?: string;
 };
 
 /** Body accepted by POST /api/chat. */

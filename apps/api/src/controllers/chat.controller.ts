@@ -157,6 +157,7 @@ export function stream(c: Context) {
           template: body.template,
           workspace: body.workspace,
           workspaceId: workspace.id,
+          conversationId,
         });
       } catch (e) {
         // The loop reports failures as events; a throw here means it broke outright.

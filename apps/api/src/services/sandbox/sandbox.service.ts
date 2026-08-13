@@ -13,7 +13,7 @@ import {
 
 /** Container names must survive Docker's charset rules and stay recognisable. */
 const containerNameFor = (workspaceId: string) =>
-  `salurai-${workspaceId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
+  `pixelspace-${workspaceId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
 
 /**
  * Owns the container lifecycle behind a workspace's directory.

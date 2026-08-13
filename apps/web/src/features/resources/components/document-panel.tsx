@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangleIcon, FileTextIcon, Trash2Icon, UploadIcon } from 'lucide-react'
+import { AlertTriangleIcon, CheckIcon, FileTextIcon, Trash2Icon, UploadIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog'
 import { Spinner } from '@/shared/ui/spinner'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { deleteDocument, listDocuments, uploadDocuments } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
-import type { DocumentRow } from '@/shared/lib/types'
+import type { DocumentRow, IngestResult } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -20,7 +28,9 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   const [docs, setDocs] = useState<DocumentRow[]>([])
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  /** What the last upload made of each file, shown in the dialog it happened in. */
+  const [results, setResults] = useState<IngestResult[]>([])
   const scope = useScope()
 
   const refresh = useCallback(async () => {
@@ -39,8 +49,9 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
     async (files: File[]) => {
       if (!files.length) return
       setBusy(true)
+      setUploadOpen(true)
       try {
-        await uploadDocuments(scope, files)
+        setResults(await uploadDocuments(scope, files))
         await refresh()
       } finally {
         setBusy(false)
@@ -62,63 +73,180 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   useEffect(() => onCountChange?.(indexed.length), [indexed.length, onCountChange])
   const chunkTotal = indexed.reduce((n, d) => n + d.chunkCount, 0)
 
-  return (
-    <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        <h2 className="label text-muted-foreground">Context</h2>
-        {indexed.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {indexed.length} doc{indexed.length === 1 ? '' : 's'} · {chunkTotal} chunks
-          </span>
-        ) : null}
-        {busy ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
-      </div>
+  const openUpload = () => {
+    setResults([])
+    setUploadOpen(true)
+  }
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/pdf,.pdf"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          void upload(Array.from(e.target.files ?? []))
-          e.target.value = '' // let the same file be re-uploaded after a delete
-        }}
+  return (
+    // The whole panel is also a drop target. A dashed bar to aim at was a drawer's
+    // answer to having no room; on a page you can drop a PDF anywhere on it.
+    <div
+      className={cn(
+        'flex flex-col rounded-lg transition-colors',
+        dragging && 'outline-2 outline-offset-8 outline-dashed outline-foreground/30',
+      )}
+      onDragOver={(e) => {
+        e.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragging(false)
+        void upload(Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf'))
+      }}
+    >
+      <PanelHeader
+        busy={busy}
+        summary={
+          indexed.length
+            ? `${indexed.length} doc${indexed.length === 1 ? '' : 's'} · ${chunkTotal} chunks`
+            : null
+        }
+        action={
+          docs.length ? (
+            <Button size="sm" onClick={openUpload}>
+              <UploadIcon data-icon="inline-start" />
+              Upload PDFs
+            </Button>
+          ) : null
+        }
       />
 
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          void upload(Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf'))
-        }}
-        disabled={busy}
-        className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2.5',
-          'text-xs text-muted-foreground transition-colors',
-          'hover:border-foreground/30 hover:text-foreground disabled:opacity-60',
-          dragging && 'border-foreground/40 bg-accent text-foreground',
-        )}
-      >
-        <UploadIcon className="size-3.5" />
-        {busy ? 'Indexing…' : 'Drop PDFs or click to upload'}
-      </button>
-
       {docs.length ? (
-        <ul className="mt-2 flex flex-col gap-0.5">
+        <PanelGrid>
           {docs.map((doc) => (
             <DocumentItem key={doc.id} doc={doc} onRemove={() => void remove(doc.id)} />
           ))}
-        </ul>
-      ) : null}
+        </PanelGrid>
+      ) : (
+        <PanelEmpty
+          icon={FileTextIcon}
+          title="No documents yet"
+          description="Upload a PDF and the agent can search it with search_docs — or drop one anywhere on this page."
+          action={
+            <Button size="sm" onClick={openUpload}>
+              <UploadIcon data-icon="inline-start" />
+              Upload PDFs
+            </Button>
+          }
+        />
+      )}
+
+      <UploadDialog
+        open={uploadOpen}
+        onOpenChange={(open) => {
+          setUploadOpen(open)
+          if (!open) setResults([])
+        }}
+        busy={busy}
+        results={results}
+        onFiles={(files) => void upload(files)}
+      />
     </div>
+  )
+}
+
+/**
+ * Uploading happens in a dialog, not by throwing up the operating system's file
+ * picker on a click. The picker can only say "these files"; what someone wants
+ * to know is what happened to each of them — a scanned PDF is accepted, indexes
+ * to nothing, and looks exactly like a working one until a search comes back
+ * empty. The dialog is where that answer fits.
+ */
+function UploadDialog({
+  open,
+  onOpenChange,
+  busy,
+  results,
+  onFiles,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  busy: boolean
+  results: IngestResult[]
+  onFiles: (files: File[]) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [over, setOver] = useState(false)
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Upload documents</DialogTitle>
+          <DialogDescription>
+            PDFs only. Each one is split into chunks the agent can find with search_docs.
+          </DialogDescription>
+        </DialogHeader>
+
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            onFiles(Array.from(e.target.files ?? []))
+            e.target.value = '' // let the same file be re-uploaded after a delete
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setOver(true)
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setOver(false)
+            onFiles(Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf'))
+          }}
+          disabled={busy}
+          className={cn(
+            'flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-6 py-10',
+            'text-sm text-muted-foreground transition-colors',
+            'hover:border-foreground/30 hover:text-foreground disabled:opacity-60',
+            over && 'border-foreground/40 bg-accent text-foreground',
+          )}
+        >
+          {busy ? <Spinner className="size-5" /> : <UploadIcon className="size-5" />}
+          <span>{busy ? 'Indexing…' : 'Drop PDFs here, or click to browse'}</span>
+        </button>
+
+        {results.length ? (
+          <ul className="flex max-h-52 flex-col gap-1 overflow-y-auto">
+            {results.map((result, i) => (
+              <li key={`${result.title}-${i}`} className="flex items-start gap-2 text-sm">
+                {result.status === 'indexed' ? (
+                  <CheckIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{result.title}</span>
+                  <span className="readout block text-muted-foreground">
+                    {result.status === 'indexed'
+                      ? `${result.pages}p · ${result.chunks} chunks`
+                      : (result.error ?? 'could not be read')}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -128,41 +256,40 @@ function DocumentItem({ doc, onRemove }: { doc: DocumentRow; onRemove: () => voi
   // skipped. Worth the same warning icon: partial coverage looks exactly like
   // full coverage until a search comes back empty.
   const partial = !failed && !!doc.error
+
   return (
-    <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
-      {failed || partial ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <AlertTriangleIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-64">{doc.error ?? doc.status}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
-
-      <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-xs', failed && 'text-muted-foreground')}>
-          {doc.title}
-        </span>
-        <span className="readout block text-[0.625rem] text-muted-foreground">
-          {failed
-            ? doc.status === 'empty'
-              ? 'no text layer, needs OCR'
-              : 'could not be read'
-            : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`}
-        </span>
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onRemove}
-        aria-label={`Remove ${doc.title}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <Trash2Icon />
-      </Button>
-    </li>
+    <ItemCard
+      leading={
+        failed || partial ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">{doc.error ?? doc.status}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        )
+      }
+      title={<span className={cn(failed && 'text-muted-foreground')}>{doc.title}</span>}
+      meta={
+        failed
+          ? doc.status === 'empty'
+            ? 'no text layer, needs OCR'
+            : 'could not be read'
+          : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`
+      }
+      actions={
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onRemove}
+          aria-label={`Remove ${doc.title}`}
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2Icon />
+        </Button>
+      }
+    />
   )
 }

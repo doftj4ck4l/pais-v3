@@ -1,4 +1,4 @@
-# SalurAI
+# Pixelspace
 
 An agent console that pairs **agent harnesses** (how an agent reasons and uses
 tools) with **models** (which backend powers the loop) and runs a **real
@@ -173,7 +173,7 @@ switcher under the wordmark.
 
 Users own workspaces; **nothing else is scoped by user**. A workspace's sandbox
 lives at `SANDBOX_ROOT/<workspaceId>` and its container is
-`salurai-<workspaceId>`, so two workspaces never share a filesystem. The browser
+`pixelspace-<workspaceId>`, so two workspaces never share a filesystem. The browser
 still generates a `userId` and keeps it in localStorage — it is the ownership
 root, and the only thing it now selects is which workspaces you can reach.
 
@@ -238,7 +238,7 @@ workspace in the console clears its rows and leaves its directory alone.
 | --- | --- | --- |
 | `SANDBOX_BACKEND` | `docker` | `docker` (per-workspace container, default) or `node` (API host — unsandboxed) |
 | `SANDBOX_IMAGE` | `node:22-bookworm-slim` | Image the agent works inside |
-| `SANDBOX_ROOT` | `~/salurai-workspaces` | Where workspace directories live on the host |
+| `SANDBOX_ROOT` | `~/pixelspace-workspaces` | Where workspace directories live on the host |
 | `SANDBOX_IDLE_MS` | `300000` | Remove a container after this much idle time |
 
 Needs a running Docker daemon — `bun run dev` is enough, no env var required.

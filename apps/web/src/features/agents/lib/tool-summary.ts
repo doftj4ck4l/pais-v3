@@ -10,6 +10,7 @@ import {
   GlobeIcon,
   ImageIcon,
   PencilLineIcon,
+  ShareIcon,
   SigmaIcon,
   SparklesIcon,
   SquareTerminalIcon,
@@ -52,6 +53,9 @@ export function describeTool(name: string, argsJson: string): ToolSummary {
   }
   if (/^read_image|describe_image|vision/.test(verb)) {
     return phrase(ImageIcon, 'Read an image', 'Reading the image')
+  }
+  if (/^share_file/.test(verb)) {
+    return phrase(ShareIcon, 'Shared a file', 'Sharing the file', path)
   }
   if (/^generate_image|create_image|image_gen/.test(verb)) {
     return phrase(SparklesIcon, 'Generated an image', 'Generating an image')

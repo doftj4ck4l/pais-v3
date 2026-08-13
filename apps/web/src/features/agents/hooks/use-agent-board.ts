@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import {
   deleteConversation,
   fetchConversation,
@@ -292,7 +292,11 @@ export function useAgentBoard(scope: Scope) {
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
     streamRefs.current.set(id, freshStream())
-    setAgents((prev) => [...prev, agent])
+    // Prepended, because the list is newest-first: restored runs arrive in that
+    // order and the reader's own new chat is the newest thing there is.
+    // Appending put it under everything else in Today, which read as the run
+    // having gone somewhere else.
+    setAgents((prev) => [agent, ...prev])
     setSelectedId(id)
     void run(id, agent, [{ role: 'user', content: agent.task }], images)
     return id
@@ -569,4 +573,23 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     hydrated: false,
     context: null,
   }
+}
+
+/** Everything the console does with agents, as one value. */
+export type AgentBoard = ReturnType<typeof useAgentBoard>
+
+/**
+ * The board lives above the router, not inside the chat page.
+ *
+ * A run is an open SSE connection held in this hook's refs. Mounting the hook
+ * per route meant that opening Docs mid-run unmounted the only thing listening
+ * to it: the stream kept arriving, and the answer landed in a component nobody
+ * would ever see again. Navigation is not a reason to lose a run.
+ */
+export const AgentBoardContext = createContext<AgentBoard | null>(null)
+
+export function useBoard(): AgentBoard {
+  const value = useContext(AgentBoardContext)
+  if (!value) throw new Error('useBoard must be used inside an AgentBoardContext.Provider')
+  return value
 }

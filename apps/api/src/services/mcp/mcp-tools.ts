@@ -472,7 +472,7 @@ export type McpToolsOptions = {
 };
 
 /** Where spilled results live inside a workspace. */
-export const SPILL_DIR = ".salur/tool-output";
+export const SPILL_DIR = ".pixelspace/tool-output";
 
 /** One entry of the catalog: an MCP tool as the model will see it. */
 type CatalogEntry = {

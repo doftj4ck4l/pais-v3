@@ -14,7 +14,7 @@ let createApp: typeof import("./app").createApp;
 const asUser = (id: string) => ({ headers: { "x-authentik-uid": id } });
 
 beforeAll(async () => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "salur-onboarding-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-onboarding-"));
   process.env.DB_PATH = path.join(dir, "app.db");
   // The server applies the schema at boot; this stands in for that.
   const { ensureSchema } = await import("./db/client");

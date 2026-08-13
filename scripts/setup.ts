@@ -15,7 +15,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const API = path.join(ROOT, "apps", "api");
-const IMAGE = process.env.SANDBOX_IMAGE ?? "salurai-sandbox:1";
+const IMAGE = process.env.SANDBOX_IMAGE ?? "pixelspace-sandbox:1";
 
 const problems: string[] = [];
 const notes: string[] = [];

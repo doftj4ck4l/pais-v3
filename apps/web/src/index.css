@@ -271,6 +271,36 @@
     font-size: 0.92em;
 }
 
+/*
+ * Page scale.
+ *
+ * The resource panels were built for a 288px drawer, where 12px type was the
+ * only way six of them fitted. On a page of their own they are the content, and
+ * 12px reads as a footnote to a heading with nothing else under it.
+ *
+ * Done by redefining the size tokens the utilities already read — Tailwind v4
+ * emits `font-size: var(--text-sm)` — rather than by rewriting every class in
+ * six panels, one of which is a thousand lines. The two arbitrary sizes are
+ * named directly because an arbitrary value compiles to a literal, not a token.
+ */
+.page-scale {
+    --text-xs: 0.8125rem;
+    --text-xs--line-height: calc(1.15 / 0.8125);
+    --text-sm: 0.9375rem;
+    --text-sm--line-height: calc(1.45 / 0.9375);
+    font-size: var(--text-sm);
+}
+
+.page-scale .label,
+.page-scale .readout {
+    font-size: 0.8125rem;
+}
+
+.page-scale .text-\[0\.625rem\],
+.page-scale .text-\[0\.6875rem\] {
+    font-size: 0.75rem;
+}
+
 /* Streaming caret — the one moving thing in an otherwise still page. */
 .caret > :last-child::after {
     content: '';

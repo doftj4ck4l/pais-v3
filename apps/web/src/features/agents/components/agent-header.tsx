@@ -1,4 +1,4 @@
-import { PanelRightIcon, SquareIcon } from 'lucide-react'
+import { PaperclipIcon, SquareIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ModelLogo } from '@/shared/components/model-logo'
 import { ContextRing } from '@/features/agents/components/context-ring'
@@ -15,13 +15,15 @@ export function AgentHeader({
   agent,
   model,
   onStop,
-  onToggleResources,
+  artifactCount = 0,
+  onToggleArtifacts,
 }: {
   agent: AgentRun
   model?: Model
   onStop: () => void
-  /** Opens the documents / databases / files panel. */
-  onToggleResources: () => void
+  /** How many files and images this chat has produced. Zero hides the control. */
+  artifactCount?: number
+  onToggleArtifacts?: () => void
 }) {
   const running = agent.status === 'running'
 
@@ -41,15 +43,14 @@ export function AgentHeader({
 
       <ContextRing context={agent.context} />
 
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onToggleResources}
-        aria-label="Toggle documents, databases and files"
-        className="text-muted-foreground"
-      >
-        <PanelRightIcon />
-      </Button>
+      {/* Only once there is something to open. A control that opens an empty
+          panel is a control that teaches you not to press it. */}
+      {artifactCount > 0 && onToggleArtifacts ? (
+        <Button variant="outline" size="sm" onClick={onToggleArtifacts}>
+          <PaperclipIcon data-icon="inline-start" />
+          {artifactCount}
+        </Button>
+      ) : null}
 
       {running ? (
         <Button variant="outline" size="sm" onClick={onStop}>

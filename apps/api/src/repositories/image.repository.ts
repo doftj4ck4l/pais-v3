@@ -13,12 +13,18 @@ export type NewImage = {
   bytes: number;
   costMicros: number | null;
   /** Defaults to `generated`, which is what every writer before uploads meant. */
-  source?: "generated" | "uploaded";
+  source?: "generated" | "uploaded" | "shared";
 };
+
+/**
+ * `conversationId` narrows the listing to one chat session — what the artifact
+ * panel beside a transcript shows. Absent, it is every image in the workspace.
+ */
+export type ImageQuery = { limit?: number; conversationId?: string };
 
 export interface ImageStore {
   save(image: NewImage): Promise<void>;
-  list(workspaceId: string, limit?: number): Promise<GeneratedImageRow[]>;
+  list(workspaceId: string, query?: ImageQuery): Promise<GeneratedImageRow[]>;
   /** By id alone — the serving route has no workspace in its path. */
   get(id: string): Promise<GeneratedImageRow | undefined>;
   remove(workspaceId: string, id: string): Promise<GeneratedImageRow | undefined>;
@@ -35,13 +41,19 @@ export class SqliteImageStore implements ImageStore {
       .run();
   }
 
-  async list(workspaceId: string, limit = 50): Promise<GeneratedImageRow[]> {
+  async list(workspaceId: string, query: ImageQuery = {}): Promise<GeneratedImageRow[]> {
+    const scope = query.conversationId
+      ? and(
+          eq(generatedImages.workspaceId, workspaceId),
+          eq(generatedImages.conversationId, query.conversationId),
+        )
+      : eq(generatedImages.workspaceId, workspaceId);
     const rows = await this.dbImpl
       .select()
       .from(generatedImages)
-      .where(eq(generatedImages.workspaceId, workspaceId))
+      .where(scope)
       .orderBy(sql`created_at desc`)
-      .limit(limit);
+      .limit(query.limit ?? 50);
     return rows as GeneratedImageRow[];
   }
 
