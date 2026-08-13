@@ -43,7 +43,7 @@ export function Transcript({
 
       {running ? (
         <ActivityLine icon={<span className="rail-head size-2 rounded-full bg-foreground/50" />}>
-          <span className="flex min-h-5 items-center text-[0.8125rem] text-muted-foreground">
+          <span className="shimmer flex min-h-5 items-center text-[0.8125rem]">
             {runSummary ?? 'working…'}
           </span>
         </ActivityLine>
@@ -139,7 +139,11 @@ function ThinkingLine({
   return (
     <ActivityLine icon={<LightbulbIcon className="size-3.5" />}>
       <Collapsible open={open} onOpenChange={setManual}>
-        <TriggerRow label={streaming ? 'Thinking…' : thoughtLabel(item.ms)} muted={!streaming} />
+        <TriggerRow
+          label={streaming ? 'Thinking…' : thoughtLabel(item.ms)}
+          muted={!streaming}
+          live={streaming}
+        />
         <CollapsibleContent>
           <pre
             ref={scroller}
@@ -188,7 +192,11 @@ function ToolLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
         {/* While it runs, the same action in the present tense — the one place
             the transcript says what is happening rather than what happened. */}
         {pending ? (
-          <p className="truncate pt-0.5 text-[0.8125rem] text-muted-foreground/70">{running}…</p>
+          <p className="shimmer truncate pt-0.5 text-[0.8125rem]">
+            {/* A phrase whose argument was already cut ends in an ellipsis of
+                its own; a second one reads as a typo. */}
+            {running.endsWith('…') ? running : `${running}…`}
+          </p>
         ) : null}
 
         <CollapsibleContent>
@@ -225,11 +233,14 @@ function TriggerRow({
   prefix,
   meta,
   muted = false,
+  live = false,
 }: {
   label: string
   prefix?: string
   meta?: ReactNode
   muted?: boolean
+  /** The label is about to be replaced — sweep a highlight across it. */
+  live?: boolean
 }) {
   return (
     <CollapsibleTrigger
@@ -243,6 +254,7 @@ function TriggerRow({
         className={cn(
           'truncate transition-colors group-hover:text-foreground',
           muted ? 'text-muted-foreground' : 'font-medium text-foreground',
+          live && 'shimmer',
         )}
       >
         {label}

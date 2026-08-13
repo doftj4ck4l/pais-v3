@@ -297,10 +297,48 @@
     animation: rail-pulse 1.4s ease-in-out infinite;
 }
 
+/*
+ * Live status text: a highlight sweeping left to right across the words.
+ *
+ * It is the one place the transcript says "still going" without saying
+ * anything — a spinner already marks the call, and a second spinning thing
+ * beside the sentence would be two answers to one question. Only ever on text
+ * that is about to be replaced: `Thinking…`, a pending call, the run's head.
+ */
+/* 150% → -50% is one full crossing: the highlight enters just off the left of
+   the words and leaves just past the right. A plain 100% → 0 sweep spends half
+   the cycle parked off-screen, which reads as the animation having stopped. */
+@keyframes text-shimmer {
+    from { background-position: 150% center; }
+    to { background-position: -50% center; }
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        var(--muted-foreground) 42%,
+        var(--foreground) 50%,
+        var(--muted-foreground) 58%
+    );
+    background-size: 200% auto;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: text-shimmer 1.8s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .rail-head,
     .caret > :last-child::after {
         animation: none;
+    }
+
+    /* No sweep, and the text has to get its colour back: the gradient it was
+       painted with is clipped to glyphs that are otherwise transparent. */
+    .shimmer {
+        animation: none;
+        background: none;
+        color: var(--muted-foreground);
     }
 }
 
