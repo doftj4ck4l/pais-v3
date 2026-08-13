@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { deletePlaybookBullet, listPlaybook } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { PlaybookBullet } from '@/shared/lib/types'
-import { PanelEmpty, PanelHeader } from '@/features/resources/components/panel-kit'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -67,19 +67,19 @@ export function PlaybookPanel({ onCountChange }: { onCountChange?: (n: number) =
           description="After each run the agent writes down what it worked out — facts you told it, tools that worked, and dead ends worth avoiding."
         />
       ) : (
-        <div className="flex flex-col gap-5 rounded-xl border bg-card p-4">
+        <div className="flex flex-col gap-6">
           {(Object.keys(KINDS) as (keyof typeof KINDS)[]).map((kind) => {
             const group = bullets.filter((b) => b.kind === kind)
             if (!group.length) return null
             const { label, icon: Icon, blurb } = KINDS[kind]
             return (
               <section key={kind}>
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Icon className="size-3 shrink-0 text-muted-foreground" />
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Icon className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="label text-muted-foreground">{label}</span>
-                  <span className="readout text-[0.625rem] text-muted-foreground/70">{blurb}</span>
+                  <span className="readout text-muted-foreground/70">{blurb}</span>
                 </div>
-                <ul className="flex flex-col gap-0.5">
+                <PanelGrid>
                   {group.map((bullet) => (
                     <BulletItem
                       key={bullet.id}
@@ -87,7 +87,7 @@ export function PlaybookPanel({ onCountChange }: { onCountChange?: (n: number) =
                       onRemove={() => void remove(bullet.id)}
                     />
                   ))}
-                </ul>
+                </PanelGrid>
               </section>
             )
           })}
@@ -108,17 +108,19 @@ function BulletItem({ bullet, onRemove }: { bullet: PlaybookBullet; onRemove: ()
       : null
 
   return (
-    <li className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
-      <span className="min-w-0 flex-1">
+    <ItemCard
+      title={
         <span
           className={cn(
-            'block text-xs leading-relaxed',
+            'font-normal',
             !bullet.inPrompt && 'text-muted-foreground line-through decoration-muted-foreground/40',
           )}
         >
           {bullet.content}
         </span>
-        <span className="readout mt-0.5 flex items-center gap-1.5 text-[0.625rem] text-muted-foreground">
+      }
+      meta={
+        <span className="flex items-center gap-1.5">
           {bullet.helpful > 0 ? <span>confirmed {bullet.helpful}×</span> : null}
           {bullet.harmful > 0 ? <span>doubted {bullet.harmful}×</span> : null}
           {reason ? (
@@ -130,17 +132,18 @@ function BulletItem({ bullet, onRemove }: { bullet: PlaybookBullet; onRemove: ()
             </Tooltip>
           ) : null}
         </span>
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onRemove}
-        aria-label="Forget this"
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <Trash2Icon />
-      </Button>
-    </li>
+      }
+      actions={
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onRemove}
+          aria-label="Forget this"
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2Icon />
+        </Button>
+      }
+    />
   )
 }
