@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangleIcon, DatabaseIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
-import { Spinner } from '@/shared/ui/spinner'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import {
   addConnectionStreaming,
@@ -84,18 +84,26 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
 
   return (
     <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        {connected.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {connected.length} db{connected.length === 1 ? '' : 's'} · {tableTotal} tables
-          </span>
-        ) : null}
-        {busy ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
-      </div>
+      <PanelHeader
+        busy={busy}
+        summary={
+          connected.length
+            ? `${connected.length} db${connected.length === 1 ? '' : 's'} · ${tableTotal} tables`
+            : null
+        }
+        action={
+          connections.length && !adding ? (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <PlusIcon data-icon="inline-start" />
+              Connect database
+            </Button>
+          ) : null
+        }
+      />
 
       {adding ? (
         <form
-          className="flex flex-col gap-1.5"
+          className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-4"
           onSubmit={(e) => {
             e.preventDefault()
             void submit()
@@ -104,9 +112,9 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="name, e.g. sales"
+            placeholder="Name, e.g. sales"
             aria-label="Connection name"
-            className="rounded-md border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-foreground/30"
+            className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-foreground/30"
           />
           <input
             type="password"
@@ -114,11 +122,11 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
             onChange={(e) => setUrl(e.target.value)}
             placeholder="postgres://readonly@host:5432/db"
             aria-label="PostgreSQL connection URL"
-            className="rounded-md border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-foreground/30"
+            className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-foreground/30"
           />
-          {error ? <p className="text-[0.625rem] text-muted-foreground">{error}</p> : null}
-          <div className="flex gap-1.5">
-            <Button type="submit" size="sm" disabled={busy} className="flex-1">
+          {error ? <p className="text-xs text-muted-foreground">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button type="submit" size="sm" disabled={busy}>
               {busy ? 'Connecting…' : 'Connect'}
             </Button>
             <Button
@@ -137,20 +145,19 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
             </Button>
           </div>
         </form>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className={cn(
-            'flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2.5',
-            'text-xs text-muted-foreground transition-colors',
-            'hover:border-foreground/30 hover:text-foreground',
-          )}
-        >
-          <PlusIcon className="size-3.5" />
-          Connect a read-only database
-        </button>
-      )}
+      ) : connections.length === 0 ? (
+        <PanelEmpty
+          icon={DatabaseIcon}
+          title="No databases connected"
+          description="Point the agent at a read-only PostgreSQL database and it can answer questions from your own data."
+          action={
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <PlusIcon data-icon="inline-start" />
+              Connect a database
+            </Button>
+          }
+        />
+      ) : null}
 
       {steps.length ? (
         <div className="mt-2">
@@ -159,7 +166,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
       ) : null}
 
       {connections.length ? (
-        <ul className="mt-2 flex flex-col gap-0.5">
+        <PanelGrid>
           {connections.map((c) => (
             <ConnectionItem
               key={c.id}
@@ -180,7 +187,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
               }}
             />
           ))}
-        </ul>
+        </PanelGrid>
       ) : null}
     </div>
   )
@@ -262,48 +269,51 @@ function ConnectionItem({
   onRemove: () => Promise<void>
 }) {
   const failed = connection.status !== 'connected'
+
   return (
-    <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
-      {failed ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <AlertTriangleIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-64">{connection.error ?? 'unreachable'}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <DatabaseIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
-
-      <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-xs', failed && 'text-muted-foreground')}>
-          {connection.name}
-        </span>
-        <span className="readout block truncate text-[0.625rem] text-muted-foreground">
-          {failed
-            ? 'could not connect'
-            : `${connection.displayDatabase} @ ${connection.displayHost} · ${connection.tableCount} tables`}
-        </span>
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void onRefresh()}
-        aria-label={`Refresh ${connection.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <RefreshCwIcon />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void onRemove()}
-        aria-label={`Remove ${connection.name}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <Trash2Icon />
-      </Button>
-    </li>
+    <ItemCard
+      leading={
+        failed ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">
+              {connection.error ?? 'unreachable'}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <DatabaseIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        )
+      }
+      title={<span className={cn(failed && 'text-muted-foreground')}>{connection.name}</span>}
+      meta={
+        failed
+          ? 'could not connect'
+          : `${connection.displayDatabase} @ ${connection.displayHost} · ${connection.tableCount} tables`
+      }
+      actions={
+        <>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onRefresh()}
+            aria-label={`Refresh ${connection.name}`}
+            className="text-muted-foreground"
+          >
+            <RefreshCwIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onRemove()}
+            aria-label={`Remove ${connection.name}`}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2Icon />
+          </Button>
+        </>
+      }
+    />
   )
 }

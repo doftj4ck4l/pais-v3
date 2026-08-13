@@ -14,7 +14,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
-import { Spinner } from '@/shared/ui/spinner'
+import { PanelEmpty, PanelHeader } from '@/features/resources/components/panel-kit'
 import {
   Dialog,
   DialogContent,
@@ -107,37 +107,48 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     setError(null)
   }
 
+  const openPicker = () => {
+    setChosen(null)
+    setManual(false)
+    setError(null)
+    setPicking(true)
+  }
+
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
 
   return (
     <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        {enabled.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {enabled.length} server{enabled.length === 1 ? '' : 's'} · {toolTotal} tools
-          </span>
-        ) : null}
-        {busy ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
-      </div>
+      <PanelHeader
+        busy={busy}
+        summary={
+          enabled.length
+            ? `${enabled.length} server${enabled.length === 1 ? '' : 's'} · ${toolTotal} tools`
+            : null
+        }
+        action={
+          servers.length ? (
+            <Button size="sm" onClick={openPicker}>
+              <PlusIcon data-icon="inline-start" />
+              Connect a server
+            </Button>
+          ) : null
+        }
+      />
 
-      <button
-        type="button"
-        onClick={() => {
-          setChosen(null)
-          setManual(false)
-          setError(null)
-          setPicking(true)
-        }}
-        className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2.5',
-          'text-xs text-muted-foreground transition-colors',
-          'hover:border-foreground/30 hover:text-foreground',
-        )}
-      >
-        <PlusIcon className="size-3.5" />
-        Connect an MCP server
-      </button>
+      {servers.length === 0 ? (
+        <PanelEmpty
+          icon={PlugIcon}
+          title="No MCP servers"
+          description="Connect a server and its tools become the agent's — your files, your calendar, your tracker, whatever it speaks for."
+          action={
+            <Button size="sm" onClick={openPicker}>
+              <PlusIcon data-icon="inline-start" />
+              Connect a server
+            </Button>
+          }
+        />
+      ) : null}
 
       {/* Separate dialog from the picker: an edit starts from a row, not from
           "Connect an MCP server", and sharing one dialog would mean the picker
@@ -256,8 +267,11 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         </DialogContent>
       </Dialog>
 
+      {/* A card holding rows rather than a grid of cards: an MCP row opens to a
+          list of every tool the server advertises, and a card that unfolds to a
+          hundred lines is not a card. */}
       {servers.length ? (
-        <ul className="mt-2 flex flex-col gap-0.5">
+        <ul className="flex flex-col divide-y rounded-xl border bg-card">
           {servers.map((s) => (
             <ServerItem
               key={s.id}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CloudIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { Spinner } from '@/shared/ui/spinner'
 import {
   deleteConnector,
@@ -130,80 +131,96 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
 
   const googleBlocked = blocked.find((b) => b.kind === 'gdrive')
 
+  const connectButton = (
+    <Button size="sm" onClick={() => void connect()}>
+      <CloudIcon data-icon="inline-start" />
+      Connect Google Drive
+    </Button>
+  )
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex-1 overflow-y-auto">
+    <div className="flex flex-col">
+      <PanelHeader
+        summary={rows.length ? `${rows.length} source${rows.length === 1 ? '' : 's'}` : null}
+        action={rows.length && !googleBlocked ? connectButton : null}
+      />
+
+      <div>
         {rows.length === 0 ? (
-          <p className="px-3 py-4 text-xs text-muted-foreground">
-            Connect a source and its files become searchable alongside your uploads.
-          </p>
+          // A blocked connector says what is missing rather than offering a
+          // button that fails on click: the fix is in a file on the server, and
+          // naming it is the whole help.
+          <PanelEmpty
+            icon={CloudIcon}
+            title={googleBlocked ? 'Sources are not configured' : 'No sources connected'}
+            description={
+              googleBlocked?.reason ??
+              'Connect an account and its files are indexed alongside your uploads, so the agent searches both at once.'
+            }
+            action={googleBlocked ? null : connectButton}
+          />
         ) : null}
 
-        <ol className="flex flex-col">
+        <PanelGrid>
           {rows.map((row) => (
-            <li key={row.id} className="border-b px-3 py-2">
-              <div className="flex items-center gap-1.5">
-                <span className={cn('size-1.5 shrink-0 rounded-full', STATUS_STYLE[row.status])} />
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  {row.accountEmail ?? 'Google Drive'}
+            <ItemCard
+              key={row.id}
+              leading={
+                <span
+                  aria-hidden
+                  className={cn('mt-1.5 size-2 shrink-0 rounded-full', STATUS_STYLE[row.status])}
+                />
+              }
+              title={row.accountEmail ?? 'Google Drive'}
+              meta={
+                <span className="flex flex-wrap gap-x-2">
+                  <span>Google Drive</span>
+                  <span>
+                    {row.documentCount} doc{row.documentCount === 1 ? '' : 's'}
+                  </span>
+                  <span>{when(row.lastSyncAt)}</span>
+                  {row.error ? <span className="text-destructive">{row.error}</span> : null}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => void sync(row.id)}
-                  disabled={busy === row.id}
-                  aria-label="Sync now"
-                  className="text-muted-foreground"
-                >
-                  {busy === row.id ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => void disconnect(row)}
-                  disabled={busy === row.id}
-                  aria-label="Disconnect"
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2Icon />
-                </Button>
-              </div>
-              <p className="readout mt-0.5 flex gap-2 pl-3 text-[0.625rem] text-muted-foreground">
-                <span>Google Drive</span>
-                <span>
-                  {row.documentCount} doc{row.documentCount === 1 ? '' : 's'}
-                </span>
-                <span>{when(row.lastSyncAt)}</span>
-              </p>
-              {row.error ? (
-                <p className="mt-0.5 pl-3 text-[0.625rem] text-destructive">{row.error}</p>
-              ) : null}
-            </li>
+              }
+              actions={
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void sync(row.id)}
+                    disabled={busy === row.id}
+                    aria-label="Sync now"
+                    className="text-muted-foreground"
+                  >
+                    {busy === row.id ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void disconnect(row)}
+                    disabled={busy === row.id}
+                    aria-label="Disconnect"
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </>
+              }
+            />
           ))}
-        </ol>
+        </PanelGrid>
 
         {notice ? (
-          <p className="readout px-3 py-2 text-[0.625rem] text-muted-foreground">{notice}</p>
+          <p className="readout mt-3 text-muted-foreground">{notice}</p>
         ) : null}
         {problem ? (
-          <p className="readout px-3 py-2 text-[0.625rem] whitespace-pre-wrap text-destructive">
-            {problem}
-          </p>
+          <p className="readout mt-3 whitespace-pre-wrap text-destructive">{problem}</p>
         ) : null}
       </div>
 
-      <div className="border-t px-3 py-2">
-        {googleBlocked ? (
-          // Says what is missing rather than showing a button that fails on
-          // click — the fix is in a file, and naming it is the whole help.
-          <p className="text-[0.625rem] text-muted-foreground">{googleBlocked.reason}</p>
-        ) : (
-          <Button variant="outline" size="sm" onClick={() => void connect()} className="w-full gap-1.5">
-            <CloudIcon data-icon="inline-start" />
-            Connect Google Drive
-          </Button>
-        )}
-      </div>
+      {googleBlocked && rows.length ? (
+        <p className="mt-3 text-xs text-muted-foreground">{googleBlocked.reason}</p>
+      ) : null}
     </div>
   )
 }

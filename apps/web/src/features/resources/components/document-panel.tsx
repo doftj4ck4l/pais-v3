@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangleIcon, FileTextIcon, Trash2Icon, UploadIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
-import { Spinner } from '@/shared/ui/spinner'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { deleteDocument, listDocuments, uploadDocuments } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
@@ -63,15 +63,40 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   const chunkTotal = indexed.reduce((n, d) => n + d.chunkCount, 0)
 
   return (
-    <div className="flex flex-col">
-      <div className="mb-2 flex items-center gap-2">
-        {indexed.length ? (
-          <span className="readout text-[0.625rem] text-muted-foreground">
-            {indexed.length} doc{indexed.length === 1 ? '' : 's'} · {chunkTotal} chunks
-          </span>
-        ) : null}
-        {busy ? <Spinner className="ml-auto size-3.5 text-muted-foreground" /> : null}
-      </div>
+    // The whole panel is the drop target. A dashed bar to aim at was a drawer's
+    // answer to having no room; on a page you can drop a PDF anywhere on it.
+    <div
+      className={cn(
+        'flex flex-col rounded-lg transition-colors',
+        dragging && 'outline-2 outline-offset-8 outline-dashed outline-foreground/30',
+      )}
+      onDragOver={(e) => {
+        e.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragging(false)
+        void upload(Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf'))
+      }}
+    >
+      <PanelHeader
+        busy={busy}
+        summary={
+          indexed.length
+            ? `${indexed.length} doc${indexed.length === 1 ? '' : 's'} · ${chunkTotal} chunks`
+            : null
+        }
+        action={
+          docs.length ? (
+            <Button size="sm" disabled={busy} onClick={() => inputRef.current?.click()}>
+              <UploadIcon data-icon="inline-start" />
+              {busy ? 'Indexing…' : 'Upload PDFs'}
+            </Button>
+          ) : null
+        }
+      />
 
       <input
         ref={inputRef}
@@ -85,38 +110,25 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
         }}
       />
 
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          void upload(Array.from(e.dataTransfer.files).filter((f) => f.type === 'application/pdf'))
-        }}
-        disabled={busy}
-        className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2.5',
-          'text-xs text-muted-foreground transition-colors',
-          'hover:border-foreground/30 hover:text-foreground disabled:opacity-60',
-          dragging && 'border-foreground/40 bg-accent text-foreground',
-        )}
-      >
-        <UploadIcon className="size-3.5" />
-        {busy ? 'Indexing…' : 'Drop PDFs or click to upload'}
-      </button>
-
       {docs.length ? (
-        <ul className="mt-2 flex flex-col gap-0.5">
+        <PanelGrid>
           {docs.map((doc) => (
             <DocumentItem key={doc.id} doc={doc} onRemove={() => void remove(doc.id)} />
           ))}
-        </ul>
-      ) : null}
+        </PanelGrid>
+      ) : (
+        <PanelEmpty
+          icon={FileTextIcon}
+          title="No documents yet"
+          description="Upload a PDF and the agent can search it with search_docs — or drop one anywhere on this page."
+          action={
+            <Button size="sm" disabled={busy} onClick={() => inputRef.current?.click()}>
+              <UploadIcon data-icon="inline-start" />
+              {busy ? 'Indexing…' : 'Upload PDFs'}
+            </Button>
+          }
+        />
+      )}
     </div>
   )
 }
@@ -127,41 +139,40 @@ function DocumentItem({ doc, onRemove }: { doc: DocumentRow; onRemove: () => voi
   // skipped. Worth the same warning icon: partial coverage looks exactly like
   // full coverage until a search comes back empty.
   const partial = !failed && !!doc.error
+
   return (
-    <li className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent">
-      {failed || partial ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <AlertTriangleIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-64">{doc.error ?? doc.status}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      )}
-
-      <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-xs', failed && 'text-muted-foreground')}>
-          {doc.title}
-        </span>
-        <span className="readout block text-[0.625rem] text-muted-foreground">
-          {failed
-            ? doc.status === 'empty'
-              ? 'no text layer, needs OCR'
-              : 'could not be read'
-            : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`}
-        </span>
-      </span>
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onRemove}
-        aria-label={`Remove ${doc.title}`}
-        className="shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-      >
-        <Trash2Icon />
-      </Button>
-    </li>
+    <ItemCard
+      leading={
+        failed || partial ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">{doc.error ?? doc.status}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <FileTextIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        )
+      }
+      title={<span className={cn(failed && 'text-muted-foreground')}>{doc.title}</span>}
+      meta={
+        failed
+          ? doc.status === 'empty'
+            ? 'no text layer, needs OCR'
+            : 'could not be read'
+          : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`
+      }
+      actions={
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onRemove}
+          aria-label={`Remove ${doc.title}`}
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2Icon />
+        </Button>
+      }
+    />
   )
 }
