@@ -131,7 +131,9 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
       .catch(() => setSources([]))
   }
 
-  const importable = (sources ?? []).reduce((n, s) => n + s.servers.length, 0)
+  // Null while the list is still arriving, so the row can say "reuse a service"
+  // rather than flashing "nothing set up elsewhere" and then correcting itself.
+  const importable = sources && sources.reduce((n, s) => n + s.servers.length, 0)
 
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
@@ -410,8 +412,8 @@ function ConnectorPicker({
   onManual,
   onImport,
 }: {
-  /** How many servers this user has in other workspaces. Zero hides the row. */
-  importable: number
+  /** How many servers this user has in other workspaces; null while loading. */
+  importable: number | null
   onChoose: (connector: Connector) => void
   onManual: () => void
   onImport: () => void
@@ -456,16 +458,26 @@ function ConnectorPicker({
         {/* Escape hatches, not more connectors — full width, below the grid.
             Importing comes first: when it applies it is strictly less work than
             either of the paths above it, because the credentials already
-            exist. */}
-        {importable ? (
-          <PickerRow
-            icon={DownloadIcon}
-            title="Import from another workspace"
-            detail={`${importable} service${importable === 1 ? '' : 's'} you have already set up, credentials included`}
-            onClick={onImport}
-            className="mt-2.5"
-          />
-        ) : null}
+            exist.
+
+            Shown even when there is nothing to import. Hiding it made the
+            feature unfindable — a user with one empty second workspace saw no
+            row, no explanation, and no way to learn the option exists. The
+            screen behind it already says what an empty result means, and it is
+            a better place to say it than a gap. */}
+        <PickerRow
+          icon={DownloadIcon}
+          title="Import from another workspace"
+          detail={
+            importable === null
+              ? 'Reuse a service you have already set up, credentials included'
+              : importable
+                ? `${importable} service${importable === 1 ? '' : 's'} you have already set up, credentials included`
+                : 'Nothing set up elsewhere yet'
+          }
+          onClick={onImport}
+          className="mt-2.5"
+        />
 
         <PickerRow
           icon={SlidersHorizontalIcon}
@@ -620,8 +632,11 @@ function ImportRow({
               : 'was not connecting',
           ].join(' · ')}
         </span>
+        {/* Wraps rather than truncates: the list of keys is the consent, and
+            "NEXTCLOUD_US…" hides the half saying a password is not the only
+            thing travelling. */}
         {credentials.length ? (
-          <span className="readout truncate text-[0.625rem] text-muted-foreground/70">
+          <span className="readout text-[0.625rem] leading-relaxed break-all text-muted-foreground/70">
             brings {credentials.join(', ')}
           </span>
         ) : null}
