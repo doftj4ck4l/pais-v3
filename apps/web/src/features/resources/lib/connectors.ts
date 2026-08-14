@@ -35,8 +35,26 @@ export type Connector = {
   summary: string
   /** Resolved to a component by the panel — the catalog stays free of JSX. */
   icon: 'cloud' | 'mail' | 'kanban'
+  /**
+   * The service's own colour, as an `R G B` triple for Tailwind's slash syntax.
+   *
+   * A stored server is a name and a command, and neither says at a glance which
+   * of five rows is the Nextcloud one. The brand colour is the only thing about
+   * a service that is recognisable before reading — so it carries the mark, and
+   * everything else on the card stays in the console's own greys.
+   */
+  tint: string
   command: string
   args: string[]
+  /**
+   * The argument that identifies this server once it is stored.
+   *
+   * A row comes back as a command and an argument list, with nothing saying
+   * which template built it — the name is the user's and may be anything. This
+   * is what `matchConnector` recognises, so it must be the published package,
+   * not a flag.
+   */
+  packageName: string
   fields: ConnectorField[]
   /** Shown above the fields once chosen. Setup that the form cannot do itself. */
   note?: string
@@ -48,8 +66,10 @@ export const CONNECTORS: Connector[] = [
     name: 'Nextcloud',
     summary: 'Files, notes, calendar and tables on a Nextcloud instance',
     icon: 'cloud',
+    tint: '0 130 201',
     command: 'uvx',
     args: ['nextcloud-mcp-server', 'run', '--transport', 'stdio'],
+    packageName: 'nextcloud-mcp-server',
     note: 'First connection builds a Python environment and can take a few minutes. Later ones are fast.',
     fields: [
       {
@@ -73,8 +93,10 @@ export const CONNECTORS: Connector[] = [
     name: 'Plane',
     summary: 'Issues, cycles, modules and projects in a Plane workspace',
     icon: 'kanban',
+    tint: '63 118 255',
     command: 'uvx',
     args: ['plane-mcp-server', 'stdio'],
+    packageName: 'plane-mcp-server',
     // Same shape as Nextcloud: uvx builds a Python environment on the first
     // connection, and that download is what a cold first call is waiting on.
     note: 'First connection builds a Python environment and can take a few minutes. Later ones are fast.',
@@ -109,8 +131,10 @@ export const CONNECTORS: Connector[] = [
     name: 'Microsoft 365',
     summary: 'Outlook mail, calendar and contacts through Microsoft Graph',
     icon: 'mail',
+    tint: '0 120 212',
     command: 'npx',
     args: ['-y', '@softeria/ms-365-mcp-server', '--discovery'],
+    packageName: '@softeria/ms-365-mcp-server',
     // Device-code login blocks until the browser half completes, which outlasts
     // CALL_TIMEOUT_MS. So it cannot be done from a tool call, and the token has
     // to already exist by the time this server is added.
@@ -130,6 +154,33 @@ export const CONNECTORS: Connector[] = [
     ],
   },
 ]
+
+/**
+ * Which catalog entry a stored server came from, if any.
+ *
+ * Nothing on the row records it: a server is a name the user chose and a
+ * command, and the name is free text. So the package argument is the identity —
+ * `uvx nextcloud-mcp-server run …` is a Nextcloud connector however it was
+ * named, whether it was added from the picker or typed into the manual form.
+ *
+ * The credential keys are the fallback, for a server built by hand with a
+ * different launcher: `NEXTCLOUD_HOST` is set by exactly one kind of server.
+ */
+export function matchConnector(server: {
+  transport: 'http' | 'stdio'
+  args?: string[]
+  envKeys?: string[]
+}): Connector | null {
+  if (server.transport !== 'stdio') return null
+
+  const args = server.args ?? []
+  const byPackage = CONNECTORS.find((c) => args.some((a) => a === c.packageName))
+  if (byPackage) return byPackage
+
+  const keys = server.envKeys ?? []
+  if (!keys.length) return null
+  return CONNECTORS.find((c) => c.fields.some((f) => keys.includes(f.key))) ?? null
+}
 
 /**
  * Build the env object a connector's filled-in fields amount to.

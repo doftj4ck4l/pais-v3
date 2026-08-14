@@ -400,6 +400,69 @@ export async function deleteMcpServer(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
+/** One server in another workspace, described well enough to decide about it. */
+export type ImportableServer = {
+  id: string
+  name: string
+  transport: 'http' | 'stdio'
+  url: string | null
+  command: string | null
+  args: string[]
+  status: 'connected' | 'error'
+  toolCount: number
+  /** Credential names that will be copied along with it. Never their values. */
+  headerKeys: string[]
+  envKeys: string[]
+  /**
+   * This workspace already has a *different* server by that name, so the import
+   * renames the copy. An identical one would not be listed at all.
+   */
+  nameTaken: boolean
+}
+
+export type ImportSource = {
+  workspaceId: string
+  workspaceName: string
+  servers: ImportableServer[]
+}
+
+export type ImportCatalog = {
+  sources: ImportSource[]
+  /**
+   * How many were left out because this workspace is already connected to the
+   * same thing. An empty list means something different when this is non-zero,
+   * and the screen says so rather than implying nothing was ever set up.
+   */
+  alreadyHere: number
+}
+
+/** Everything configured in this user's *other* workspaces, grouped by workspace. */
+export async function listImportableMcpServers(scope: Scope): Promise<ImportCatalog> {
+  return await json<ImportCatalog>(await fetch(`/api/mcp/importable?${scoped(scope)}`))
+}
+
+/**
+ * Copy a server here from another workspace, credentials and all.
+ *
+ * A copy: editing or removing it afterwards leaves the original alone. Like
+ * `addMcpServer`, an unreachable result is a stored row rather than an error —
+ * `error` means the request itself was refused.
+ */
+export async function importMcpServer(
+  scope: Scope,
+  sourceWorkspaceId: string,
+  serverId: string,
+): Promise<{ server?: McpServerRow; error?: string }> {
+  const res = await fetch(`/api/mcp/import?${scoped(scope)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sourceWorkspaceId, serverId }),
+  })
+  const body = (await res.json().catch(() => ({}))) as { server?: McpServerRow; error?: string }
+  if (!res.ok) return { error: body.error ?? `HTTP ${res.status}` }
+  return { server: body.server }
+}
+
 /** Recent runs in this workspace, newest first. */
 export async function listRuns(scope: Scope, limit = 50): Promise<RunRow[]> {
   const { runs } = await json<{ runs: RunRow[] }>(

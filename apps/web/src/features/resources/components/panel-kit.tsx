@@ -57,6 +57,7 @@ export function ItemCard({
   /** Makes the whole card the link. Used by files, which are downloads. */
   href,
   download = false,
+  onSelect,
   label,
 }: {
   leading?: ReactNode
@@ -65,6 +66,8 @@ export function ItemCard({
   actions?: ReactNode
   href?: string
   download?: boolean
+  /** Makes the whole card open something. Mutually exclusive with `href`. */
+  onSelect?: () => void
   label?: string
 }) {
   return (
@@ -73,6 +76,17 @@ export function ItemCard({
         <a
           href={href}
           download={download}
+          aria-label={label}
+          className="absolute inset-0 rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+        />
+      ) : onSelect ? (
+        // A stretched button rather than a click handler on the <li>: the card
+        // has controls inside it, and only a real button is reachable by
+        // keyboard and announced as the thing that opens the detail. The row
+        // controls sit above it on z-10, so they keep their own clicks.
+        <button
+          type="button"
+          onClick={onSelect}
           aria-label={label}
           className="absolute inset-0 rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         />
