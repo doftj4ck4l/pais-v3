@@ -145,6 +145,10 @@ export function Console() {
               conversationId={selected?.conversationId ?? null}
               onDismissNotice={() => selected && board.dismissNotice(selected.id)}
               onSend={send}
+              models={board.meta?.models ?? []}
+              modelId={board.modelIdForNew}
+              onModelChange={board.setModelIdForNew}
+              lockedModelId={selected?.modelId ?? null}
             />
 
             <div className="min-h-0 overflow-hidden">
