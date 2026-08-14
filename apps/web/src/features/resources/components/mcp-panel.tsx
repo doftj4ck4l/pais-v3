@@ -62,6 +62,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [catalog, setCatalog] = useState<ImportCatalog | null>(null)
   const [editing, setEditing] = useState<McpServerRow | null>(null)
   const [viewing, setViewing] = useState<McpServerRow | null>(null)
+  const [removing, setRemoving] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scope = useScope()
@@ -238,10 +239,36 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
                   setBusy(false)
                 }
               }}
-              onRemove={async () => {
+              onRemove={() => {
+                const row = servers.find((s) => s.id === viewing.id) ?? viewing
                 setViewing(null)
-                setServers((prev) => prev.filter((x) => x.id !== viewing.id))
-                await deleteMcpServer(scope, viewing.id)
+                setRemoving(row)
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Removing is the one action here with no undo — the credentials go with
+          the row, so putting it back means retyping a password. It used to be a
+          single unguarded click on a hover control sitting next to three
+          harmless ones. */}
+      <Dialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          {removing ? (
+            <ConfirmRemove
+              server={removing}
+              onCancel={() => setRemoving(null)}
+              onConfirm={async () => {
+                const id = removing.id
+                setRemoving(null)
+                setServers((prev) => prev.filter((x) => x.id !== id)) // optimistic
+                await deleteMcpServer(scope, id)
                 await refresh()
               }}
             />
@@ -356,11 +383,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
                   setBusy(false)
                 }
               }}
-              onRemove={async () => {
-                setServers((prev) => prev.filter((x) => x.id !== s.id)) // optimistic
-                await deleteMcpServer(scope, s.id)
-                await refresh()
-              }}
+              onRemove={() => setRemoving(s)}
             />
           ))}
         </PanelGrid>
@@ -1058,7 +1081,7 @@ function ServerItem({
   onEdit: () => void
   onOpen: () => void
   onRefresh: () => Promise<void>
-  onRemove: () => Promise<void>
+  onRemove: () => void
 }) {
   const failed = server.status !== 'connected'
   const off = !server.enabled
@@ -1138,7 +1161,7 @@ function ServerItem({
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => void onRemove()}
+            onClick={onRemove}
             aria-label={`Remove ${server.name}`}
             className="text-muted-foreground hover:text-destructive"
           >
@@ -1184,7 +1207,7 @@ function ServerDetail({
   busy: boolean
   onEdit: () => void
   onRetry: () => Promise<void>
-  onRemove: () => Promise<void>
+  onRemove: () => void
 }) {
   const connector = matchConnector(server)
   const connected = server.status === 'connected'
@@ -1294,10 +1317,78 @@ function ServerDetail({
           type="button"
           size="sm"
           variant="ghost"
-          onClick={() => void onRemove()}
+          onClick={onRemove}
           className="ml-auto text-muted-foreground hover:text-destructive"
         >
           Remove
+        </Button>
+      </div>
+    </>
+  )
+}
+
+/**
+ * Confirm removing a server.
+ *
+ * Says what is actually lost rather than asking "are you sure": the credentials
+ * go with the row, so putting it back means retyping a password that only ever
+ * existed here. And it names the cheaper thing — turning a server off keeps the
+ * connection and takes its tools out of the agent's list, which is what most
+ * people reaching for the bin actually want.
+ *
+ * Built in the dialog rather than with window.confirm, which draws OS chrome
+ * that shares nothing with this console and cannot say any of the above.
+ */
+function ConfirmRemove({
+  server,
+  onCancel,
+  onConfirm,
+}: {
+  server: McpServerRow
+  onCancel: () => void
+  onConfirm: () => Promise<void>
+}) {
+  const connector = matchConnector(server)
+  const credentials = [...(server.headerKeys ?? []), ...(server.envKeys ?? [])]
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2.5">
+          <ServiceMark connector={connector} transport={server.transport} size="sm" />
+          Remove {server.name}?
+        </DialogTitle>
+        <DialogDescription>
+          {server.status === 'connected' && server.toolCount
+            ? `Its ${server.toolCount} tool${server.toolCount === 1 ? '' : 's'} stop being available to the agent.`
+            : 'It stops being available to the agent.'}
+          {credentials.length
+            ? ` The ${credentials.length === 1 ? 'credential' : 'credentials'} stored for it ${credentials.length === 1 ? 'is' : 'are'} deleted, so reconnecting means entering ${credentials.length === 1 ? 'it' : 'them'} again.`
+            : ''}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className={cn(BODY_CLASS, 'flex flex-col gap-2')}>
+        {server.enabled ? (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+            To stop the agent using it without losing the connection, turn it off instead.
+          </p>
+        ) : null}
+        <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+          Other workspaces keep their own copy.
+        </p>
+      </div>
+
+      <div className="flex gap-2 border-t px-5 py-3.5">
+        <Button type="button" size="sm" variant="destructive" onClick={() => void onConfirm()}>
+          <Trash2Icon data-icon="inline-start" />
+          Remove
+        </Button>
+        {/* Cancel takes the focus, because the cost of the two answers is not
+            symmetrical: Enter on a dialog you opened by accident should not be
+            the keystroke that deletes a password. */}
+        <Button type="button" size="sm" variant="ghost" autoFocus onClick={onCancel}>
+          Cancel
         </Button>
       </div>
     </>
