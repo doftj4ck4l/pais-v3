@@ -1,9 +1,13 @@
 import { cn } from '@/shared/lib/utils'
 import type { Model } from '@/shared/lib/types'
 
+/** `png` is the default, so only the brands whose asset is not one appear here. */
 const BRAND_EXT: Record<string, string> = {
   qwen: 'jpg',
   deepseek: 'svg',
+  nvidia: 'svg',
+  muse: 'svg',
+  vrs: 'svg',
 }
 
 export function modelLogoUrl(model?: Model | null): string | null {

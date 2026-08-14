@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- An eye: VRS Smart is the one gateway model on the chat list that can
+       actually see an image. One colour on transparent, so it reads on the
+       light card and the dark one without a second asset. -->
+  <path
+    fill="#F59E0B"
+    fill-rule="evenodd"
+    d="M16 6C8.6 6 3.2 12.4 1.4 16c1.8 3.6 7.2 10 14.6 10s12.8-6.4 14.6-10C28.8 12.4 23.4 6 16 6zm0 3c5.4 0 9.8 4.4 11.4 7-1.6 2.6-6 7-11.4 7S6.2 18.6 4.6 16C6.2 13.4 10.6 9 16 9z"
+  />
+  <circle cx="16" cy="16" r="4" fill="#F59E0B" />
+</svg>

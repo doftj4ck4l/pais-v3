@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Nemotron Lightning, in NVIDIA green. A drawn mark rather than the real
+       wordmark: at 16px the wordmark is unreadable, and a rough copy of a
+       trademark reads worse than an honest glyph. -->
+  <path d="M19.5 2.5 7 18.2h6.4L12.5 29.5 25 13.8h-6.4z" fill="#76B900" />
+</svg>

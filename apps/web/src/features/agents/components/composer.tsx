@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUpIcon, ImageIcon, XIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
+import { ModelPicker } from '@/features/agents/components/model-picker'
 import { Textarea } from '@/shared/ui/textarea'
 import { Spinner } from '@/shared/ui/spinner'
 import { uploadChatImage } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
-import type { UploadedImage } from '@/shared/lib/types'
+import type { Model, UploadedImage } from '@/shared/lib/types'
 
 /**
  * Starts a new agent. It is never bound to a running agent — stopping one
@@ -20,12 +21,23 @@ export function Composer({
   notice,
   onDismissNotice,
   onSend,
+  models,
+  modelId,
+  onModelChange,
+  lockedModelId = null,
   conversationId = null,
   docked = true,
 }: {
   notice: string | null
   onDismissNotice: () => void
   onSend: (text: string, images: UploadedImage[]) => void
+  /** The catalog, for the picker under the input. Empty until /api/meta answers. */
+  models: Model[]
+  /** The model the next run will use — not the open one's, which never changes. */
+  modelId: string
+  onModelChange: (id: string) => void
+  /** The open chat's model, if one is open — it reports rather than offers. */
+  lockedModelId?: string | null
   /** The open session, so a pasted image is stored against it. Null on a new run. */
   conversationId?: string | null
   /** False while it sits mid-page waiting for the first question, where a rule
@@ -176,16 +188,28 @@ export function Composer({
           </div>
         </div>
 
-        <p className="mt-1.5 flex items-center gap-1.5 px-1 text-[0.6875rem] text-muted-foreground">
-          {error ? (
-            <span className="text-destructive">{error}</span>
-          ) : (
-            <>
-              <ImageIcon className="size-3" />
-              Paste or drop an image to ask about it
-            </>
-          )}
-        </p>
+        {/* The model sits on the left of this row and the hint on the right, so
+            the control the user changes is the one nearest the input's own
+            edge rather than trailing a sentence about images. */}
+        <div className="mt-1.5 flex items-center gap-3 px-1 text-[0.6875rem] text-muted-foreground">
+          <ModelPicker
+            models={models}
+            modelId={modelId}
+            onChange={onModelChange}
+            lockedId={lockedModelId}
+          />
+
+          <p className="flex min-w-0 items-center gap-1.5 truncate">
+            {error ? (
+              <span className="text-destructive">{error}</span>
+            ) : (
+              <>
+                <ImageIcon className="size-3 shrink-0" />
+                Paste or drop an image to ask about it
+              </>
+            )}
+          </p>
+        </div>
       </form>
     </div>
   )
