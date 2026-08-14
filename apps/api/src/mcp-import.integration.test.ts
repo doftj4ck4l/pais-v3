@@ -34,11 +34,23 @@ const DEAD_URL = "http://127.0.0.1:1/mcp";
 beforeAll(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-mcp-import-"));
   process.env.DB_PATH = path.join(dir, "app.db");
-  // Without one the API refuses to store a credential at all, which would make
-  // every case here a 503.
-  process.env.CONNECTION_SECRET = "test-secret-for-mcp-import";
   const { ensureSchema } = await import("./db/client");
   ensureSchema();
+
+  // Without a connection secret the API refuses to store a credential at all
+  // and every case here is a 503.
+  //
+  // Set on the `env` object rather than on `process.env`, which is what this
+  // used to do and what made the file pass alone and fail in a suite:
+  // `config/env` reads `process.env` once, at import. Run on its own this
+  // block is the first thing to touch it; run with 44 other files, something
+  // else has already imported it and the assignment is too late. It looked
+  // fine locally only because `apps/api/.env` is not in git — it supplied a
+  // real secret here and nothing at all in CI. Same shape as
+  // `mcp.repository.test.ts`, which mutates `env` for the same reason.
+  const { env } = await import("./config/env");
+  (env as { connectionSecret: string }).connectionSecret = "test-secret-for-mcp-import";
+
   ({ createApp } = await import("./app"));
 });
 
