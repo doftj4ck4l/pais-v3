@@ -2,7 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      Three files rather than one, and the order is the selection: a browser
+      takes the last `icon` it understands, so the 32px PNG wins over the .ico
+      on anything modern and the .ico is what old Windows tabs fall back to.
+      No SVG — the mark is a raster gradient, and the drawn one that used to be
+      here was a different logo entirely.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <!-- Flattened onto white: iOS composites a transparent icon onto black. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:title" content="PixelSpace" />
+    <meta property="og:image" content="/logos/pixelspace.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"

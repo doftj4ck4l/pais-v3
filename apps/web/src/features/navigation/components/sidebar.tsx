@@ -1,6 +1,7 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { MessageSquareIcon, PanelLeftIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { AgentList } from '@/features/agents/components/agent-list'
+import { BrandMark } from '@/shared/components/brand'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
 import { RunStats } from '@/features/agents/components/run-stats'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
@@ -56,10 +57,18 @@ export function Sidebar({
         aria-label="Console"
         className="flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3"
       >
+        {/* The mark, not the lockup: at rail width the wordmark is a smear.
+            It is here because the top bar that used to carry the lockup is
+            hidden on exactly the layout most people sit in — wide, on Chats,
+            sidebar open — which left the console with no name on it at all.
+            Not a link: Chats is directly below it and would be the second
+            control on this rail going to the same place. */}
+        <BrandMark className="h-5 shrink-0" />
+
+        <div className="my-1 h-px w-6 bg-border" aria-hidden />
+
         {/* The workspace is the frame everything else is drawn inside, so it
-            sits at the head of the rail rather than in settings. The wordmark
-            does not: at rail width it would be a smear, and the top bar already
-            carries it. */}
+            sits at the head of the rail rather than in settings. */}
         <WorkspacePicker compact />
 
         <RailButton
