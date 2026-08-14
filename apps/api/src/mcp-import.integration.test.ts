@@ -84,8 +84,8 @@ describe("GET /api/mcp/importable", () => {
     const user = "importable-user";
     const home = await makeWorkspace(user, "Home");
     const other = await makeWorkspace(user, "Client work");
-    await addServer(user, home, "here");
-    await addServer(user, other, "there");
+    await addServer(user, home, "here", { Authorization: "Bearer here" });
+    await addServer(user, other, "there", { Authorization: "Bearer there" });
 
     const res = await createApp().request(`/api/mcp/importable?workspaceId=${home}`, asUser(user));
     const { sources } = (await res.json()) as {
@@ -109,12 +109,14 @@ describe("GET /api/mcp/importable", () => {
     expect(body).not.toContain("do-not-leak");
   });
 
-  it("flags a name this workspace has already taken", async () => {
+  it("flags a name this workspace has already taken by a different server", async () => {
     const user = "importable-clash-user";
     const home = await makeWorkspace(user, "Home");
     const other = await makeWorkspace(user, "Other");
-    await addServer(user, home, "nextcloud");
-    await addServer(user, other, "nextcloud");
+    // Same name, different credential — a genuinely different connection that
+    // would have to be renamed on arrival.
+    await addServer(user, home, "nextcloud", { Authorization: "Bearer home-token" });
+    await addServer(user, other, "nextcloud", { Authorization: "Bearer other-token" });
 
     const res = await createApp().request(`/api/mcp/importable?workspaceId=${home}`, asUser(user));
     const { sources } = (await res.json()) as {
@@ -122,6 +124,22 @@ describe("GET /api/mcp/importable", () => {
     };
 
     expect(sources[0]!.servers[0]!.nameTaken).toBe(true);
+  });
+
+  it("leaves out a server this workspace is already connected to", async () => {
+    const user = "importable-dupe-user";
+    const home = await makeWorkspace(user, "Home");
+    const other = await makeWorkspace(user, "Other");
+    // Same URL and the same credential — the same connection, under whatever
+    // name each workspace gave it.
+    await addServer(user, home, "tracker", { Authorization: "Bearer same" });
+    await addServer(user, other, "tracker-elsewhere", { Authorization: "Bearer same" });
+
+    const res = await createApp().request(`/api/mcp/importable?workspaceId=${home}`, asUser(user));
+
+    // The workspace drops out entirely rather than appearing with an empty
+    // list, so the screen has nothing to draw a heading for.
+    expect(await res.json()).toEqual({ sources: [], alreadyHere: 1 });
   });
 
   it("says nothing about another user's workspaces", async () => {
@@ -133,7 +151,7 @@ describe("GET /api/mcp/importable", () => {
 
     const res = await createApp().request(`/api/mcp/importable?workspaceId=${mine}`, asUser(stranger));
 
-    expect(await res.json()).toEqual({ sources: [] });
+    expect(await res.json()).toEqual({ sources: [], alreadyHere: 0 });
   });
 });
 
@@ -161,12 +179,12 @@ describe("POST /api/mcp/import", () => {
     expect(await listServers(user, other)).toHaveLength(1);
   });
 
-  it("suffixes the name when this workspace already has one", async () => {
+  it("suffixes the name when this workspace already has a different one", async () => {
     const user = "import-clash-user";
     const home = await makeWorkspace(user, "Home");
     const other = await makeWorkspace(user, "Other");
-    await addServer(user, home, "plane");
-    const sourceId = await addServer(user, other, "plane");
+    await addServer(user, home, "plane", { Authorization: "Bearer home-key" });
+    const sourceId = await addServer(user, other, "plane", { Authorization: "Bearer other-key" });
 
     const res = await createApp().request(`/api/mcp/import?workspaceId=${home}`, {
       method: "POST",
@@ -176,6 +194,27 @@ describe("POST /api/mcp/import", () => {
 
     expect(res.status).toBe(201);
     expect((await listServers(user, home)).map((s) => s.name).sort()).toEqual(["plane", "plane-2"]);
+  });
+
+  it("refuses a server this workspace is already connected to", async () => {
+    const user = "import-dupe-user";
+    const home = await makeWorkspace(user, "Home");
+    const other = await makeWorkspace(user, "Other");
+    await addServer(user, home, "already", { Authorization: "Bearer identical" });
+    const sourceId = await addServer(user, other, "same-thing", {
+      Authorization: "Bearer identical",
+    });
+
+    // The picker hides these, so this is the stale-list and direct-call path.
+    const res = await createApp().request(`/api/mcp/import?workspaceId=${home}`, {
+      method: "POST",
+      headers: asUserJson(user),
+      body: JSON.stringify({ sourceWorkspaceId: other, serverId: sourceId }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("already");
+    expect(await listServers(user, home)).toHaveLength(1);
   });
 
   it("refuses a source workspace the caller does not own", async () => {

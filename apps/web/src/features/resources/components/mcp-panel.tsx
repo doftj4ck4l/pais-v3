@@ -29,7 +29,7 @@ import {
   refreshMcpServer,
   setMcpServerEnabled,
   updateMcpServer,
-  type ImportSource,
+  type ImportCatalog,
   type ImportableServer,
   type NewMcpServerInput,
 } from '@/shared/api/api'
@@ -59,7 +59,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [sources, setSources] = useState<ImportSource[] | null>(null)
+  const [catalog, setCatalog] = useState<ImportCatalog | null>(null)
   const [editing, setEditing] = useState<McpServerRow | null>(null)
   const [viewing, setViewing] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
@@ -127,13 +127,10 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     // Read on open rather than on mount: a user with one workspace never has
     // anything to import, and this is one request per workspace they own.
     void listImportableMcpServers(scope)
-      .then(setSources)
-      .catch(() => setSources([]))
+      .then(setCatalog)
+      .catch(() => setCatalog({ sources: [], alreadyHere: 0 }))
   }
 
-  // Null while the list is still arriving, so the row can say "reuse a service"
-  // rather than flashing "nothing set up elsewhere" and then correcting itself.
-  const importable = sources && sources.reduce((n, s) => n + s.servers.length, 0)
 
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
@@ -261,7 +258,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         <DialogContent className="sm:max-w-lg">
           {importing ? (
             <ImportPicker
-              sources={sources}
+              catalog={catalog}
               busy={busy}
               error={error}
               onBack={() => {
@@ -312,7 +309,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
             />
           ) : (
             <ConnectorPicker
-              importable={importable}
+              catalog={catalog}
               onChoose={(connector) => {
                 setError(null)
                 setChosen(connector)
@@ -407,17 +404,19 @@ function BackButton({ onClick }: { onClick: () => void }) {
  * mono readout used for tool names and trace lines elsewhere.
  */
 function ConnectorPicker({
-  importable,
+  catalog,
   onChoose,
   onManual,
   onImport,
 }: {
-  /** How many servers this user has in other workspaces; null while loading. */
-  importable: number | null
+  /** What could be imported from elsewhere; null while it is still loading. */
+  catalog: ImportCatalog | null
   onChoose: (connector: Connector) => void
   onManual: () => void
   onImport: () => void
 }) {
+  const importable = catalog && catalog.sources.reduce((n, s) => n + s.servers.length, 0)
+
   return (
     <>
       <DialogHeader>
@@ -473,7 +472,9 @@ function ConnectorPicker({
               ? 'Reuse a service you have already set up, credentials included'
               : importable
                 ? `${importable} service${importable === 1 ? '' : 's'} you have already set up, credentials included`
-                : 'Nothing set up elsewhere yet'
+                : catalog?.alreadyHere
+                  ? 'You are already connected to everything you have elsewhere'
+                  : 'Nothing set up elsewhere yet'
           }
           onClick={onImport}
           className="mt-2.5"
@@ -537,20 +538,21 @@ function PickerRow({
  * "Nextcloud" would be asking for consent to something unstated.
  */
 function ImportPicker({
-  sources,
+  catalog,
   busy,
   error,
   onImport,
   onBack,
 }: {
   /** Null while the list is still arriving. */
-  sources: ImportSource[] | null
+  catalog: ImportCatalog | null
   busy: boolean
   error: string | null
   onImport: (workspaceId: string, serverId: string) => Promise<void>
   onBack: () => void
 }) {
   const [pending, setPending] = useState<string | null>(null)
+  const sources = catalog?.sources ?? null
 
   return (
     <>
@@ -572,8 +574,9 @@ function ImportPicker({
           </div>
         ) : sources.length === 0 ? (
           <p className="py-6 text-xs leading-relaxed text-muted-foreground">
-            Your other workspaces have no services connected yet. Connect one there and it will
-            show up here.
+            {catalog?.alreadyHere
+              ? 'Everything you have set up elsewhere is already connected here.'
+              : 'Your other workspaces have no services connected yet. Connect one there and it will show up here.'}
           </p>
         ) : (
           sources.map((source) => (

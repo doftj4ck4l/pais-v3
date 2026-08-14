@@ -413,7 +413,10 @@ export type ImportableServer = {
   /** Credential names that will be copied along with it. Never their values. */
   headerKeys: string[]
   envKeys: string[]
-  /** This workspace already has a server by that name; the import renames it. */
+  /**
+   * This workspace already has a *different* server by that name, so the import
+   * renames the copy. An identical one would not be listed at all.
+   */
   nameTaken: boolean
 }
 
@@ -423,12 +426,19 @@ export type ImportSource = {
   servers: ImportableServer[]
 }
 
+export type ImportCatalog = {
+  sources: ImportSource[]
+  /**
+   * How many were left out because this workspace is already connected to the
+   * same thing. An empty list means something different when this is non-zero,
+   * and the screen says so rather than implying nothing was ever set up.
+   */
+  alreadyHere: number
+}
+
 /** Everything configured in this user's *other* workspaces, grouped by workspace. */
-export async function listImportableMcpServers(scope: Scope): Promise<ImportSource[]> {
-  const { sources } = await json<{ sources: ImportSource[] }>(
-    await fetch(`/api/mcp/importable?${scoped(scope)}`),
-  )
-  return sources
+export async function listImportableMcpServers(scope: Scope): Promise<ImportCatalog> {
+  return await json<ImportCatalog>(await fetch(`/api/mcp/importable?${scoped(scope)}`))
 }
 
 /**

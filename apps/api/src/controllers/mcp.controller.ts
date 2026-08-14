@@ -392,12 +392,20 @@ export async function importable(c: Context) {
   const currentId = await workspaceIdOf(c);
   const workspaces = (await workspaceRegistry.list(userId)).filter((w) => w.id !== currentId);
 
-  // Names are unique per workspace, so a server already here by name is one the
-  // user would have to rename on arrival. Flagged rather than hidden: seeing
-  // "already here" is the answer to "why is Nextcloud missing from this list".
-  const taken = new Set((await mcpStore.list(currentId)).map((s) => s.name));
+  const here = await mcpStore.list(currentId);
+  // Names are unique per workspace, so a server that *differs* but shares a name
+  // is one the user would have to rename on arrival. Flagged, not hidden — it
+  // is a real connection they do not have yet.
+  const takenNames = new Set(here.map((s) => s.name));
+  const connectedHere = new Set(
+    await Promise.all(
+      here.map(async (s) => connectionKey(s, await mcpStore.resolveSecrets(currentId, s.id))),
+    ),
+  );
 
   const sources = [];
+  let alreadyHere = 0;
+
   for (const workspace of workspaces) {
     const servers = await mcpStore.list(workspace.id);
     if (!servers.length) continue;
@@ -405,6 +413,16 @@ export async function importable(c: Context) {
     const described = [];
     for (const s of servers) {
       const secrets = await mcpStore.resolveSecrets(workspace.id, s.id);
+
+      // Already connected to this exact thing, so importing it would add a
+      // second row that does the same work under a numbered name. Counted
+      // rather than silently dropped: an empty list means something different
+      // when the reason is "you already have all of them".
+      if (connectedHere.has(connectionKey(s, secrets))) {
+        alreadyHere++;
+        continue;
+      }
+
       described.push({
         id: s.id,
         name: s.name,
@@ -416,14 +434,49 @@ export async function importable(c: Context) {
         toolCount: s.toolCount,
         headerKeys: Object.keys(secrets?.headers ?? {}).sort(),
         envKeys: Object.keys(secrets?.env ?? {}).sort(),
-        nameTaken: taken.has(s.name),
+        nameTaken: takenNames.has(s.name),
       });
     }
 
+    if (!described.length) continue;
     sources.push({ workspaceId: workspace.id, workspaceName: workspace.name, servers: described });
   }
 
-  return c.json({ sources });
+  return c.json({ sources, alreadyHere });
+}
+
+/**
+ * What makes two MCP servers the same connection.
+ *
+ * Not the name — that is the user's label and differs between workspaces for
+ * the same server. Not the command either: every Nextcloud install runs the
+ * identical `uvx nextcloud-mcp-server run …`, and what separates one from
+ * another is the host, which lives in the credentials. So the credentials are
+ * part of the identity, and two rows match only when they would talk to the
+ * same place as the same person.
+ *
+ * The value never leaves this process: it exists to compare, and it is never
+ * returned, logged, or stored.
+ */
+function connectionKey(
+  row: { transport: string; url: string | null; command: string | null; argsJson: string | null },
+  secrets: { headers: Record<string, string>; env: Record<string, string> } | null,
+): string {
+  // Sorted, so two identical maps written in different orders still match.
+  const stable = (map: Record<string, string> | undefined) =>
+    Object.entries(map ?? {})
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\u0000");
+
+  return [
+    row.transport,
+    row.url ?? "",
+    row.command ?? "",
+    (row.argsJson ? (JSON.parse(row.argsJson) as string[]) : []).join("\u0001"),
+    stable(secrets?.headers),
+    stable(secrets?.env),
+  ].join("\u0002");
 }
 
 /**
@@ -485,6 +538,20 @@ export async function importServer(c: Context) {
 
   const secrets = await mcpStore.resolveSecrets(sourceWorkspaceId, serverId);
   const args = row.argsJson ? (JSON.parse(row.argsJson) as string[]) : [];
+
+  // The picker already hides these, so reaching here means a stale list or a
+  // direct call. Refused either way: a second row talking to the same place as
+  // the same user is not a connection, it is a duplicate tool list.
+  const key = connectionKey(row, secrets);
+  for (const existing of await mcpStore.list(workspaceId)) {
+    const mine = await mcpStore.resolveSecrets(workspaceId, existing.id);
+    if (connectionKey(existing, mine) === key) {
+      return c.json(
+        { error: `Already connected here as "${existing.name}"`, alreadyConnectedAs: existing.name },
+        409,
+      );
+    }
+  }
 
   // The allowlist is re-applied rather than trusted. A row stored before a
   // command was removed from the allowlist must not be a way back in.
