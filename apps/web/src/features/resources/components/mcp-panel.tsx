@@ -2,15 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangleIcon,
   ChevronLeftIcon,
-  CloudIcon,
-  KanbanIcon,
-  MailIcon,
+  DownloadIcon,
   PencilIcon,
   PlugIcon,
   PlusIcon,
   RefreshCwIcon,
   SlidersHorizontalIcon,
-  TerminalIcon,
   Trash2Icon,
 } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
@@ -22,18 +19,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
+import { Spinner } from '@/shared/ui/spinner'
 import {
   addMcpServer,
   deleteMcpServer,
+  importMcpServer,
+  listImportableMcpServers,
   listMcpServers,
   refreshMcpServer,
   setMcpServerEnabled,
   updateMcpServer,
+  type ImportSource,
+  type ImportableServer,
   type NewMcpServerInput,
 } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
-import { CONNECTORS, connectorEnv, missingFields, type Connector } from '@/features/resources/lib/connectors'
+import {
+  CONNECTORS,
+  connectorEnv,
+  matchConnector,
+  missingFields,
+  type Connector,
+} from '@/features/resources/lib/connectors'
+import { ServiceMark, serviceLabel } from '@/features/resources/components/service-mark'
 import type { McpServerRow } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
 
@@ -50,8 +58,10 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
   const [picking, setPicking] = useState(false)
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [sources, setSources] = useState<ImportSource[] | null>(null)
   const [editing, setEditing] = useState<McpServerRow | null>(null)
-  const [diagnosing, setDiagnosing] = useState<McpServerRow | null>(null)
+  const [viewing, setViewing] = useState<McpServerRow | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scope = useScope()
@@ -104,15 +114,24 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     setPicking(false)
     setChosen(null)
     setManual(false)
+    setImporting(false)
     setError(null)
   }
 
   const openPicker = () => {
     setChosen(null)
     setManual(false)
+    setImporting(false)
     setError(null)
     setPicking(true)
+    // Read on open rather than on mount: a user with one workspace never has
+    // anything to import, and this is one request per workspace they own.
+    void listImportableMcpServers(scope)
+      .then(setSources)
+      .catch(() => setSources([]))
   }
+
+  const importable = (sources ?? []).reduce((n, s) => n + s.servers.length, 0)
 
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
@@ -191,25 +210,40 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
       </Dialog>
 
       <Dialog
-        open={!!diagnosing}
+        open={!!viewing}
         onOpenChange={(open) => {
-          if (!open) setDiagnosing(null)
+          if (!open) setViewing(null)
         }}
       >
         <DialogContent className="sm:max-w-xl">
-          {diagnosing ? (
-            <ConnectionReport
+          {viewing ? (
+            <ServerDetail
               server={
                 // Re-read from the list so a retry's outcome replaces what is
                 // on screen instead of leaving the first failure frozen there.
-                servers.find((s) => s.id === diagnosing.id) ?? diagnosing
+                servers.find((s) => s.id === viewing.id) ?? viewing
               }
               busy={busy}
+              onEdit={() => {
+                const row = servers.find((s) => s.id === viewing.id) ?? viewing
+                setViewing(null)
+                setError(null)
+                setEditing(row)
+              }}
               onRetry={async () => {
                 setBusy(true)
-                await refreshMcpServer(scope, diagnosing.id)
+                try {
+                  await refreshMcpServer(scope, viewing.id)
+                  await refresh()
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              onRemove={async () => {
+                setViewing(null)
+                setServers((prev) => prev.filter((x) => x.id !== viewing.id))
+                await deleteMcpServer(scope, viewing.id)
                 await refresh()
-                setBusy(false)
               }}
             />
           ) : null}
@@ -223,7 +257,29 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         }}
       >
         <DialogContent className="sm:max-w-lg">
-          {manual ? (
+          {importing ? (
+            <ImportPicker
+              sources={sources}
+              busy={busy}
+              error={error}
+              onBack={() => {
+                setImporting(false)
+                setError(null)
+              }}
+              onImport={async (workspaceId, serverId) => {
+                setBusy(true)
+                setError(null)
+                const { error: failed } = await importMcpServer(scope, workspaceId, serverId)
+                setBusy(false)
+                if (failed) {
+                  setError(failed)
+                  return
+                }
+                await refresh()
+                closePicker()
+              }}
+            />
+          ) : manual ? (
             <AddServerForm
               busy={busy}
               error={error}
@@ -254,6 +310,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
             />
           ) : (
             <ConnectorPicker
+              importable={importable}
               onChoose={(connector) => {
                 setError(null)
                 setChosen(connector)
@@ -261,6 +318,10 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
               onManual={() => {
                 setError(null)
                 setManual(true)
+              }}
+              onImport={() => {
+                setError(null)
+                setImporting(true)
               }}
             />
           )}
@@ -277,7 +338,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
                 setError(null)
                 setEditing(s)
               }}
-              onDiagnose={() => setDiagnosing(s)}
+              onOpen={() => setViewing(s)}
               onToggle={async () => {
                 // Optimistic: the round trip is a single UPDATE, and a switch
                 // that lags behind the click reads as broken.
@@ -308,9 +369,6 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     </div>
   )
 }
-
-/** Catalog icons, resolved here so `lib/connectors.ts` stays free of JSX. */
-const CONNECTOR_ICONS = { cloud: CloudIcon, mail: MailIcon, kanban: KanbanIcon } as const
 
 /** The field styling every input in this panel shares. */
 const FIELD_CLASS =
@@ -347,11 +405,16 @@ function BackButton({ onClick }: { onClick: () => void }) {
  * mono readout used for tool names and trace lines elsewhere.
  */
 function ConnectorPicker({
+  importable,
   onChoose,
   onManual,
+  onImport,
 }: {
+  /** How many servers this user has in other workspaces. Zero hides the row. */
+  importable: number
   onChoose: (connector: Connector) => void
   onManual: () => void
+  onImport: () => void
 }) {
   return (
     <>
@@ -364,56 +427,222 @@ function ConnectorPicker({
 
       <div className={BODY_CLASS}>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          {CONNECTORS.map((connector) => {
-            const Icon = CONNECTOR_ICONS[connector.icon]
-            return (
-              <button
-                key={connector.id}
-                type="button"
-                onClick={() => onChoose(connector)}
-                className={cn(
-                  'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
-                  'transition-colors outline-none',
-                  'hover:border-foreground/30 hover:bg-accent',
-                  'focus-visible:border-foreground/40 focus-visible:bg-accent',
-                )}
-              >
-                <Icon className="mb-1 size-4 shrink-0 text-muted-foreground" />
-                <span className="text-sm leading-snug">{connector.name}</span>
-                <span className="text-xs leading-relaxed text-muted-foreground">
-                  {connector.summary}
-                </span>
-                {/* mt-auto so the command sits on the baseline of every card,
-                    whatever length the summary above it runs to. */}
-                <span className="readout mt-auto w-full truncate pt-2.5 text-[0.625rem] text-muted-foreground/70">
-                  {[connector.command, ...connector.args].join(' ')}
-                </span>
-              </button>
-            )
-          })}
+          {CONNECTORS.map((connector) => (
+            <button
+              key={connector.id}
+              type="button"
+              onClick={() => onChoose(connector)}
+              className={cn(
+                'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
+                'transition-colors outline-none',
+                'hover:border-foreground/30 hover:bg-accent',
+                'focus-visible:border-foreground/40 focus-visible:bg-accent',
+              )}
+            >
+              <ServiceMark connector={connector} transport="stdio" size="sm" className="mb-1.5" />
+              <span className="text-sm leading-snug">{connector.name}</span>
+              <span className="text-xs leading-relaxed text-muted-foreground">
+                {connector.summary}
+              </span>
+              {/* mt-auto so the command sits on the baseline of every card,
+                  whatever length the summary above it runs to. */}
+              <span className="readout mt-auto w-full truncate pt-2.5 text-[0.625rem] text-muted-foreground/70">
+                {[connector.command, ...connector.args].join(' ')}
+              </span>
+            </button>
+          ))}
         </div>
 
-        {/* An escape hatch, not a third connector — full width, below the grid. */}
-        <button
-          type="button"
+        {/* Escape hatches, not more connectors — full width, below the grid.
+            Importing comes first: when it applies it is strictly less work than
+            either of the paths above it, because the credentials already
+            exist. */}
+        {importable ? (
+          <PickerRow
+            icon={DownloadIcon}
+            title="Import from another workspace"
+            detail={`${importable} service${importable === 1 ? '' : 's'} you have already set up, credentials included`}
+            onClick={onImport}
+            className="mt-2.5"
+          />
+        ) : null}
+
+        <PickerRow
+          icon={SlidersHorizontalIcon}
+          title="Something else"
+          detail="Enter the command, arguments and environment yourself"
           onClick={onManual}
-          className={cn(
-            'mt-2.5 flex w-full items-center gap-2.5 rounded-lg border border-dashed px-4 py-3 text-left',
-            'transition-colors outline-none',
-            'hover:border-foreground/30 hover:bg-accent',
-            'focus-visible:border-foreground/40 focus-visible:bg-accent',
-          )}
-        >
-          <SlidersHorizontalIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs leading-snug">Something else</span>
-            <span className="block text-[0.625rem] leading-relaxed text-muted-foreground">
-              Enter the command, arguments and environment yourself
-            </span>
-          </span>
-        </button>
+          className="mt-2.5"
+        />
       </div>
     </>
+  )
+}
+
+/** A full-width row under the connector grid. Same shape for every escape hatch. */
+function PickerRow({
+  icon: Icon,
+  title,
+  detail,
+  onClick,
+  className,
+}: {
+  icon: typeof SlidersHorizontalIcon
+  title: string
+  detail: string
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-lg border border-dashed px-4 py-3 text-left',
+        'transition-colors outline-none',
+        'hover:border-foreground/30 hover:bg-accent',
+        'focus-visible:border-foreground/40 focus-visible:bg-accent',
+        className,
+      )}
+    >
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs leading-snug">{title}</span>
+        <span className="block text-[0.625rem] leading-relaxed text-muted-foreground">
+          {detail}
+        </span>
+      </span>
+    </button>
+  )
+}
+
+/**
+ * Everything this user has connected elsewhere, grouped by workspace.
+ *
+ * Each row says what will actually arrive — the service, its tool count, and
+ * the credential *names* that come with it. Naming them is the point: an import
+ * copies a password without ever showing it, and a list that said only
+ * "Nextcloud" would be asking for consent to something unstated.
+ */
+function ImportPicker({
+  sources,
+  busy,
+  error,
+  onImport,
+  onBack,
+}: {
+  /** Null while the list is still arriving. */
+  sources: ImportSource[] | null
+  busy: boolean
+  error: string | null
+  onImport: (workspaceId: string, serverId: string) => Promise<void>
+  onBack: () => void
+}) {
+  const [pending, setPending] = useState<string | null>(null)
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <BackButton onClick={onBack} />
+          Import from another workspace
+        </DialogTitle>
+        <DialogDescription>
+          A copy, with its credentials. Editing or removing it here leaves the original alone.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className={cn(BODY_CLASS, 'flex max-h-[26rem] flex-col gap-5 overflow-y-auto')}>
+        {sources === null ? (
+          <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
+            <Spinner className="size-3.5" />
+            Looking through your other workspaces…
+          </div>
+        ) : sources.length === 0 ? (
+          <p className="py-6 text-xs leading-relaxed text-muted-foreground">
+            Your other workspaces have no services connected yet. Connect one there and it will
+            show up here.
+          </p>
+        ) : (
+          sources.map((source) => (
+            <div key={source.workspaceId} className="flex flex-col gap-2">
+              <span className="label text-muted-foreground">{source.workspaceName}</span>
+              {source.servers.map((server) => (
+                <ImportRow
+                  key={server.id}
+                  server={server}
+                  busy={busy && pending === server.id}
+                  disabled={busy}
+                  onImport={async () => {
+                    setPending(server.id)
+                    await onImport(source.workspaceId, server.id)
+                    setPending(null)
+                  }}
+                />
+              ))}
+            </div>
+          ))
+        )}
+
+        {error ? (
+          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">{error}</p>
+        ) : null}
+      </div>
+    </>
+  )
+}
+
+function ImportRow({
+  server,
+  busy,
+  disabled,
+  onImport,
+}: {
+  server: ImportableServer
+  busy: boolean
+  disabled: boolean
+  onImport: () => Promise<void>
+}) {
+  const connector = matchConnector(server)
+  const credentials = [...server.headerKeys, ...server.envKeys]
+
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border p-3">
+      <ServiceMark connector={connector} transport={server.transport} size="sm" />
+
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-xs leading-snug">{server.name}</span>
+        <span className="readout truncate text-[0.625rem] text-muted-foreground">
+          {[
+            serviceLabel(connector, server.transport),
+            server.status === 'connected'
+              ? `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
+              : 'was not connecting',
+          ].join(' · ')}
+        </span>
+        {credentials.length ? (
+          <span className="readout truncate text-[0.625rem] text-muted-foreground/70">
+            brings {credentials.join(', ')}
+          </span>
+        ) : null}
+        {server.nameTaken ? (
+          <span className="text-[0.625rem] leading-relaxed text-muted-foreground">
+            You already have a “{server.name}” here — this copy gets a numbered name.
+          </span>
+        ) : null}
+      </div>
+
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        onClick={() => void onImport()}
+        className="shrink-0"
+      >
+        {busy ? <Spinner className="size-3.5" /> : 'Import'}
+      </Button>
+    </div>
   )
 }
 
@@ -802,59 +1031,55 @@ function ServerItem({
   server,
   onToggle,
   onEdit,
-  onDiagnose,
+  onOpen,
   onRefresh,
   onRemove,
 }: {
   server: McpServerRow
   onToggle: () => Promise<void>
   onEdit: () => void
-  onDiagnose: () => void
+  onOpen: () => void
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
 }) {
   const failed = server.status !== 'connected'
   const off = !server.enabled
+  const connector = matchConnector(server)
   const resourceCount = server.capabilities.filter((c) => c.kind === 'resource').length
   const promptCount = server.capabilities.filter((c) => c.kind === 'prompt').length
 
-  const detail = failed
-    ? 'could not connect'
-    : [
-        `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`,
-        resourceCount ? `${resourceCount} resource${resourceCount === 1 ? '' : 's'}` : '',
-        promptCount ? `${promptCount} prompt${promptCount === 1 ? '' : 's'}` : '',
-        server.transport === 'stdio' ? server.command : hostOf(server.url),
-      ]
-        .filter(Boolean)
-        .join(' · ')
+  // The service comes first, because that is the question the list is being
+  // asked: which of these is the Nextcloud one. Counts and the launcher follow.
+  const detail = [
+    serviceLabel(connector, server.transport),
+    failed ? 'could not connect' : `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`,
+    !failed && resourceCount ? `${resourceCount} resource${resourceCount === 1 ? '' : 's'}` : '',
+    !failed && promptCount ? `${promptCount} prompt${promptCount === 1 ? '' : 's'}` : '',
+    server.transport === 'stdio' ? server.command : hostOf(server.url),
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <ItemCard
+      onSelect={onOpen}
+      label={`Open ${server.name}`}
       leading={
-        failed ? (
-          // A button, not a tooltip. The reason a connection failed is usually
-          // a traceback: it has to be readable at length and selectable to
-          // paste somewhere, and a hover card that truncates at 16rem is
-          // neither.
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={onDiagnose}
-                aria-label={`Why ${server.name} failed`}
-                className="relative z-10 mt-0.5 shrink-0 rounded-sm outline-none focus-visible:ring-[1.5px] focus-visible:ring-foreground/40"
-              >
-                <AlertTriangleIcon className="size-4 text-muted-foreground" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>See why it failed</TooltipContent>
-          </Tooltip>
-        ) : server.transport === 'stdio' ? (
-          <TerminalIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <PlugIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        )
+        <span className="relative">
+          <ServiceMark
+            connector={connector}
+            transport={server.transport}
+            className={cn(off && 'opacity-50')}
+          />
+          {failed ? (
+            // Sits on the mark rather than replacing it: a Nextcloud server
+            // that will not connect is still the Nextcloud one, and losing the
+            // brand is losing the thing you were scanning for.
+            <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-card">
+              <AlertTriangleIcon className="size-3 text-destructive" />
+            </span>
+          ) : null}
+        </span>
       }
       title={
         <span className={cn((failed || off) && 'text-muted-foreground')}>
@@ -862,22 +1087,7 @@ function ServerItem({
           {off ? <span className="ml-1.5 opacity-60">(off)</span> : null}
         </span>
       }
-      meta={
-        failed ? (
-          <button
-            type="button"
-            onClick={onDiagnose}
-            className={cn(
-              'relative z-10 max-w-full truncate text-left underline decoration-dotted underline-offset-2',
-              'outline-none hover:text-foreground focus-visible:text-foreground',
-            )}
-          >
-            could not connect — see details
-          </button>
-        ) : (
-          detail
-        )
-      }
+      meta={<span className="block truncate">{detail}</span>}
       actions={
         <>
           <Button
@@ -933,44 +1143,77 @@ function hostOf(url: string | null): string {
 }
 
 /**
- * Why a server would not connect.
+ * Everything a connected server is, read-only, with one way out to editing.
  *
- * Three things, in the order you need them: what was attempted, what came back,
- * and what the process said before it died. The third is the one that was
- * missing — nothing drained the stdio pipe, so a launcher that failed during
- * startup reported only the timeout that followed, never the cause.
+ * This replaced a dialog that only opened when a connection had failed, and
+ * only carried the traceback. That was the right content for the wrong trigger:
+ * "what is this thing actually pointed at, and which credentials does it hold"
+ * is a question people have about servers that work, and the panel had no
+ * answer that did not involve opening the edit form and risking a change.
  *
- * Everything is selectable and the output keeps its own line breaks, because
- * the realistic next step is pasting it into a search or an issue.
+ * So: nothing here is an input. Everything is selectable, and the output keeps
+ * its own line breaks, because the realistic next step for a failure is pasting
+ * it into a search or an issue.
  */
-function ConnectionReport({
+function ServerDetail({
   server,
   busy,
+  onEdit,
   onRetry,
+  onRemove,
 }: {
   server: McpServerRow
   busy: boolean
+  onEdit: () => void
   onRetry: () => Promise<void>
+  onRemove: () => Promise<void>
 }) {
+  const connector = matchConnector(server)
+  const connected = server.status === 'connected'
   const attempted =
     server.transport === 'stdio'
       ? [server.command, ...server.args].filter(Boolean).join(' ')
       : (server.url ?? '')
-  const recovered = server.status === 'connected'
+  const credentials = [...(server.headerKeys ?? []), ...(server.envKeys ?? [])]
+  const tools = server.capabilities.filter((c) => c.kind === 'tool')
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{server.name}</DialogTitle>
+        <DialogTitle className="flex items-center gap-2.5">
+          <ServiceMark connector={connector} transport={server.transport} size="sm" />
+          {server.name}
+        </DialogTitle>
         <DialogDescription>
-          {recovered
-            ? 'Connected. This server is working now.'
-            : 'This server did not connect. Everything below is selectable.'}
+          {serviceLabel(connector, server.transport)}
+          {' · '}
+          {connected
+            ? `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`
+            : 'not connecting'}
+          {server.enabled ? '' : ' · off'}
         </DialogDescription>
       </DialogHeader>
 
-      <div className={cn(BODY_CLASS, 'flex flex-col gap-4')}>
+      <div className={cn(BODY_CLASS, 'flex max-h-[26rem] flex-col gap-4 overflow-y-auto')}>
         <Field label={server.transport === 'stdio' ? 'Command' : 'URL'}>{attempted}</Field>
+
+        {/* Names, never values. Showing which keys are set is what makes the
+            difference between "this is configured" and "this is empty" legible
+            without opening a form that could change it. */}
+        <div className="flex flex-col gap-1.5">
+          <span className="label text-muted-foreground">
+            {server.transport === 'stdio' ? 'Environment' : 'Headers'}
+          </span>
+          {credentials.length ? (
+            <p className="readout rounded-md border bg-muted/40 p-3 text-[0.6875rem] leading-relaxed break-all">
+              {credentials.map((key) => `${key}=••••••`).join('\n')}
+            </p>
+          ) : (
+            <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+              Nothing stored. This server runs with no credentials of its own.
+            </p>
+          )}
+        </div>
 
         {server.error ? <Field label="Error">{server.error}</Field> : null}
 
@@ -983,12 +1226,29 @@ function ConnectionReport({
               {server.errorDetail}
             </pre>
           </div>
-        ) : !recovered ? (
+        ) : !connected ? (
           <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
             The server produced no output before it failed. For a stdio server that usually means
             the launcher itself never started — check that the command is spelled correctly and
             that the package exists.
           </p>
+        ) : null}
+
+        {tools.length ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="label text-muted-foreground">Tools it offers</span>
+            <div className="flex flex-wrap gap-1.5">
+              {tools.map((tool) => (
+                <span
+                  key={tool.name}
+                  title={tool.description ?? undefined}
+                  className="readout rounded-md border px-1.5 py-1 text-[0.625rem] text-muted-foreground"
+                >
+                  {tool.name}
+                </span>
+              ))}
+            </div>
+          </div>
         ) : null}
 
         <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
@@ -998,9 +1258,28 @@ function ConnectionReport({
         </p>
       </div>
 
-      <div className="flex gap-2 border-t px-5 py-3.5">
-        <Button type="button" size="sm" disabled={busy} onClick={() => void onRetry()}>
-          {busy ? 'Reconnecting…' : 'Try again'}
+      <div className="flex items-center gap-2 border-t px-5 py-3.5">
+        <Button type="button" size="sm" onClick={onEdit}>
+          <PencilIcon data-icon="inline-start" />
+          Edit
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void onRetry()}
+        >
+          {busy ? 'Reconnecting…' : 'Reconnect'}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => void onRemove()}
+          className="ml-auto text-muted-foreground hover:text-destructive"
+        >
+          Remove
         </Button>
       </div>
     </>
