@@ -1,5 +1,5 @@
-import { env } from "../../config/env";
 import type { OAuthTokens } from "../../repositories/connector.repository";
+import { buildAuthUrl } from "./google-oauth";
 
 /**
  * Google Drive, as far as this codebase is concerned.
@@ -7,14 +7,15 @@ import type { OAuthTokens } from "../../repositories/connector.repository";
  * The only module that knows Drive's URLs, scopes, and export formats — the
  * sync engine above it works in `SourceFile`s and never sees a Google concept.
  * A second connector lands here as a sibling, not as a change to the sync.
+ * The OAuth dance itself is shared with every Google connector and lives in
+ * `google-oauth.ts`; this module re-exports the pieces the controller and sync
+ * engine already reach for by name.
  *
  * Authentication is the *user's* OAuth grant, not an admin credential. Every
  * request below therefore returns exactly what that person can see in Drive,
  * which is why nothing here models permissions.
  */
 
-const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
 /**
@@ -24,98 +25,11 @@ const DRIVE_API = "https://www.googleapis.com/drive/v3";
  */
 const SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
 
-/** Refresh this long before expiry, so a slow sync cannot straddle it. */
-const REFRESH_MARGIN_MS = 120_000;
+export { redirectUri, isConfigured, exchangeCode, refresh, needsRefresh } from "./google-oauth";
 
-export const redirectUri = () => `${env.publicUrl}/api/connectors/google/callback`;
-
-export function isConfigured(): boolean {
-  return Boolean(env.googleClientId && env.googleClientSecret);
-}
-
-/**
- * Where to send the browser to get consent.
- *
- * `access_type=offline` with `prompt=consent` is what produces a refresh token.
- * Google issues one only on first consent otherwise, so a user who has already
- * authorised this client once would come back with an access token that expires
- * in an hour and no way to renew it — a connector that works until lunchtime.
- */
+/** Where to send the browser to get consent, scoped to Drive. */
 export function authUrl(state: string): string {
-  const params = new URLSearchParams({
-    client_id: env.googleClientId,
-    redirect_uri: redirectUri(),
-    response_type: "code",
-    scope: SCOPES.join(" "),
-    access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
-    state,
-  });
-  return `${AUTH_URL}?${params.toString()}`;
-}
-
-type TokenResponse = {
-  access_token?: string;
-  refresh_token?: string;
-  expires_in?: number;
-  error?: string;
-  error_description?: string;
-};
-
-async function postToken(body: Record<string, string>): Promise<OAuthTokens> {
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(body).toString(),
-  });
-  const json = (await res.json().catch(() => ({}))) as TokenResponse;
-  if (!res.ok || !json.access_token) {
-    // Google's error body is the useful part — "redirect_uri_mismatch" names
-    // the actual fix, where a bare 400 would send you to the wrong place.
-    throw new Error(
-      json.error_description || json.error || `token request failed (HTTP ${res.status})`,
-    );
-  }
-  return {
-    accessToken: json.access_token,
-    refreshToken: json.refresh_token,
-    expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000,
-  };
-}
-
-export function exchangeCode(code: string): Promise<OAuthTokens> {
-  return postToken({
-    code,
-    client_id: env.googleClientId,
-    client_secret: env.googleClientSecret,
-    redirect_uri: redirectUri(),
-    grant_type: "authorization_code",
-  });
-}
-
-/**
- * Trade a refresh token for a fresh access token.
- *
- * The refresh token is carried forward explicitly: Google does not return it
- * again on a refresh, and dropping it here would lose the only credential that
- * survives an access token's hour.
- */
-export async function refresh(tokens: OAuthTokens): Promise<OAuthTokens> {
-  if (!tokens.refreshToken) {
-    throw new Error("no refresh token — reconnect the account");
-  }
-  const next = await postToken({
-    refresh_token: tokens.refreshToken,
-    client_id: env.googleClientId,
-    client_secret: env.googleClientSecret,
-    grant_type: "refresh_token",
-  });
-  return { ...next, refreshToken: next.refreshToken ?? tokens.refreshToken };
-}
-
-export function needsRefresh(tokens: OAuthTokens): boolean {
-  return tokens.expiresAt - REFRESH_MARGIN_MS <= Date.now();
+  return buildAuthUrl(state, SCOPES);
 }
 
 async function driveFetch(tokens: OAuthTokens, path: string): Promise<Response> {

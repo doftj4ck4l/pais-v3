@@ -631,7 +631,7 @@ export type McpCapabilityRow = {
 
 // ---- connectors: remote sources that sync into `documents` ----
 
-export type ConnectorKind = "gdrive";
+export type ConnectorKind = "gdrive" | "gcal";
 export type ConnectorStatus = "connected" | "syncing" | "error";
 
 /**

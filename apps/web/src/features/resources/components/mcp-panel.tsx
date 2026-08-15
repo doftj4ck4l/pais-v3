@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangleIcon,
+  CalendarIcon,
   ChevronLeftIcon,
+  CloudIcon,
   DownloadIcon,
   PencilIcon,
   PlugIcon,
@@ -22,13 +24,18 @@ import {
 import { Spinner } from '@/shared/ui/spinner'
 import {
   addMcpServer,
+  deleteConnector,
   deleteMcpServer,
+  googleAuthUrl,
   importMcpServer,
+  listConnectors,
   listImportableMcpServers,
   listMcpServers,
   refreshMcpServer,
   setMcpServerEnabled,
   updateMcpServer,
+  type ConnectorKind,
+  type ConnectorRow,
   type ImportCatalog,
   type ImportableServer,
   type NewMcpServerInput,
@@ -46,6 +53,58 @@ import type { McpServerRow } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
 
 /**
+ * Google connectors, presented in the same picker as the MCP services.
+ *
+ * To the reader these are the same choice — which of my services can the agent
+ * reach — so they sit beside Nextcloud and Plane rather than on a page of their
+ * own. What differs is entirely under the hood: choosing one opens Google's
+ * OAuth consent instead of a credentials form, and the result is a `connectors`
+ * row (live first-party tools), not an `mcp_servers` row.
+ */
+const GOOGLE_SERVICES: {
+  kind: ConnectorKind
+  name: string
+  summary: string
+  icon: typeof CalendarIcon
+  tint: string
+}[] = [
+  {
+    kind: 'gcal',
+    name: 'Google Calendar',
+    summary: 'Read your schedule and create, move or cancel events',
+    icon: CalendarIcon,
+    tint: '66 133 244',
+  },
+  {
+    kind: 'gdrive',
+    name: 'Google Drive',
+    summary: 'Index your Drive files into the workspace so the agent can search them',
+    icon: CloudIcon,
+    tint: '30 142 62',
+  },
+]
+
+/** The tinted service badge, matching ServiceMark's shape for the Google cards. */
+function GoogleMark({
+  icon: Icon,
+  tint,
+  className,
+}: {
+  icon: typeof CalendarIcon
+  tint: string
+  className?: string
+}) {
+  return (
+    <span
+      className={cn('grid size-8 place-items-center rounded-md', className)}
+      style={{ backgroundColor: `rgb(${tint} / 0.14)`, color: `rgb(${tint})` }}
+    >
+      <Icon className="size-4" />
+    </span>
+  )
+}
+
+/**
  * Connect MCP servers and see what they give the agent.
  *
  * A server that failed to connect is listed alongside the ones that worked,
@@ -55,6 +114,8 @@ import { cn } from '@/shared/lib/utils'
  */
 export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => void }) {
   const [servers, setServers] = useState<McpServerRow[]>([])
+  const [connectors, setConnectors] = useState<ConnectorRow[]>([])
+  const [googleBlocked, setGoogleBlocked] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
   const [chosen, setChosen] = useState<Connector | null>(null)
   const [manual, setManual] = useState(false)
@@ -75,10 +136,27 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     } catch {
       // Secondary to the console; a listing failure is not fatal.
     }
+    try {
+      const { connectors: rows, available } = await listConnectors(scope)
+      setConnectors(rows)
+      // Google is one OAuth client for both connectors, so it is configured or
+      // blocked as a whole — surface the reason on the picker cards.
+      setGoogleBlocked(available.find((a) => a.kind === 'gcal' || a.kind === 'gdrive')?.reason ?? null)
+    } catch {
+      // Same stance as the server list above.
+    }
   }, [scope])
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  // Google consent happens in a second tab that cannot talk back to this one,
+  // so re-read when the window regains focus — the moment the user returns.
+  useEffect(() => {
+    const onFocus = () => void refresh()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
   /**
@@ -119,6 +197,36 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
     setError(null)
   }
 
+  /**
+   * Start a Google OAuth grant in a second tab.
+   *
+   * Google refuses to render consent in an iframe, and a same-tab navigation
+   * would lose whatever is in flight here — so it opens a tab and the focus
+   * listener above re-reads the connector list when the user comes back. The
+   * picker closes because the next thing to look at is in the other tab.
+   */
+  const connectGoogle = async (kind: ConnectorKind) => {
+    setError(null)
+    try {
+      const url = await googleAuthUrl(scope, kind)
+      window.open(url, '_blank', 'noopener')
+      closePicker()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  const disconnectGoogle = async (row: ConnectorRow) => {
+    const isDrive = row.kind === 'gdrive'
+    const consequence = isDrive
+      ? ` Its ${row.documentCount} indexed document(s) will be removed.`
+      : ' The agent will lose access to it.'
+    if (!window.confirm(`Disconnect ${row.accountEmail ?? 'this account'}?${consequence}`)) return
+    setConnectors((prev) => prev.filter((c) => c.id !== row.id)) // optimistic
+    await deleteConnector(scope, row.id)
+    await refresh()
+  }
+
   const openPicker = () => {
     setChosen(null)
     setManual(false)
@@ -135,18 +243,20 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
 
   const enabled = servers.filter((s) => s.enabled && s.status === 'connected')
   const toolTotal = enabled.reduce((n, s) => n + s.toolCount, 0)
+  const connectedTotal = enabled.length + connectors.length
+  const hasAny = servers.length > 0 || connectors.length > 0
 
   return (
     <div className="flex flex-col">
       <PanelHeader
         busy={busy}
         summary={
-          enabled.length
-            ? `${enabled.length} connected · ${toolTotal} tools`
+          connectedTotal
+            ? `${connectedTotal} connected${toolTotal ? ` · ${toolTotal} tools` : ''}`
             : null
         }
         action={
-          servers.length ? (
+          hasAny ? (
             <Button size="sm" onClick={openPicker}>
               <PlusIcon data-icon="inline-start" />
               Connect a service
@@ -155,7 +265,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         }
       />
 
-      {servers.length === 0 ? (
+      {!hasAny ? (
         <PanelEmpty
           icon={PlugIcon}
           title="No connectors yet"
@@ -337,6 +447,8 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
           ) : (
             <ConnectorPicker
               catalog={catalog}
+              googleBlocked={googleBlocked}
+              onConnectGoogle={connectGoogle}
               onChoose={(connector) => {
                 setError(null)
                 setChosen(connector)
@@ -354,7 +466,7 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
         </DialogContent>
       </Dialog>
 
-      {servers.length ? (
+      {hasAny ? (
         <PanelGrid>
           {servers.map((s) => (
             <ServerItem
@@ -386,9 +498,62 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
               onRemove={() => setRemoving(s)}
             />
           ))}
+          {connectors.map((row) => (
+            <GoogleConnectorItem
+              key={row.id}
+              connector={row}
+              onDisconnect={() => void disconnectGoogle(row)}
+            />
+          ))}
         </PanelGrid>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * A connected Google account, as a card alongside the MCP servers.
+ *
+ * No enable/refresh controls: unlike an MCP server there is no process to probe
+ * or pause — the tools are live whenever the grant is. Disconnect is the only
+ * action, and it revokes the app's access on removal.
+ */
+function GoogleConnectorItem({
+  connector,
+  onDisconnect,
+}: {
+  connector: ConnectorRow
+  onDisconnect: () => void
+}) {
+  const svc = GOOGLE_SERVICES.find((g) => g.kind === connector.kind)
+  const label = svc?.name ?? 'Google'
+  const detail =
+    connector.kind === 'gdrive'
+      ? `${connector.documentCount} doc${connector.documentCount === 1 ? '' : 's'} indexed`
+      : 'agent tools'
+  return (
+    <ItemCard
+      leading={svc ? <GoogleMark icon={svc.icon} tint={svc.tint} className="mt-0.5" /> : undefined}
+      title={connector.accountEmail ?? label}
+      meta={
+        <span className="flex flex-wrap gap-x-2">
+          <span>{label}</span>
+          <span>{detail}</span>
+          {connector.error ? <span className="text-destructive">{connector.error}</span> : null}
+        </span>
+      }
+      actions={
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onDisconnect}
+          aria-label="Disconnect"
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2Icon />
+        </Button>
+      }
+    />
   )
 }
 
@@ -428,12 +593,17 @@ function BackButton({ onClick }: { onClick: () => void }) {
  */
 function ConnectorPicker({
   catalog,
+  googleBlocked,
+  onConnectGoogle,
   onChoose,
   onManual,
   onImport,
 }: {
   /** What could be imported from elsewhere; null while it is still loading. */
   catalog: ImportCatalog | null
+  /** Why the Google cards are disabled, or null when they can be used. */
+  googleBlocked: string | null
+  onConnectGoogle: (kind: ConnectorKind) => void
   onChoose: (connector: Connector) => void
   onManual: () => void
   onImport: () => void
@@ -451,6 +621,31 @@ function ConnectorPicker({
 
       <div className={BODY_CLASS}>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+          {/* Google connectors first: they are the first-party ones, and OAuth
+              is less to fill in than any credentials form below them. */}
+          {GOOGLE_SERVICES.map((svc) => (
+            <button
+              key={svc.kind}
+              type="button"
+              disabled={!!googleBlocked}
+              title={googleBlocked ?? undefined}
+              onClick={() => onConnectGoogle(svc.kind)}
+              className={cn(
+                'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
+                'transition-colors outline-none',
+                'hover:border-foreground/30 hover:bg-accent',
+                'focus-visible:border-foreground/40 focus-visible:bg-accent',
+                'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-transparent',
+              )}
+            >
+              <GoogleMark icon={svc.icon} tint={svc.tint} className="mb-1.5" />
+              <span className="text-sm leading-snug">{svc.name}</span>
+              <span className="text-xs leading-relaxed text-muted-foreground">{svc.summary}</span>
+              <span className="readout mt-auto w-full truncate pt-2.5 text-[0.625rem] text-muted-foreground/70">
+                {googleBlocked ? 'not configured' : 'Sign in with Google'}
+              </span>
+            </button>
+          ))}
           {CONNECTORS.map((connector) => (
             <button
               key={connector.id}

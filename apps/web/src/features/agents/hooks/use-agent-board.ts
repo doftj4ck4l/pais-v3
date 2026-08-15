@@ -4,6 +4,7 @@ import {
   fetchConversation,
   fetchMeta,
   listConversations,
+  stopRun,
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
 import type { Scope } from '@/shared/api/api'
@@ -236,10 +237,15 @@ export function useAgentBoard(scope: Scope) {
 
   const stop = useCallback(
     (id: string) => {
+      // Two things, because neither stops the run alone: abort this browser's
+      // fetch so it stops reading, and tell the server to cancel the run —
+      // closing the connection does not reach the pi loop on this runtime.
+      const agent = agentsRef.current.find((a) => a.id === id)
       controllersRef.current.get(id)?.abort()
+      if (agent?.conversationId) void stopRun(scope, agent.conversationId)
       patchAgent(id, { status: 'stopped', notice: 'Run stopped.' })
     },
-    [patchAgent],
+    [patchAgent, scope],
   )
 
   const remove = useCallback((id: string) => {

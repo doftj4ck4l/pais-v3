@@ -38,6 +38,8 @@ import { visionConfigured } from "../media/vision.service";
 import { mediaConfigured } from "../media/media.service";
 import { documentStore } from "../../repositories/document.repository";
 import { createDatabaseTools } from "../db/db-tools";
+import { createCalendarTools } from "../connectors/calendar-tools";
+import { connectorStore } from "../../repositories/connector.repository";
 import { databaseConnectionStore } from "../../repositories/database-connection.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
 import { playbookStore } from "../../repositories/playbook.repository";
@@ -272,6 +274,30 @@ export async function runPiAgent(opts: {
     }
   }
 
+  // --- calendar: live Google Calendar tools, only when an account is connected ---
+  // Gated on a connected `gcal` connector, not on the harness, for the same
+  // reason MCP is: the opt-in already happened when someone authorised the
+  // account. A workspace with no calendar sees none of these tools, so the list
+  // stays clean. The store read is one indexed query and must not fail the run.
+  let hasCalendar = false;
+  try {
+    const wsConnectors = await connectorStore.list(workspaceId);
+    if (wsConnectors.some((con) => con.kind === "gcal")) {
+      hasCalendar = true;
+      for (const ct of createCalendarTools(workspaceId)) {
+        agentTools.push({
+          name: ct.name,
+          description: ct.description,
+          parameters: jsonSchemaToTypebox(ct.parameters as Record<string, unknown>),
+          label: ct.label,
+          execute: ct.execute,
+        });
+      }
+    }
+  } catch (e) {
+    logger.warn("calendar.tools_failed", { run: runId, error: (e as Error).message });
+  }
+
   // --- MCP: whatever servers this workspace has enabled ---
   // Not gated behind `harnessTools`, unlike `db`. A workspace only has an MCP
   // server because someone added it, so the opt-in has already happened; a
@@ -466,6 +492,19 @@ export async function runPiAgent(opts: {
     }
   }
 
+  // The user's own Google Calendar is authoritative over any other calendar a
+  // connected service happens to expose (e.g. a Nextcloud MCP server's calendar
+  // tools): when both exist, an unqualified "my calendar" means the Google one.
+  // Said in the prompt rather than left to the model to infer from tool names.
+  const calendarPrompt = hasCalendar
+    ? `\n\nThe user's calendar is Google Calendar, reached with the "calendar_*" tools ` +
+      `(calendar_list_events, calendar_create_event, and so on). For ANY question about the user's ` +
+      `calendar, schedule, meetings, events, or availability, you MUST use the "calendar_*" tools. ` +
+      `Do NOT use any other service's calendar tools for this — in particular, do not call a ` +
+      `Nextcloud "nc_calendar_*" tool for the user's calendar. Use another calendar only if the user ` +
+      `explicitly names that service (e.g. "check my Nextcloud calendar").`
+    : "";
+
   // #2: systemPrompt as a function that adapts to the active tool set/model.
   const systemPromptFn = (ctx: any): string => {
     const activeNames = (ctx?.activeTools ?? []).map((t: any) => t.name);
@@ -494,6 +533,7 @@ export async function runPiAgent(opts: {
     });
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
+    if (calendarPrompt) out += calendarPrompt;
     // After the environment and the corpora, before the MCP block: the playbook
     // is commentary on the tools described around it, so it reads as commentary
     // only once they have been introduced.
@@ -562,7 +602,12 @@ export async function runPiAgent(opts: {
   });
 
   if (signal) {
-    signal.addEventListener("abort", () => harness.abort().catch(() => {}), { once: true });
+    // Already aborted is possible: a stop can land in the gap between the
+    // controller being created and the harness existing. `addEventListener`
+    // would never fire for it, so the run would finish uncancelled — check the
+    // flag directly as well.
+    if (signal.aborted) void harness.abort().catch(() => {});
+    else signal.addEventListener("abort", () => harness.abort().catch(() => {}), { once: true });
   }
 
   let turns = 0;

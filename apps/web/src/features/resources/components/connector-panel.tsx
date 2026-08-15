@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CloudIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { CalendarIcon, CloudIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
 import { Spinner } from '@/shared/ui/spinner'
@@ -8,6 +8,7 @@ import {
   googleAuthUrl,
   listConnectors,
   syncConnector,
+  type ConnectorKind,
   type ConnectorRow,
   type SyncOutcome,
 } from '@/shared/api/api'
@@ -27,6 +28,17 @@ const STATUS_STYLE: Record<ConnectorRow['status'], string> = {
   connected: 'bg-emerald-500',
   syncing: 'bg-sky-500',
   error: 'bg-destructive',
+}
+
+/**
+ * How each connector kind presents. `syncable` is the load-bearing bit: Drive
+ * pulls files into the document index and so has a sync button and a doc count,
+ * while Calendar backs live agent tools and has neither — its card is just the
+ * account and a way to disconnect.
+ */
+const KIND: Record<ConnectorKind, { label: string; syncable: boolean }> = {
+  gdrive: { label: 'Google Drive', syncable: true },
+  gcal: { label: 'Google Calendar', syncable: false },
 }
 
 function when(ts: number | null): string {
@@ -80,10 +92,10 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  async function connect() {
+  async function connect(kind: ConnectorKind) {
     setProblem(null)
     try {
-      window.open(await googleAuthUrl(scope), '_blank', 'noopener')
+      window.open(await googleAuthUrl(scope, kind), '_blank', 'noopener')
       setNotice('Finish in the other tab, then come back.')
     } catch (e) {
       setProblem((e as Error).message)
@@ -111,12 +123,10 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
   }
 
   async function disconnect(row: ConnectorRow) {
-    if (
-      !window.confirm(
-        `Disconnect ${row.accountEmail ?? 'this account'}? Its ${row.documentCount} indexed ` +
-          `document(s) will be removed from this workspace.`,
-      )
-    ) {
+    const consequence = KIND[row.kind].syncable
+      ? ` Its ${row.documentCount} indexed document(s) will be removed from this workspace.`
+      : ' The agent will lose access to it.'
+    if (!window.confirm(`Disconnect ${row.accountEmail ?? 'this account'}?${consequence}`)) {
       return
     }
     setBusy(row.id)
@@ -129,20 +139,26 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
     }
   }
 
-  const googleBlocked = blocked.find((b) => b.kind === 'gdrive')
+  const googleBlocked = blocked.find((b) => b.kind === 'gdrive' || b.kind === 'gcal')
 
-  const connectButton = (
-    <Button size="sm" onClick={() => void connect()}>
-      <CloudIcon data-icon="inline-start" />
-      Connect Google Drive
-    </Button>
+  const connectButtons = (
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" variant="outline" onClick={() => void connect('gdrive')}>
+        <CloudIcon data-icon="inline-start" />
+        Connect Google Drive
+      </Button>
+      <Button size="sm" onClick={() => void connect('gcal')}>
+        <CalendarIcon data-icon="inline-start" />
+        Connect Google Calendar
+      </Button>
+    </div>
   )
 
   return (
     <div className="flex flex-col">
       <PanelHeader
-        summary={rows.length ? `${rows.length} source${rows.length === 1 ? '' : 's'}` : null}
-        action={rows.length && !googleBlocked ? connectButton : null}
+        summary={rows.length ? `${rows.length} connected` : null}
+        action={rows.length && !googleBlocked ? connectButtons : null}
       />
 
       <div>
@@ -152,12 +168,12 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
           // naming it is the whole help.
           <PanelEmpty
             icon={CloudIcon}
-            title={googleBlocked ? 'Sources are not configured' : 'No sources connected'}
+            title={googleBlocked ? 'Connectors are not configured' : 'Nothing connected'}
             description={
               googleBlocked?.reason ??
-              'Connect an account and its files are indexed alongside your uploads, so the agent searches both at once.'
+              'Connect Google Drive to index its files, or Google Calendar to let the agent read and manage your events.'
             }
-            action={googleBlocked ? null : connectButton}
+            action={googleBlocked ? null : connectButtons}
           />
         ) : null}
 
@@ -171,29 +187,37 @@ export function ConnectorPanel({ onCountChange }: { onCountChange?: (n: number) 
                   className={cn('mt-1.5 size-2 shrink-0 rounded-full', STATUS_STYLE[row.status])}
                 />
               }
-              title={row.accountEmail ?? 'Google Drive'}
+              title={row.accountEmail ?? KIND[row.kind].label}
               meta={
                 <span className="flex flex-wrap gap-x-2">
-                  <span>Google Drive</span>
-                  <span>
-                    {row.documentCount} doc{row.documentCount === 1 ? '' : 's'}
-                  </span>
-                  <span>{when(row.lastSyncAt)}</span>
+                  <span>{KIND[row.kind].label}</span>
+                  {KIND[row.kind].syncable ? (
+                    <>
+                      <span>
+                        {row.documentCount} doc{row.documentCount === 1 ? '' : 's'}
+                      </span>
+                      <span>{when(row.lastSyncAt)}</span>
+                    </>
+                  ) : (
+                    <span>agent tools</span>
+                  )}
                   {row.error ? <span className="text-destructive">{row.error}</span> : null}
                 </span>
               }
               actions={
                 <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => void sync(row.id)}
-                    disabled={busy === row.id}
-                    aria-label="Sync now"
-                    className="text-muted-foreground"
-                  >
-                    {busy === row.id ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
-                  </Button>
+                  {KIND[row.kind].syncable ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => void sync(row.id)}
+                      disabled={busy === row.id}
+                      aria-label="Sync now"
+                      className="text-muted-foreground"
+                    >
+                      {busy === row.id ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
+                    </Button>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="icon-sm"
