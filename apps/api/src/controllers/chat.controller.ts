@@ -10,6 +10,7 @@ import { fitToWindow } from "../services/context/context-budget.service";
 import { describeAttachments } from "../services/media/upload.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { abortRun, registerRun, unregisterRun } from "../services/agent/run-registry";
+import { answerQuestion } from "../services/agent/elicitation-registry";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";
 import type { AgentEvent, ChatRequest } from "../types/agent";
@@ -180,6 +181,7 @@ export function stream(c: Context) {
           workspace: body.workspace,
           workspaceId: workspace.id,
           conversationId,
+          reasoningEffort: body.reasoningEffort,
         });
       } catch (e) {
         // The loop reports failures as events; a throw here means it broke outright.
@@ -235,6 +237,27 @@ export async function stop(c: Context) {
   if (!owned) return c.json({ error: "not found" }, 404);
   const stopped = abortRun(conversationId);
   return c.json({ ok: true, stopped });
+}
+
+/**
+ * POST /api/chat/:conversationId/answer — deliver the user's reply to an
+ * `ask_user` question the run is blocked on.
+ *
+ * Scoped and ownership-checked like /stop. `delivered: false` means no question
+ * by that id is waiting (already answered, or the run ended) — not an error the
+ * client needs to treat as one.
+ */
+export async function answer(c: Context) {
+  const userId = currentUserId(c);
+  const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
+  const conversationId = c.req.param("conversationId") ?? "";
+  const owned = await conversationRepository.getOwned(conversationId, workspace.id);
+  if (!owned) return c.json({ error: "not found" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { questionId?: string; answer?: string };
+  const questionId = String(body.questionId ?? "");
+  if (!questionId) return c.json({ error: "questionId required" }, 400);
+  const delivered = answerQuestion(conversationId, questionId, String(body.answer ?? ""));
+  return c.json({ ok: true, delivered });
 }
 
 /**

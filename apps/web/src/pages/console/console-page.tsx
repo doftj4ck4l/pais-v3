@@ -6,6 +6,7 @@ import { AgentHeader } from '@/features/agents/components/agent-header'
 import { AppShell } from '@/features/navigation/components/app-shell'
 import { ArtifactPanel } from '@/features/agents/components/artifact-panel'
 import { Composer } from '@/features/agents/components/composer'
+import { AskUserPrompt } from '@/features/agents/components/ask-user-prompt'
 import { Greeting, Suggestions } from '@/pages/console/components/empty-state'
 import type { UploadedImage } from '@/shared/lib/types'
 import { Transcript } from '@/features/agents/components/transcript'
@@ -139,6 +140,13 @@ export function Console() {
               ) : null}
             </div>
 
+            {selected?.pendingQuestion ? (
+              <AskUserPrompt
+                question={selected.pendingQuestion}
+                onAnswer={(text) => board.answer(selected.id, text)}
+              />
+            ) : null}
+
             <Composer
               docked={!waiting}
               notice={selected?.notice ?? null}
@@ -149,6 +157,8 @@ export function Console() {
               modelId={board.modelIdForNew}
               onModelChange={board.setModelIdForNew}
               lockedModelId={selected?.modelId ?? null}
+              effort={board.effort}
+              onEffortChange={board.setEffort}
             />
 
             <div className="min-h-0 overflow-hidden">

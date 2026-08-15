@@ -31,6 +31,13 @@ export type AgentEvent =
     }
   | { type: "done"; turns: number }
   | { type: "error"; message: string }
+  /**
+   * The agent is asking the user a question and waiting for the answer. Emitted
+   * by the `ask_user` tool, which blocks the in-progress run until the user
+   * responds (or the run is stopped). Live-only — the tool call and its result
+   * carry the durable record, so the recorder ignores this event.
+   */
+  | { type: "ask_user"; id: string; question: string; options: string[] }
   /** Sent once, up front: the row this run is being stored as. */
   | { type: "conversation"; id: string }
   /**
@@ -73,6 +80,12 @@ export type AgentOptions = {
    * console show one session's artifacts rather than the whole workspace's.
    */
   conversationId?: string;
+  /**
+   * How hard a thinking model should reason this run — one of the model's own
+   * effort levels. Ignored by models that do not declare `thinking`; when a
+   * thinking model gets none, its default level is used.
+   */
+  reasoningEffort?: string;
 };
 
 /** Body accepted by POST /api/chat. */
@@ -94,4 +107,6 @@ export type ChatRequest = {
   imageIds?: string[];
   /** Which workspace this run belongs to. Resolved server-side when absent. */
   workspaceId?: string;
+  /** How hard a thinking model should reason — one of its declared effort levels. */
+  reasoningEffort?: string;
 };
