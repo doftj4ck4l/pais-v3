@@ -23,7 +23,15 @@ export async function runAgent(
   model: ModelConfig,
   history: ChatMessage[],
   emit: (event: AgentEvent) => void,
-  { signal, runId = "-", template, workspace, workspaceId, conversationId }: AgentOptions = {},
+  {
+    signal,
+    runId = "-",
+    template,
+    workspace,
+    workspaceId,
+    conversationId,
+    reasoningEffort,
+  }: AgentOptions = {},
 ): Promise<number> {
   return runPiAgent({
     model,
@@ -37,5 +45,6 @@ export async function runAgent(
     workspace,
     workspaceId,
     conversationId,
+    reasoningEffort,
   });
 }

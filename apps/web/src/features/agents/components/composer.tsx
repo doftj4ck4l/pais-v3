@@ -25,6 +25,8 @@ export function Composer({
   modelId,
   onModelChange,
   lockedModelId = null,
+  effort = null,
+  onEffortChange,
   conversationId = null,
   docked = true,
 }: {
@@ -38,6 +40,9 @@ export function Composer({
   onModelChange: (id: string) => void
   /** The open chat's model, if one is open — it reports rather than offers. */
   lockedModelId?: string | null
+  /** Chosen reasoning effort, for a thinking model; null when not applicable. */
+  effort?: string | null
+  onEffortChange?: (level: string) => void
   /** The open session, so a pasted image is stored against it. Null on a new run. */
   conversationId?: string | null
   /** False while it sits mid-page waiting for the first question, where a rule
@@ -199,6 +204,21 @@ export function Composer({
             lockedId={lockedModelId}
           />
 
+          {(() => {
+            // The model the next send will use decides whether an effort control
+            // belongs here at all — only a thinking model carries the levels.
+            const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
+            const thinking = activeModel?.thinking
+            if (!thinking || !onEffortChange) return null
+            return (
+              <EffortControl
+                levels={thinking.levels}
+                value={effort ?? thinking.default}
+                onChange={onEffortChange}
+              />
+            )
+          })()}
+
           <p className="flex min-w-0 items-center gap-1.5 truncate">
             {error ? (
               <span className="text-destructive">{error}</span>
@@ -228,5 +248,48 @@ function Thumbnail({ image, onRemove }: { image: UploadedImage; onRemove: () => 
         <XIcon className="size-3" />
       </button>
     </span>
+  )
+}
+
+/**
+ * A ChatGPT-style effort selector for a thinking model — how hard it reasons.
+ *
+ * Segmented pills rather than a drag-slider: the levels are few and named, and a
+ * pill reads its value at a glance where a slider needs a label. Only rendered
+ * for a model that declares `thinking`, so it is absent for every plain model.
+ */
+function EffortControl({
+  levels,
+  value,
+  onChange,
+}: {
+  levels: string[]
+  value: string
+  onChange: (level: string) => void
+}) {
+  return (
+    <div
+      className="flex shrink-0 items-center gap-0.5 rounded-full border p-0.5"
+      role="radiogroup"
+      aria-label="Reasoning effort"
+    >
+      {levels.map((level) => (
+        <button
+          key={level}
+          type="button"
+          role="radio"
+          aria-checked={value === level}
+          onClick={() => onChange(level)}
+          className={cn(
+            'rounded-full px-2 py-0.5 text-[0.625rem] capitalize transition-colors outline-none',
+            value === level
+              ? 'bg-foreground text-background'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {level}
+        </button>
+      ))}
+    </div>
   )
 }

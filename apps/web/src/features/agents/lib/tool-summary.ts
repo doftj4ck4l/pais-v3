@@ -9,6 +9,7 @@ import {
   FileTextIcon,
   GlobeIcon,
   ImageIcon,
+  MessageSquareIcon,
   PencilLineIcon,
   ShareIcon,
   SigmaIcon,
@@ -50,6 +51,11 @@ export function describeTool(name: string, argsJson: string): ToolSummary {
   }
   if (/^search_tools/.test(verb)) {
     return phrase(WrenchIcon, 'Looked for tools', 'Looking for tools', quote(query))
+  }
+  if (/^ask_user/.test(verb)) {
+    // The interactive card carries the options; the transcript line just marks
+    // that the run paused to ask, with the question itself as the detail.
+    return phrase(MessageSquareIcon, 'Asked you', 'Waiting for your answer', quote(query))
   }
   if (/^read_image|describe_image|vision/.test(verb)) {
     return phrase(ImageIcon, 'Read an image', 'Reading the image')

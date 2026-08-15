@@ -39,6 +39,7 @@ import { mediaConfigured } from "../media/media.service";
 import { documentStore } from "../../repositories/document.repository";
 import { createDatabaseTools } from "../db/db-tools";
 import { createCalendarTools } from "../connectors/calendar-tools";
+import { createAskUserTool } from "./ask-user-tool";
 import { connectorStore } from "../../repositories/connector.repository";
 import { databaseConnectionStore } from "../../repositories/database-connection.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
@@ -72,6 +73,8 @@ export async function runPiAgent(opts: {
   workspaceId?: string;
   /** Stamped onto anything the run stores, so the console can group by session. */
   conversationId?: string;
+  /** Chosen effort for a thinking model; falls back to the model's default. */
+  reasoningEffort?: string;
 }): Promise<number> {
   const {
     model,
@@ -85,6 +88,7 @@ export async function runPiAgent(opts: {
     workspace,
     workspaceId = "default",
     conversationId,
+    reasoningEffort,
   } = opts;
 
   const key = effectiveApiKey(model);
@@ -196,6 +200,20 @@ export async function runPiAgent(opts: {
       parameters: jsonSchemaToTypebox(mt.parameters as Record<string, unknown>),
       label: mt.name,
       execute: mt.execute,
+    });
+  }
+
+  // --- ask_user: pause the run to ask the human when something is ambiguous ---
+  // Needs the conversationId to key the answer it waits on; a run without one
+  // (there is none in normal chat) simply does not offer the tool.
+  if (conversationId) {
+    const askUser = createAskUserTool(conversationId, emit);
+    agentTools.push({
+      name: askUser.name,
+      description: askUser.description,
+      parameters: jsonSchemaToTypebox(askUser.parameters as Record<string, unknown>),
+      label: askUser.label,
+      execute: askUser.execute,
     });
   }
 
@@ -534,6 +552,13 @@ export async function runPiAgent(opts: {
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
     if (calendarPrompt) out += calendarPrompt;
+    // Always on when the run can be answered: prefer asking to guessing.
+    if (conversationId) {
+      out +=
+        `\n\nWhen the user's request is ambiguous, or more than one thing matches and they did not ` +
+        `say which, call the "ask_user" tool to ask them rather than guessing — offer the likely ` +
+        `answers as options. Always ask before an action that is hard to undo when you are unsure.`;
+    }
     // After the environment and the corpora, before the MCP block: the playbook
     // is commentary on the tools described around it, so it reads as commentary
     // only once they have been introduced.
@@ -600,6 +625,29 @@ export async function runPiAgent(opts: {
     providerStartedAt = Date.now();
     return undefined;
   });
+
+  // A thinking model's request body is patched here, on the raw payload, because
+  // pi-ai's completions adapter cannot produce the shape this gateway needs:
+  // Qwen thinking turns on through `chat_template_kwargs.enable_thinking` (a bare
+  // top-level `enable_thinking` is ignored — measured), and the effort rides
+  // alongside as a top-level `reasoning_effort`, but the adapter emits one or
+  // the other, never both. So the whole thinking recipe is merged in here,
+  // wholesale, from the model's own `thinking` config plus the run's chosen
+  // effort — this is also the only path that carries the sampling params
+  // (top_p/top_k/penalties) the adapter otherwise drops.
+  if (model.thinking) {
+    const effort = model.thinking.levels.includes(reasoningEffort ?? "")
+      ? (reasoningEffort as string)
+      : model.thinking.default;
+    harness.on("before_provider_payload", ({ payload }) => ({
+      payload: {
+        ...(payload as Record<string, unknown>),
+        ...model.thinking!.sampling,
+        reasoning_effort: effort,
+        chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+      },
+    }));
+  }
 
   if (signal) {
     // Already aborted is possible: a stop can land in the gap between the

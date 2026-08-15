@@ -13,6 +13,12 @@ export type MetaPayload = {
     ready: boolean;
     /** Usable context window, so the console can meter a thread against it. */
     contextWindow: number;
+    /**
+     * Present when the model always reasons and its effort is adjustable. The
+     * console shows an effort control only for models that carry this; a plain
+     * chat model omits it entirely.
+     */
+    thinking?: { levels: string[]; default: string };
   }[];
 };
 
@@ -27,6 +33,8 @@ export function getMeta(): MetaPayload {
       brand: m.brand,
       ready: isLikelyConfigured(m),
       contextWindow: m.contextWindow,
+      // Only the levels and default reach the UI; the sampling recipe stays server-side.
+      ...(m.thinking ? { thinking: { levels: m.thinking.levels, default: m.thinking.default } } : {}),
     })),
   };
 }

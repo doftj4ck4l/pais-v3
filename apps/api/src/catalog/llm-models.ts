@@ -1,8 +1,34 @@
+/**
+ * A model that reasons, with a user-adjustable effort.
+ *
+ * The gateway wants Qwen's thinking switched on through
+ * `chat_template_kwargs.enable_thinking` (a bare top-level `enable_thinking` is
+ * ignored — measured), alongside a top-level `reasoning_effort`. pi-ai's
+ * completions adapter emits one or the other but never both, so this preset is
+ * injected into the request body wholesale via a `before_provider_payload`
+ * hook. `sampling` carries the rest of the vendor's thinking recipe (top_p,
+ * top_k, penalties) that the adapter otherwise drops.
+ */
+export type ThinkingConfig = {
+  /** Effort levels the user can pick, ordered low → high. */
+  levels: string[];
+  /** The effort a fresh chat starts at. */
+  default: string;
+  /** Extra body params merged into every request for this model. */
+  sampling: Record<string, unknown>;
+};
+
 export type ModelConfig = {
   id: string;
   label: string;
   provider: "openai" | "deepseek" | "custom" | "mock";
   model: string;
+  /**
+   * Present when the model always reasons and exposes an adjustable effort. Its
+   * mere presence is what tells the UI to show the effort control and the run to
+   * inject the thinking body — a model without it is a plain chat model.
+   */
+  thinking?: ThinkingConfig;
   /** env var that holds the API key (fallback when `apiKey` is not supplied per-request) */
   apiKeyEnv: string;
   /** OpenAI-compatible base URL */
@@ -80,6 +106,23 @@ function gw(id: string, hint: string, contextWindow = DEFAULT_CONTEXT_WINDOW): M
 // there is no error the run can show. Offering one is worse than not listing
 // it. Re-add them if the key's allowlist changes.
 export const MODELS: ModelConfig[] = [
+  // Thinking-only: no instruct variant is listed, deliberately — this model is
+  // always in thinking mode and the user only adjusts how hard it thinks.
+  {
+    ...gw("qwen3.8-27b", "Qwen · 27B (thinking)"),
+    thinking: {
+      levels: ["medium", "high", "xhigh"],
+      default: "high",
+      sampling: {
+        temperature: 1,
+        top_p: 0.95,
+        top_k: 20,
+        min_p: 0,
+        presence_penalty: 0,
+        repetition_penalty: 1,
+      },
+    },
+  },
   gw("qwen3.5-397b-instruct", "Qwen · 397B chat (instruct)", 262_144),
   gw("qwen3.6-35b-instruct", "Qwen · 35B chat (instruct)"),
   gw("qwen3.6-35b", "Qwen · 35B reasoning"),

@@ -129,6 +129,25 @@ export async function stopRun(scope: Scope, conversationId: string): Promise<voi
   })
 }
 
+/**
+ * Deliver the user's answer to an `ask_user` question the run is paused on.
+ * The server resolves the waiting tool call and the run continues.
+ */
+export async function answerQuestion(
+  scope: Scope,
+  conversationId: string,
+  questionId: string,
+  answer: string,
+): Promise<void> {
+  await fetch(`/api/chat/${encodeURIComponent(conversationId)}/answer?${scoped(scope)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ questionId, answer }),
+  }).catch(() => {
+    // The prompt is already cleared locally; a failed delivery must not throw.
+  })
+}
+
 /** Best-effort delete — a stored run that outlives the UI is not worth a crash. */
 export async function deleteConversation(id: string): Promise<void> {
   try {

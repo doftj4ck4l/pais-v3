@@ -14,6 +14,11 @@ export type Model = {
   ready: boolean
   /** Usable context window in tokens, as declared by the API catalog. */
   contextWindow: number
+  /**
+   * Present when the model always reasons and its effort is adjustable. Drives
+   * the effort control in the composer; absent on plain chat models.
+   */
+  thinking?: { levels: string[]; default: string }
 }
 
 export type Meta = {

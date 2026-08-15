@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import {
+  answerQuestion,
   deleteConversation,
   fetchConversation,
   fetchMeta,
@@ -37,7 +38,15 @@ export type AgentRun = {
   hydrated: boolean
   /** Context budget as of the last turn, once the server has reported it. */
   context: ContextUsage | null
+  /**
+   * An unanswered `ask_user` question. Set while the run is paused waiting for
+   * the user to pick an option or type a reply; cleared once answered. Only one
+   * at a time — the run blocks on it.
+   */
+  pendingQuestion: PendingQuestion | null
 }
+
+export type PendingQuestion = { id: string; question: string; options: string[] }
 
 /** Where each channel's open item sits in the transcript, while it streams. */
 type StreamRef = {
@@ -95,6 +104,9 @@ export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [harnessId, setHarnessId] = useState('')
   const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
+  // Chosen reasoning effort for a thinking model. Null when the selected model
+  // has no adjustable effort; the server falls back to the model's default.
+  const [effort, setEffort] = useState<string | null>(null)
   const [agents, setAgents] = useState<AgentRun[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [runsCompleted, setRunsCompleted] = useState(0)
@@ -104,6 +116,7 @@ export function useAgentBoard(scope: Scope) {
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
   const streamRefs = useRef<Map<string, StreamRef>>(new Map())
   const harnessIdRef = useRef(harnessId)
+  const effortRef = useRef(effort)
   const agentsRef = useRef<AgentRun[]>([])
 
   useEffect(() => {
@@ -113,6 +126,19 @@ export function useAgentBoard(scope: Scope) {
   useEffect(() => {
     harnessIdRef.current = harnessId
   }, [harnessId])
+
+  useEffect(() => {
+    effortRef.current = effort
+  }, [effort])
+
+  // Keep the effort in step with the model: a thinking model defaults to its own
+  // default level, a plain model clears it. Runs when the model or the catalog
+  // changes, so switching to qwen shows its control pre-set and switching away
+  // hides it.
+  useEffect(() => {
+    const model = meta?.models.find((m) => m.id === modelIdForNew)
+    setEffort(model?.thinking ? model.thinking.default : null)
+  }, [modelIdForNew, meta])
 
   // Publish the (already mutated) refs into React state.
   const flush = useCallback((id: string) => {
@@ -243,7 +269,23 @@ export function useAgentBoard(scope: Scope) {
       const agent = agentsRef.current.find((a) => a.id === id)
       controllersRef.current.get(id)?.abort()
       if (agent?.conversationId) void stopRun(scope, agent.conversationId)
-      patchAgent(id, { status: 'stopped', notice: 'Run stopped.' })
+      patchAgent(id, { status: 'stopped', notice: 'Run stopped.', pendingQuestion: null })
+    },
+    [patchAgent, scope],
+  )
+
+  /**
+   * Answer an `ask_user` question the run is blocked on. Sends the reply to the
+   * server (which unblocks the run) and clears the prompt. The run then streams
+   * on, so no local status change is needed.
+   */
+  const answer = useCallback(
+    (id: string, text: string) => {
+      const agent = agentsRef.current.find((a) => a.id === id)
+      const q = agent?.pendingQuestion
+      if (!agent || !q || !agent.conversationId) return
+      void answerQuestion(scope, agent.conversationId, q.id, text)
+      patchAgent(id, { pendingQuestion: null })
     },
     [patchAgent, scope],
   )
@@ -294,6 +336,7 @@ export function useAgentBoard(scope: Scope) {
       startedAt: Date.now(),
       hydrated: true,
       context: null,
+      pendingQuestion: null,
     }
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
@@ -353,6 +396,9 @@ export function useAgentBoard(scope: Scope) {
           harnessId: harnessIdRef.current,
           modelId: seed.modelId,
           workspaceId: scope.workspaceId ?? undefined,
+          // Only meaningful for a thinking model; null on every other, where the
+          // server ignores it anyway.
+          reasoningEffort: effortRef.current ?? undefined,
           messages: history,
           // Ids only. The bytes are already in the bucket; the server turns
           // these into a note on the user message telling the model to call
@@ -396,7 +442,11 @@ export function useAgentBoard(scope: Scope) {
     } finally {
       controllersRef.current.delete(id)
       setAgents((prev) =>
-        prev.map((a) => (a.id === id && a.status === 'running' ? { ...a, status: 'done' } : a)),
+        prev.map((a) =>
+          a.id === id
+            ? { ...a, status: a.status === 'running' ? 'done' : a.status, pendingQuestion: null }
+            : a,
+        ),
       )
       // A run is the only thing that writes to the workspace, so its end is the
       // one moment worth re-listing files — cheaper and more accurate than polling.
@@ -413,6 +463,14 @@ export function useAgentBoard(scope: Scope) {
     switch (event.type) {
       case 'conversation':
         patchAgent(id, { conversationId: event.id })
+        return
+
+      case 'ask_user':
+        // The run is now blocked server-side awaiting this answer. Surface it;
+        // the composer renders the options and calls `answer`.
+        patchAgent(id, {
+          pendingQuestion: { id: event.id, question: event.question, options: event.options ?? [] },
+        })
         return
 
       case 'context':
@@ -543,6 +601,8 @@ export function useAgentBoard(scope: Scope) {
     setHarnessId,
     modelIdForNew,
     setModelIdForNew,
+    effort,
+    setEffort,
     agents,
     selected,
     selectedId,
@@ -551,6 +611,7 @@ export function useAgentBoard(scope: Scope) {
     spawn,
     sendFollowUp,
     stop,
+    answer,
     remove,
     dismissNotice,
     clearAll,
@@ -578,6 +639,7 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     startedAt: row.createdAt,
     hydrated: false,
     context: null,
+    pendingQuestion: null,
   }
 }
 
