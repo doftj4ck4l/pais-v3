@@ -1,12 +1,15 @@
 import type { Context } from "hono";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
-import { connectorStore } from "../repositories/connector.repository";
+import { connectorStore, type OAuthTokens } from "../repositories/connector.repository";
 import { documentStore } from "../repositories/document.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import * as drive from "../services/connectors/google-drive";
+import * as calendar from "../services/connectors/google-calendar";
+import * as oauth from "../services/connectors/google-oauth";
 import { syncConnector } from "../services/connectors/sync.service";
 import { currentUserId } from "../middleware/auth";
+import type { ConnectorKind } from "../models/schema";
 
 /**
  * Connectors: authorise a remote source, then pull it into the document index.
@@ -26,18 +29,43 @@ async function scope(c: Context): Promise<{ id: string }> {
   return workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
 }
 
+/**
+ * The per-provider bits of the OAuth flow. Everything else — the redirect URI,
+ * the code exchange, the refresh — is shared in `google-oauth.ts`; a connector
+ * differs only in its consent scopes, its "who am I" call, and its label.
+ */
+const PROVIDERS = {
+  gdrive: { authUrl: drive.authUrl, accountEmail: drive.accountEmail, label: "Google Drive", syncable: true },
+  gcal: { authUrl: calendar.authUrl, accountEmail: calendar.accountEmail, label: "Google Calendar", syncable: false },
+} satisfies Record<ConnectorKind, {
+  authUrl: (state: string) => string;
+  accountEmail: (tokens: OAuthTokens) => Promise<string | null>;
+  label: string;
+  syncable: boolean;
+}>;
+
+function providerFor(kind: string): { kind: ConnectorKind; p: (typeof PROVIDERS)[ConnectorKind] } {
+  const k = (kind === "gcal" ? "gcal" : "gdrive") as ConnectorKind;
+  return { kind: k, p: PROVIDERS[k] };
+}
+
 /** GET /api/connectors — what this workspace has connected. */
 export async function list(c: Context) {
   const workspace = await scope(c);
   const rows = await connectorStore.list(workspace.id);
   const docs = await documentStore.list(workspace.id);
 
+  const unconfiguredReason = "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set";
   return c.json({
     // Named so the UI can explain *why* the button is missing rather than
-    // rendering a control that fails on click.
-    available: drive.isConfigured()
+    // rendering a control that fails on click. Both Google connectors share one
+    // OAuth client, so they are configured or blocked together.
+    available: oauth.isConfigured()
       ? []
-      : [{ kind: "gdrive", reason: "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set" }],
+      : [
+          { kind: "gdrive", reason: unconfiguredReason },
+          { kind: "gcal", reason: unconfiguredReason },
+        ],
     connectors: rows.map((row) => ({
       ...row,
       documentCount: docs.filter((d) => d.connectorId === row.id).length,
@@ -53,19 +81,25 @@ export async function list(c: Context) {
  * ever saw a consent screen.
  */
 export async function googleAuth(c: Context) {
-  if (!drive.isConfigured()) {
+  if (!oauth.isConfigured()) {
     return c.json(
       {
         error:
           "Google is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in apps/api/.env, " +
-          `and add ${drive.redirectUri()} as an authorized redirect URI on the OAuth client.`,
+          `and add ${oauth.redirectUri()} as an authorized redirect URI on the OAuth client.`,
       },
       400,
     );
   }
   const workspace = await scope(c);
-  const state = Buffer.from(JSON.stringify({ workspaceId: workspace.id })).toString("base64url");
-  return c.json({ url: drive.authUrl(state) });
+  // Which connector this consent is for rides in `state` alongside the
+  // workspace, because one redirect URI serves every Google connector and the
+  // callback has no other way to know what it is completing.
+  const { kind, p } = providerFor(c.req.query("kind") ?? "gdrive");
+  const state = Buffer.from(JSON.stringify({ workspaceId: workspace.id, kind })).toString(
+    "base64url",
+  );
+  return c.json({ url: p.authUrl(state) });
 }
 
 /**
@@ -83,15 +117,20 @@ export async function googleCallback(c: Context) {
   if (!code || !state) return c.html(page("Missing code", "Google sent no authorisation code."), 400);
 
   let workspaceId: string;
+  let kind: ConnectorKind;
   try {
-    workspaceId = JSON.parse(Buffer.from(state, "base64url").toString()).workspaceId;
+    const parsed = JSON.parse(Buffer.from(state, "base64url").toString());
+    workspaceId = parsed.workspaceId;
     if (!workspaceId) throw new Error("no workspace");
+    // Older consent links carried no kind; Drive is the only thing they meant.
+    ({ kind } = providerFor(parsed.kind ?? "gdrive"));
   } catch {
     return c.html(page("Invalid state", "The callback did not carry a usable workspace."), 400);
   }
+  const { p } = providerFor(kind);
 
   try {
-    const tokens = await drive.exchangeCode(code);
+    const tokens = await oauth.exchangeCode(code);
     if (!tokens.refreshToken) {
       // Without one the connector works for an hour and then silently stops,
       // which is worse than refusing now.
@@ -105,33 +144,34 @@ export async function googleCallback(c: Context) {
       );
     }
 
-    const email = await drive.accountEmail(tokens);
+    const email = await p.accountEmail(tokens);
     const existing = email
-      ? await connectorStore.findByAccount(workspaceId, "gdrive", email)
+      ? await connectorStore.findByAccount(workspaceId, kind, email)
       : null;
 
     if (existing) {
       // Re-authorising an account already connected replaces its credentials
-      // rather than adding a second connector that would sync the same files.
+      // rather than adding a second connector for the same account.
       await connectorStore.saveTokens(workspaceId, existing.id, tokens);
       await connectorStore.markStatus(workspaceId, existing.id, "connected", null);
-      logger.info("connector.reauthorised", { connectorId: existing.id, email });
+      logger.info("connector.reauthorised", { connectorId: existing.id, kind, email });
     } else {
       const id = newConnectorId();
       await connectorStore.create({
         id,
         workspaceId,
-        kind: "gdrive",
+        kind,
         accountEmail: email,
         tokens,
       });
-      logger.info("connector.created", { connectorId: id, email });
+      logger.info("connector.created", { connectorId: id, kind, email });
     }
 
     return c.html(
       page(
-        "Google Drive connected",
-        `${email ?? "Your account"} is connected. Close this tab and run a sync.`,
+        `${p.label} connected`,
+        `${email ?? "Your account"} is connected.` +
+          (p.syncable ? " Close this tab and run a sync." : " Close this tab — the agent can use it now."),
       ),
     );
   } catch (e) {

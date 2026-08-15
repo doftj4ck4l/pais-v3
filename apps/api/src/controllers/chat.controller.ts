@@ -9,6 +9,7 @@ import { workspaceRegistry } from "../repositories/workspace-registry.repository
 import { fitToWindow } from "../services/context/context-budget.service";
 import { describeAttachments } from "../services/media/upload.service";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
+import { abortRun, registerRun, unregisterRun } from "../services/agent/run-registry";
 import { logger, startTimer } from "../lib/logger";
 import { env } from "../config/env";
 import type { AgentEvent, ChatRequest } from "../types/agent";
@@ -34,6 +35,21 @@ export function stream(c: Context) {
     // Keeps the connection open across a long, silent tool call. Stopped in the
     // finally below so it can never outlive the run.
     const stopHeartbeat = startHeartbeat(s);
+
+    // The one signal every cancellation path funnels into. Three things can fire
+    // it, and none is reliable alone on this Bun:
+    //  - the /stop endpoint (registered under conversationId once we have it),
+    //  - the request signal, when the runtime does surface a disconnect,
+    //  - the stream's own abort, which is what Bun 1.3 actually raises when the
+    //    client hangs up (Hono no longer bridges that to the request signal).
+    const runAbort = new AbortController();
+    const abort = () => runAbort.abort();
+    const reqSignal = c.req.raw.signal;
+    if (reqSignal.aborted) abort();
+    else reqSignal.addEventListener("abort", abort, { once: true });
+    s.onAbort(abort);
+    let registeredConversationId: string | null = null;
+
     try {
       const body = (await c.req.json().catch(() => ({}))) as ChatRequest;
 
@@ -96,6 +112,12 @@ export function stream(c: Context) {
         });
       }
 
+      // Now the stop endpoint can find this run. Registered even if the client
+      // has already hung up (runAbort would fire on the next check) — the run's
+      // finally unregisters it either way.
+      registerRun(conversationId, runAbort);
+      registeredConversationId = conversationId;
+
       // Opened before the agent runs, so a run that crashes mid-answer still
       // appears on the timeline as `running` rather than vanishing.
       await runRepository.start({
@@ -128,7 +150,7 @@ export function stream(c: Context) {
         fields: { harness: harness.id, model: model.id },
       });
 
-      const signal = c.req.raw.signal;
+      const signal = runAbort.signal;
       let turns = 0;
 
       // Fit the thread to the model's window before the run, summarising older
@@ -188,10 +210,31 @@ export function stream(c: Context) {
         status,
       });
     } finally {
+      if (registeredConversationId) unregisterRun(registeredConversationId, runAbort);
       stopHeartbeat();
       await closeStream(s);
     }
   });
+}
+
+/**
+ * POST /api/chat/:conversationId/stop — cancel the run in flight.
+ *
+ * The button cannot stop a run by closing its SSE connection (the disconnect is
+ * not bridged to the request signal on this Bun), so it posts here. Scoped and
+ * ownership-checked like every other route: a caller can only stop a run in a
+ * conversation their own workspace owns. A `stopped: false` means nothing was
+ * running under that id — already finished, or never here — which is not an
+ * error the client needs to see as one.
+ */
+export async function stop(c: Context) {
+  const userId = currentUserId(c);
+  const workspace = await workspaceRegistry.resolve(userId, c.req.query("workspaceId"));
+  const conversationId = c.req.param("conversationId") ?? "";
+  const owned = await conversationRepository.getOwned(conversationId, workspace.id);
+  if (!owned) return c.json({ error: "not found" }, 404);
+  const stopped = abortRun(conversationId);
+  return c.json({ ok: true, stopped });
 }
 
 /**

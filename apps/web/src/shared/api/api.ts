@@ -113,6 +113,22 @@ export async function fetchConversation(id: string): Promise<ConversationDetail>
   return json<ConversationDetail>(await fetch(`/api/conversations/${encodeURIComponent(id)}`))
 }
 
+/**
+ * Stop a run in flight.
+ *
+ * Aborting the streaming fetch only stops this browser reading; the server run
+ * keeps going. This tells the server to abort it. Best-effort: a run that has
+ * already finished returns `stopped: false`, which is not an error here.
+ */
+export async function stopRun(scope: Scope, conversationId: string): Promise<void> {
+  await fetch(`/api/chat/${encodeURIComponent(conversationId)}/stop?${scoped(scope)}`, {
+    method: 'POST',
+  }).catch(() => {
+    // The optimistic UI has already flipped to stopped; a failed stop request
+    // must not throw into the click handler.
+  })
+}
+
 /** Best-effort delete — a stored run that outlives the UI is not worth a crash. */
 export async function deleteConversation(id: string): Promise<void> {
   try {
@@ -480,9 +496,11 @@ export async function getRun(scope: Scope, id: string): Promise<RunDetail> {
 
 // ---- connectors ----
 
+export type ConnectorKind = 'gdrive' | 'gcal'
+
 export type ConnectorRow = {
   id: string
-  kind: 'gdrive'
+  kind: ConnectorKind
   accountEmail: string | null
   status: 'connected' | 'syncing' | 'error'
   error: string | null
@@ -513,9 +531,9 @@ export async function listConnectors(
  * from the SPA and a cross-origin 302 would be blocked before any consent
  * screen appeared.
  */
-export async function googleAuthUrl(scope: Scope): Promise<string> {
+export async function googleAuthUrl(scope: Scope, kind: ConnectorKind = 'gdrive'): Promise<string> {
   const { url } = await json<{ url: string }>(
-    await fetch(`/api/connectors/google/auth?${scoped(scope)}`),
+    await fetch(`/api/connectors/google/auth?${scoped(scope)}&kind=${kind}`),
   )
   return url
 }

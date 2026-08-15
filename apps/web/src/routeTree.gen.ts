@@ -11,11 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as ConnectorsRouteImport } from './routes/connectors'
 import { Route as DataRouteImport } from './routes/data'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as FilesRouteImport } from './routes/files'
 import { Route as LearnedRouteImport } from './routes/learned'
-import { Route as McpRouteImport } from './routes/mcp'
 import { Route as SourcesRouteImport } from './routes/sources'
 
 const IndexRoute = IndexRouteImport.update({
@@ -26,6 +26,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectorsRoute = ConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DataRoute = DataRouteImport.update({
@@ -48,11 +53,6 @@ const LearnedRoute = LearnedRouteImport.update({
   path: '/learned',
   getParentRoute: () => rootRouteImport,
 } as any)
-const McpRoute = McpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SourcesRoute = SourcesRouteImport.update({
   id: '/sources',
   path: '/sources',
@@ -62,32 +62,32 @@ const SourcesRoute = SourcesRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
   '/learned': typeof LearnedRoute
-  '/mcp': typeof McpRoute
   '/sources': typeof SourcesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
   '/learned': typeof LearnedRoute
-  '/mcp': typeof McpRoute
   '/sources': typeof SourcesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
   '/learned': typeof LearnedRoute
-  '/mcp': typeof McpRoute
   '/sources': typeof SourcesRoute
 }
 export interface FileRouteTypes {
@@ -95,42 +95,42 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/admin'
+    | '/connectors'
     | '/data'
     | '/docs'
     | '/files'
     | '/learned'
-    | '/mcp'
     | '/sources'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/admin'
+    | '/connectors'
     | '/data'
     | '/docs'
     | '/files'
     | '/learned'
-    | '/mcp'
     | '/sources'
   id:
     | '__root__'
     | '/'
     | '/admin'
+    | '/connectors'
     | '/data'
     | '/docs'
     | '/files'
     | '/learned'
-    | '/mcp'
     | '/sources'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
+  ConnectorsRoute: typeof ConnectorsRoute
   DataRoute: typeof DataRoute
   DocsRoute: typeof DocsRoute
   FilesRoute: typeof FilesRoute
   LearnedRoute: typeof LearnedRoute
-  McpRoute: typeof McpRoute
   SourcesRoute: typeof SourcesRoute
 }
 
@@ -148,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connectors': {
+      id: '/connectors'
+      path: '/connectors'
+      fullPath: '/connectors'
+      preLoaderRoute: typeof ConnectorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/data': {
@@ -178,13 +185,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LearnedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/mcp': {
-      id: '/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/sources': {
       id: '/sources'
       path: '/sources'
@@ -198,11 +198,11 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
+  ConnectorsRoute: ConnectorsRoute,
   DataRoute: DataRoute,
   DocsRoute: DocsRoute,
   FilesRoute: FilesRoute,
   LearnedRoute: LearnedRoute,
-  McpRoute: McpRoute,
   SourcesRoute: SourcesRoute,
 }
 export const routeTree = rootRouteImport
