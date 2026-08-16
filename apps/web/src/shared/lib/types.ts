@@ -234,6 +234,8 @@ export type McpCapability = {
   name: string
   description: string | null
   uri: string | null
+  /** Nextcloud tool access, derived from the same fail-closed policy used at execution. */
+  access: 'read' | 'write' | null
 }
 
 /**

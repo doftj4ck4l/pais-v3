@@ -1478,12 +1478,29 @@ function ServerDetail({
                 <span
                   key={tool.name}
                   title={tool.description ?? undefined}
-                  className="readout rounded-md border px-1.5 py-1 text-[0.625rem] text-muted-foreground"
+                  className="readout inline-flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-[0.625rem] text-muted-foreground"
                 >
                   {tool.name}
+                  {tool.access ? (
+                    <span
+                      className={cn(
+                        'rounded-sm px-1 py-0.5 font-medium leading-none',
+                        tool.access === 'read'
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                          : 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+                      )}
+                    >
+                      {tool.access === 'read' ? 'Read' : 'Write'}
+                    </span>
+                  ) : null}
                 </span>
               ))}
             </div>
+            {tools.some((tool) => tool.access === 'write') ? (
+              <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
+                Write tools ask for your approval before they run.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
