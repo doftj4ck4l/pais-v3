@@ -49,6 +49,23 @@ describe("describeEnvironment", () => {
     expect(out).toContain("/srv/pixelspace/sandboxes/ws1");
   });
 
+  it("names the preinstalled toolchain so a run does not reinstall it", () => {
+    // Asked to edit an image, a run opened with `pip install` for packages the
+    // image had all along — then paid it again after the reaper took the
+    // container. Nothing in the prompt had ever mentioned them.
+    const out = describeEnvironment(docker);
+    for (const pkg of ["pillow", "pandas", "matplotlib", "python-docx", "magick"]) {
+      expect(out).toContain(pkg);
+    }
+    expect(out).toContain("before installing");
+  });
+
+  it("claims nothing about the API host's Python", () => {
+    // The node backend runs wherever the API runs; the sandbox image's package
+    // list says nothing about that machine.
+    expect(describeEnvironment({ ...docker, backend: "node" })).not.toContain("pillow");
+  });
+
   it("distinguishes the container from the API host", () => {
     expect(describeEnvironment(docker)).toContain("container");
     expect(describeEnvironment({ ...docker, backend: "node" })).toContain("API host");

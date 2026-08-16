@@ -47,6 +47,33 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     `tool, which returns a URL; give them that URL and never a bare path. Images come back as ` +
     `a link to embed as markdown so the picture shows in your reply.`;
 
+  // A model that cannot see an installed package assumes an empty box.
+  //
+  // Asked to edit an image, a run spent its first minutes on `pip install`
+  // before doing any work — and paid it again the next day, because the reaper
+  // removes an idle container after SANDBOX_IDLE_MS and an install into the
+  // container layer dies with it. The image has carried these packages since;
+  // nothing told the model so.
+  //
+  // Named by capability rather than as a pinned manifest: the list drifts from
+  // `apps/api/sandbox/Dockerfile` on every rebuild, and a prompt claiming
+  // `numpy==2.5.2` is a prompt that will eventually be wrong. "Check first" is
+  // the instruction that survives the drift — `pip show` costs one second and
+  // an install costs a minute.
+  //
+  // Only for the container backend. The node backend runs on the API host,
+  // whose Python is whatever the deploy happens to have.
+  if (env.backend === "docker") {
+    out +=
+      ` The container already has a working toolchain: Python 3 with pillow and opencv for ` +
+      `images, numpy, pandas, scipy and scikit-learn for data, matplotlib, seaborn and plotly ` +
+      `for charts, openpyxl, python-docx, python-pptx and pypdf for documents, requests, ` +
+      `beautifulsoup4 and lxml for fetching and parsing; ImageMagick ("magick") on the shell; ` +
+      `and Node with exceljs, docx and pdf-lib. Assume a common library is present and just ` +
+      `import it. If you are unsure, check ("pip show <name>", "which <cmd>") before installing ` +
+      `— installing something that is already there wastes most of a turn.`;
+  }
+
   // Only worth saying when there is something to confuse it with. A workspace
   // with no MCP server has no ambiguity to resolve.
   if (env.hasExternalServices) {
