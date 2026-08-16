@@ -46,7 +46,12 @@ export type AgentRun = {
   pendingQuestion: PendingQuestion | null
 }
 
-export type PendingQuestion = { id: string; question: string; options: string[] }
+export type PendingQuestion = {
+  id: string
+  question: string
+  options: string[]
+  kind: 'question' | 'approval'
+}
 
 /** Where each channel's open item sits in the transcript, while it streams. */
 type StreamRef = {
@@ -280,12 +285,16 @@ export function useAgentBoard(scope: Scope) {
    * on, so no local status change is needed.
    */
   const answer = useCallback(
-    (id: string, text: string) => {
+    async (id: string, text: string) => {
       const agent = agentsRef.current.find((a) => a.id === id)
       const q = agent?.pendingQuestion
       if (!agent || !q || !agent.conversationId) return
-      void answerQuestion(scope, agent.conversationId, q.id, text)
-      patchAgent(id, { pendingQuestion: null })
+      try {
+        await answerQuestion(scope, agent.conversationId, q.id, text)
+        patchAgent(id, { pendingQuestion: null, notice: null })
+      } catch {
+        patchAgent(id, { notice: 'Could not deliver your answer. Please try again.' })
+      }
     },
     [patchAgent, scope],
   )
@@ -469,7 +478,12 @@ export function useAgentBoard(scope: Scope) {
         // The run is now blocked server-side awaiting this answer. Surface it;
         // the composer renders the options and calls `answer`.
         patchAgent(id, {
-          pendingQuestion: { id: event.id, question: event.question, options: event.options ?? [] },
+          pendingQuestion: {
+            id: event.id,
+            question: event.question,
+            options: event.options ?? [],
+            kind: event.kind ?? 'question',
+          },
         })
         return
 

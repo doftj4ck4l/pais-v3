@@ -37,7 +37,14 @@ export type AgentEvent =
    * responds (or the run is stopped). Live-only — the tool call and its result
    * carry the durable record, so the recorder ignores this event.
    */
-  | { type: "ask_user"; id: string; question: string; options: string[] }
+  | {
+      type: "ask_user";
+      id: string;
+      question: string;
+      options: string[];
+      /** Approval prompts use fixed allow/deny actions rather than free text. */
+      kind: "question" | "approval";
+    }
   /** Sent once, up front: the row this run is being stored as. */
   | { type: "conversation"; id: string }
   /**

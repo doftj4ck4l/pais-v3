@@ -32,6 +32,17 @@ export type AskUserTool = {
   execute: (id: string, params: any, signal?: AbortSignal) => Promise<ToolResult>;
 };
 
+type AskUserEvent = Extract<AgentEvent, { type: "ask_user" }>;
+export type UserInputRequest = Pick<AskUserEvent, "question" | "options" | "kind">;
+
+export type UserInputRequester = (
+  request: UserInputRequest,
+  signal?: AbortSignal,
+) => Promise<string | null>;
+
+export const APPROVAL_OPTIONS = ["Allow once", "Deny"] as const;
+export const approvalGranted = (answer: string | null): boolean => answer === APPROVAL_OPTIONS[0];
+
 let counter = 0;
 /** Unique per question. Not crypto — it only has to be distinct within a run. */
 function newQuestionId(): string {
@@ -39,9 +50,79 @@ function newQuestionId(): string {
   return `q_${Date.now().toString(36)}_${counter.toString(36)}`;
 }
 
-export function createAskUserTool(
+/**
+ * One serialized door from a running agent to its human.
+ *
+ * Pi may execute several tools in parallel. Emitting two questions at once
+ * would make the second replace the first in the console, leaving the first
+ * call blocked with no button capable of answering it. The queue is per run and
+ * shared by ordinary elicitation and enforced approval prompts.
+ */
+export function createUserInputRequester(
   conversationId: string,
   emit: (event: AgentEvent) => void,
+): UserInputRequester {
+  let active = false;
+  const waiting: (() => void)[] = [];
+
+  return async (request, signal) => {
+    if (active) {
+      const entered = await new Promise<boolean>((resolve) => {
+        const enter = () => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(true);
+        };
+        const onAbort = () => {
+          const index = waiting.indexOf(enter);
+          if (index >= 0) waiting.splice(index, 1);
+          resolve(false);
+        };
+        if (signal?.aborted) return onAbort();
+        waiting.push(enter);
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+      if (!entered) return null;
+    } else {
+      // Keep the first emission synchronous. Existing callers start execute(),
+      // then immediately inspect the emitted event before awaiting the result.
+      active = true;
+    }
+    try {
+      if (signal?.aborted) return null;
+
+      const questionId = newQuestionId();
+      emit({
+        type: "ask_user",
+        id: questionId,
+        question: request.question,
+        options: request.options,
+        kind: request.kind,
+      });
+
+      return await new Promise<string | null>((resolve) => {
+        const finish = (answer: string | null) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+        const onAbort = () => {
+          cancelQuestion(questionId);
+          finish(null);
+        };
+
+        registerQuestion(questionId, conversationId, (answer) => finish(answer));
+        if (signal?.aborted) return onAbort();
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active = false;
+    }
+  };
+}
+
+export function createAskUserTool(
+  requestInput: UserInputRequester,
 ): AskUserTool {
   return {
     name: "ask_user",
@@ -72,26 +153,15 @@ export function createAskUserTool(
         ? params.options.map((o: unknown) => String(o)).filter((o: string) => o.length > 0)
         : [];
 
-      const questionId = newQuestionId();
-      emit({ type: "ask_user", id: questionId, question, options });
-
-      try {
-        const answer = await new Promise<string>((resolve, reject) => {
-          registerQuestion(questionId, conversationId, resolve);
-          const onAbort = () => {
-            cancelQuestion(questionId);
-            reject(new Error("aborted"));
-          };
-          if (signal?.aborted) return onAbort();
-          signal?.addEventListener("abort", onAbort, { once: true });
-        });
+      const answer = await requestInput({ question, options, kind: "question" }, signal);
+      if (answer !== null) {
         return text(`The user answered: ${JSON.stringify(answer)}`);
-      } catch {
-        // The run was stopped (or the tab closed, which aborts it) before the
-        // user replied. Reported as a plain result rather than a throw — the
-        // run is already ending, and a throw would read as a tool failure.
-        return text("No answer — the run was stopped before the user responded.");
       }
+
+      // The run was stopped (or the tab closed, which aborts it) before the
+      // user replied. Reported as a plain result rather than a throw — the run
+      // is already ending, and a throw would read as a tool failure.
+      return text("No answer — the run was stopped before the user responded.");
     },
   };
 }
