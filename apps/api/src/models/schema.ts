@@ -610,10 +610,16 @@ export const mcpCapabilities = sqliteTable(
     workspaceId: text("workspace_id"),
     kind: text("kind").$type<McpCapabilityKind>().notNull(),
     name: text("name").notNull(),
+    // MCP's human-readable tool title, used by approval prompts. Unlike the
+    // tool name it is meant to be shown directly to a person.
+    title: text("title"),
     description: text("description"),
     // Tool `inputSchema` or prompt `arguments`, stored whole. Nothing searches
     // or joins it — it is read back verbatim and handed to the schema converter.
     schemaJson: text("schema_json"),
+    // ToolAnnotations are advisory protocol metadata. Kept whole so expanding
+    // the permission policy does not require another column per hint.
+    annotationsJson: text("annotations_json"),
     uri: text("uri"), // resources only
   },
   (t) => [index("idx_mcp_capabilities_server").on(t.serverId, t.kind, t.name)],
@@ -624,8 +630,10 @@ export type McpCapabilityRow = {
   workspaceId: string | null;
   kind: McpCapabilityKind;
   name: string;
+  title: string | null;
   description: string | null;
   schemaJson: string | null;
+  annotationsJson: string | null;
   uri: string | null;
 };
 

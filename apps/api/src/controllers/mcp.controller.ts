@@ -10,6 +10,7 @@ import {
 import { connectMcpServer, McpConnectError, type McpServerSpec } from "../services/mcp/client";
 import { listCapabilities } from "../services/mcp/probe";
 import { checkStdioCommand } from "../services/mcp/allowlist";
+import { isNextcloudServer, isReadOnlyMcpTool } from "../services/mcp/mcp-approval-policy";
 import { currentUserId } from "../middleware/auth";
 
 /**
@@ -62,18 +63,29 @@ export async function index(c: Context) {
   }
 
   return c.json({
-    servers: servers.map((s) => ({
-      ...s,
-      args: s.argsJson ? JSON.parse(s.argsJson) : [],
-      headerKeys: secretKeys.get(s.id)?.headers ?? [],
-      envKeys: secretKeys.get(s.id)?.env ?? [],
-      capabilities: (byServer.get(s.id) ?? []).map((cap) => ({
-        kind: cap.kind,
-        name: cap.name,
-        description: cap.description,
-        uri: cap.uri,
-      })),
-    })),
+    servers: servers.map((s) => {
+      const serverCapabilities = byServer.get(s.id) ?? [];
+      const envKeys = secretKeys.get(s.id)?.env ?? [];
+      const nextcloud = isNextcloudServer(s, serverCapabilities, envKeys);
+      return {
+        ...s,
+        args: s.argsJson ? JSON.parse(s.argsJson) : [],
+        headerKeys: secretKeys.get(s.id)?.headers ?? [],
+        envKeys,
+        capabilities: serverCapabilities.map((cap) => ({
+          kind: cap.kind,
+          name: cap.name,
+          description: cap.description,
+          uri: cap.uri,
+          access:
+            nextcloud && cap.kind === "tool"
+              ? isReadOnlyMcpTool(cap.name, cap.annotationsJson)
+                ? "read"
+                : "write"
+              : null,
+        })),
+      };
+    }),
   });
 }
 

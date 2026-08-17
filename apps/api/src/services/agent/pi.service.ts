@@ -39,7 +39,12 @@ import { mediaConfigured } from "../media/media.service";
 import { documentStore } from "../../repositories/document.repository";
 import { createDatabaseTools } from "../db/db-tools";
 import { createCalendarTools } from "../connectors/calendar-tools";
-import { createAskUserTool } from "./ask-user-tool";
+import {
+  APPROVAL_OPTIONS,
+  approvalGranted,
+  createAskUserTool,
+  createUserInputRequester,
+} from "./ask-user-tool";
 import { connectorStore } from "../../repositories/connector.repository";
 import { databaseConnectionStore } from "../../repositories/database-connection.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
@@ -192,6 +197,13 @@ export async function runPiAgent(opts: {
     },
   }));
 
+  // One queue for every way this run can pause for its human. Sharing it keeps
+  // parallel MCP writes from replacing each other's approval prompt, and also
+  // prevents a model-authored ask_user call from racing an enforced approval.
+  const requestUserInput = conversationId
+    ? createUserInputRequester(conversationId, emit)
+    : undefined;
+
   // --- long-term memory tools (remember/recall), scoped to the workspace ---
   for (const mt of createMemoryTools(workspaceId)) {
     agentTools.push({
@@ -206,8 +218,8 @@ export async function runPiAgent(opts: {
   // --- ask_user: pause the run to ask the human when something is ambiguous ---
   // Needs the conversationId to key the answer it waits on; a run without one
   // (there is none in normal chat) simply does not offer the tool.
-  if (conversationId) {
-    const askUser = createAskUserTool(conversationId, emit);
+  if (requestUserInput) {
+    const askUser = createAskUserTool(requestUserInput);
     agentTools.push({
       name: askUser.name,
       description: askUser.description,
@@ -351,6 +363,30 @@ export async function runPiAgent(opts: {
             ...(o.error ? { error: o.error } : {}),
           },
         }),
+      requestApproval: requestUserInput
+        ? async (request, toolSignal) => {
+            const answer = await requestUserInput(
+              {
+                question: request.question,
+                options: [...APPROVAL_OPTIONS],
+                kind: "approval",
+              },
+              toolSignal ?? signal,
+            );
+            const approved = approvalGranted(answer);
+            emit({
+              type: "trace",
+              step: "mcp.approval",
+              fields: {
+                server: request.server,
+                tool: request.tool,
+                destructive: request.destructive,
+                approved,
+              },
+            });
+            return approved;
+          }
+        : undefined,
     });
     // Building the runtime no longer connects to anything — the catalog comes
     // from `mcp_capabilities`. This span is what proves that: it read ~4-6

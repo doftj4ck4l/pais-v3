@@ -65,8 +65,10 @@ export type McpConnectionUpdate = {
 export type NewCapability = {
   kind: McpCapabilityKind;
   name: string;
+  title?: string | null;
   description?: string | null;
   schemaJson?: string | null;
+  annotationsJson?: string | null;
   uri?: string | null;
 };
 
@@ -371,8 +373,10 @@ export class SqliteMcpStore implements McpStore {
             workspaceId,
             kind: cap.kind,
             name: cap.name,
+            title: cap.title ?? null,
             description: cap.description ?? null,
             schemaJson: cap.schemaJson ?? null,
+            annotationsJson: cap.annotationsJson ?? null,
             uri: cap.uri ?? null,
           })
           .run();

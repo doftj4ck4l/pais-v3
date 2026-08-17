@@ -91,6 +91,66 @@ async function listServers(user: string, workspaceId: string) {
   return servers;
 }
 
+describe("GET /api/mcp", () => {
+  it("labels Nextcloud tools with the same fail-closed access policy used at execution", async () => {
+    const user = "nextcloud-tool-access-user";
+    const workspaceId = await makeWorkspace(user, "Nextcloud access");
+    const serverId = await addServer(user, workspaceId, "nextcloud");
+    const unrelatedServerId = await addServer(user, workspaceId, "github");
+    const { mcpStore } = await import("./repositories/mcp.repository");
+    await mcpStore.saveCapabilities(workspaceId, serverId, [
+      {
+        kind: "tool",
+        name: "nc_webdav_read_file",
+        description: "Read a file",
+        annotationsJson: JSON.stringify({ readOnlyHint: true }),
+      },
+      {
+        kind: "tool",
+        name: "nc_webdav_write_file",
+        description: "Write a file",
+        annotationsJson: JSON.stringify({ readOnlyHint: false }),
+      },
+      {
+        kind: "tool",
+        name: "nc_webdav_mystery_action",
+        description: "An unclassified action",
+      },
+    ]);
+    await mcpStore.saveCapabilities(workspaceId, unrelatedServerId, [
+      {
+        kind: "tool",
+        name: "search_issues",
+        description: "Search issues",
+        annotationsJson: JSON.stringify({ readOnlyHint: true }),
+      },
+    ]);
+
+    const res = await createApp().request(
+      `/api/mcp?workspaceId=${workspaceId}`,
+      asUser(user),
+    );
+    const body = (await res.json()) as {
+      servers: {
+        id: string;
+        capabilities: { name: string; access: "read" | "write" | null }[];
+      }[];
+    };
+    const capabilities = body.servers.find((server) => server.id === serverId)!.capabilities;
+
+    expect(capabilities.map(({ name, access }) => ({ name, access }))).toEqual([
+      { name: "nc_webdav_read_file", access: "read" },
+      { name: "nc_webdav_write_file", access: "write" },
+      { name: "nc_webdav_mystery_action", access: "write" },
+    ]);
+    expect(
+      body.servers.find((server) => server.id === unrelatedServerId)!.capabilities,
+    ).toEqual([
+      expect.objectContaining({ name: "search_issues", access: null }),
+    ]);
+  });
+});
+
 describe("GET /api/mcp/importable", () => {
   it("lists other workspaces' servers and never the current one's", async () => {
     const user = "importable-user";

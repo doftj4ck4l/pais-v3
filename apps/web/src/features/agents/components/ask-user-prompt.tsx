@@ -17,6 +17,7 @@ export function AskUserPrompt({
 }) {
   const [text, setText] = useState('')
   const hasOptions = question.options.length > 0
+  const isApproval = question.kind === 'approval'
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
@@ -33,26 +34,28 @@ export function AskUserPrompt({
           </div>
         ) : null}
 
-        <form
-          className="mt-2.5 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            const t = text.trim()
-            if (t) onAnswer(t)
-          }}
-        >
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={hasOptions ? 'or type your own answer…' : 'type your answer…'}
-            // eslint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus
-            className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors focus-visible:border-foreground/40"
-          />
-          <Button type="submit" size="sm" disabled={!text.trim()}>
-            Send
-          </Button>
-        </form>
+        {!isApproval ? (
+          <form
+            className="mt-2.5 flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const t = text.trim()
+              if (t) onAnswer(t)
+            }}
+          >
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={hasOptions ? 'or type your own answer…' : 'type your answer…'}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors focus-visible:border-foreground/40"
+            />
+            <Button type="submit" size="sm" disabled={!text.trim()}>
+              Send
+            </Button>
+          </form>
+        ) : null}
       </div>
     </div>
   )

@@ -138,14 +138,15 @@ export async function answerQuestion(
   conversationId: string,
   questionId: string,
   answer: string,
-): Promise<void> {
-  await fetch(`/api/chat/${encodeURIComponent(conversationId)}/answer?${scoped(scope)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ questionId, answer }),
-  }).catch(() => {
-    // The prompt is already cleared locally; a failed delivery must not throw.
-  })
+): Promise<boolean> {
+  const result = await json<{ delivered: boolean }>(
+    await fetch(`/api/chat/${encodeURIComponent(conversationId)}/answer?${scoped(scope)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questionId, answer }),
+    }),
+  )
+  return result.delivered
 }
 
 /** Best-effort delete — a stored run that outlives the UI is not worth a crash. */

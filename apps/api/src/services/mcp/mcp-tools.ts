@@ -19,12 +19,21 @@ import {
 } from "./client";
 import { listCapabilities } from "./probe";
 import {
+  approvalRequest,
+  isNextcloudServer,
+  isReadOnlyMcpTool,
+  type McpApprovalRequest,
+} from "./mcp-approval-policy";
+import {
   argNamesOf,
   buildIndex,
   coreToolNames,
   searchTools,
   type ToolDoc,
 } from "./tool-search";
+
+export { isReadOnlyMcpTool } from "./mcp-approval-policy";
+export type { McpApprovalRequest } from "./mcp-approval-policy";
 
 /**
  * Every MCP server a workspace has enabled, adapted into what a pi run needs:
@@ -469,6 +478,8 @@ export type McpToolsOptions = {
    * Docker unreachable — in which case results are truncated as before.
    */
   workspacePath?: string;
+  /** Human gate for Nextcloud tools that are not provably read-only. */
+  requestApproval?: (request: McpApprovalRequest, signal?: AbortSignal) => Promise<boolean>;
 };
 
 /** Where spilled results live inside a workspace. */
@@ -482,9 +493,33 @@ type CatalogEntry = {
   serverName: string;
   /** The name the server itself knows it by. */
   remoteName: string;
+  title: string | null;
   description: string;
   schemaJson: string | null;
+  annotationsJson: string | null;
+  isNextcloud: boolean;
 };
+
+/** Prevent parallel runs from reconnecting and replacing the same safety catalog. */
+const catalogRefreshes = new WeakMap<McpStore, Map<string, Promise<NewCapability[]>>>();
+
+function refreshCatalogOnce(
+  store: McpStore,
+  key: string,
+  refresh: () => Promise<NewCapability[]>,
+): Promise<NewCapability[]> {
+  let byServer = catalogRefreshes.get(store);
+  if (!byServer) {
+    byServer = new Map();
+    catalogRefreshes.set(store, byServer);
+  }
+  const existing = byServer.get(key);
+  if (existing) return existing;
+
+  const pending = refresh().finally(() => byServer!.delete(key));
+  byServer.set(key, pending);
+  return pending;
+}
 
 export async function createMcpTools(
   workspaceId: string,
@@ -498,6 +533,7 @@ export async function createMcpTools(
     usage = (id: string) => runRepository.toolUsage(id),
     onConnect,
     workspacePath,
+    requestApproval,
   } = options;
 
   const rows = await store.listEnabled(workspaceId);
@@ -564,6 +600,21 @@ export async function createMcpTools(
     capsByServer.set(cap.serverId, list);
   }
 
+  const nextcloudServerIds = new Set<string>();
+  await Promise.all(
+    rows.map(async (row) => {
+      const caps = capsByServer.get(row.id) ?? [];
+      if (isNextcloudServer(row, caps)) {
+        nextcloudServerIds.add(row.id);
+        return;
+      }
+      const secrets = await store.resolveSecrets(workspaceId, row.id);
+      if (isNextcloudServer(row, caps, Object.keys(secrets?.env ?? {}))) {
+        nextcloudServerIds.add(row.id);
+      }
+    }),
+  );
+
   const outcomes: McpServerOutcome[] = [];
 
   // A server with no cached catalog is invisible to the model, so it is worth a
@@ -575,10 +626,15 @@ export async function createMcpTools(
     cold.map(async (row) => {
       const startedAt = Date.now();
       try {
-        const conn = await connect(row.id);
-        const caps = await listCapabilities(conn);
-        await store.saveCapabilities(workspaceId, row.id, caps);
-        capsByServer.set(row.id, asCapabilityRows(workspaceId, row.id, caps));
+        const caps = await refreshCatalogOnce(store, `${workspaceId}:${row.id}`, async () => {
+          const conn = await connect(row.id);
+          const discovered = await listCapabilities(conn);
+          await store.saveCapabilities(workspaceId, row.id, discovered);
+          return discovered;
+        });
+        const rows = asCapabilityRows(workspaceId, row.id, caps);
+        capsByServer.set(row.id, rows);
+        if (isNextcloudServer(row, rows)) nextcloudServerIds.add(row.id);
       } catch (e) {
         const error = (e as Error)?.message ?? String(e);
         outcomes.push({
@@ -605,6 +661,7 @@ export async function createMcpTools(
       slug: slugify(r.name),
       transport: r.transport,
       caps: capsByServer.get(r.id) ?? [],
+      isNextcloud: nextcloudServerIds.has(r.id),
       cached: !cold.includes(r),
     }));
 
@@ -657,11 +714,64 @@ export async function createMcpTools(
         serverId: server.serverId,
         serverName: server.name,
         remoteName: cap.name,
+        title: cap.title,
         description: cap.description ?? `The "${cap.name}" tool.`,
         schemaJson: cap.schemaJson,
+        annotationsJson: cap.annotationsJson,
+        isNextcloud: server.isNextcloud,
       });
     }
   }
+
+  // Safety metadata is checked against the live Nextcloud catalog once per run
+  // and only when a Nextcloud tool is actually used. This keeps an offline
+  // connector from delaying unrelated runs. The process-wide single-flight
+  // above also keeps parallel runs from replacing the same cache concurrently.
+  const safetyCatalogs = new Map<string, Promise<McpCapabilityRow[] | null>>();
+  const liveSafetyEntry = async (entry: CatalogEntry): Promise<CatalogEntry> => {
+    let pending = safetyCatalogs.get(entry.serverId);
+    if (!pending) {
+      pending = refreshCatalogOnce(store, `${workspaceId}:${entry.serverId}`, async () => {
+        const conn = await connect(entry.serverId);
+        const liveTools = await listCapabilities(conn, { requireTools: true, toolsOnly: true });
+        const existing = await store.capabilities(workspaceId, entry.serverId);
+        const preserved = existing
+          .filter((cap) => cap.kind !== "tool")
+          .map((cap) => ({
+            kind: cap.kind,
+            name: cap.name,
+            title: cap.title,
+            description: cap.description,
+            schemaJson: cap.schemaJson,
+            annotationsJson: cap.annotationsJson,
+            uri: cap.uri,
+          }));
+        const discovered = [...liveTools, ...preserved];
+        await store.saveCapabilities(workspaceId, entry.serverId, discovered);
+        return discovered;
+      })
+        .then((caps) => asCapabilityRows(workspaceId, entry.serverId, caps))
+        .catch((error: unknown) => {
+          logger.warn("mcp.safety_catalog_refresh_failed", {
+            server: entry.serverName,
+            message: (error as Error)?.message ?? String(error),
+          });
+          return null;
+        });
+      safetyCatalogs.set(entry.serverId, pending);
+    }
+
+    const liveCaps = await pending;
+    const liveTool = liveCaps?.find(
+      (cap) => cap.kind === "tool" && cap.name === entry.remoteName,
+    );
+    return {
+      ...entry,
+      title: liveTool?.title ?? entry.title,
+      // A failed/missing live lookup must not reuse a cached read-only waiver.
+      annotationsJson: liveTool?.annotationsJson ?? null,
+    };
+  };
 
   for (const entry of catalog) {
     tools.push({
@@ -671,11 +781,36 @@ export async function createMcpTools(
       parameters: jsonSchemaToTypebox(
         entry.schemaJson ? (JSON.parse(entry.schemaJson) as Record<string, unknown>) : undefined,
       ),
-      execute: async (_id: string, params: any) => {
+      execute: async (_id: string, params: any, signal?: AbortSignal) => {
+        const args = (params ?? {}) as Record<string, unknown>;
+        const safetyEntry = entry.isNextcloud ? await liveSafetyEntry(entry) : entry;
+        if (
+          safetyEntry.isNextcloud &&
+          !isReadOnlyMcpTool(safetyEntry.remoteName, safetyEntry.annotationsJson)
+        ) {
+          if (!requestApproval) {
+            return toolResult(
+              budget,
+              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" requires user approval, ` +
+                `but this run cannot ask the user. The action was not run.`,
+              true,
+              entry.name,
+            );
+          }
+          const approved = await requestApproval(approvalRequest(safetyEntry, args), signal);
+          if (!approved) {
+            return toolResult(
+              budget,
+              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" was denied by the user and was not run.`,
+              true,
+              entry.name,
+            );
+          }
+        }
         try {
           const conn = await connect(entry.serverId);
           const result: any = await withCallTimeout(
-            conn.client.callTool({ name: entry.remoteName, arguments: params ?? {} }),
+            conn.client.callTool({ name: entry.remoteName, arguments: args }),
             `${entry.serverName}.${entry.remoteName}`,
           );
           const text = flattenContent(result?.content);
@@ -939,8 +1074,10 @@ function asCapabilityRows(
     workspaceId,
     kind: cap.kind,
     name: cap.name,
+    title: cap.title ?? null,
     description: cap.description ?? null,
     schemaJson: cap.schemaJson ?? null,
+    annotationsJson: cap.annotationsJson ?? null,
     uri: cap.uri ?? null,
   }));
 }

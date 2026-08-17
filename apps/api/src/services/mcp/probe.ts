@@ -26,19 +26,34 @@ async function safely<T>(what: string, server: string, fn: () => Promise<T>): Pr
   }
 }
 
-export async function listCapabilities(conn: McpConnection): Promise<NewCapability[]> {
+export async function listCapabilities(
+  conn: McpConnection,
+  options: { requireTools?: boolean; toolsOnly?: boolean } = {},
+): Promise<NewCapability[]> {
   const server = conn.spec.name;
   const caps: NewCapability[] = [];
 
-  const tools = await safely("tools", server, () => conn.client.listTools());
+  // A normal probe tolerates unsupported capability families. A safety refresh
+  // is different: replacing the cached tool policy after tools/list failed
+  // would erase usable tools and turn an I/O failure into a false empty catalog.
+  const tools = options.requireTools
+    ? await conn.client.listTools()
+    : await safely("tools", server, () => conn.client.listTools());
   for (const tool of tools?.tools ?? []) {
     caps.push({
       kind: "tool",
       name: tool.name,
+      title: tool.title ?? tool.annotations?.title ?? null,
       description: tool.description ?? null,
       schemaJson: JSON.stringify(tool.inputSchema ?? { type: "object", properties: {} }),
+      // Store `{}` rather than null when the server deliberately sent no
+      // annotations. Null is reserved for catalogs cached before this field
+      // existed, so they can be re-probed exactly once after migration.
+      annotationsJson: JSON.stringify(tool.annotations ?? {}),
     });
   }
+
+  if (options.toolsOnly) return caps;
 
   const resources = await safely("resources", server, () => conn.client.listResources());
   for (const resource of resources?.resources ?? []) {

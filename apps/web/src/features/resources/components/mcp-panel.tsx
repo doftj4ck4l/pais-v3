@@ -3,6 +3,7 @@ import {
   AlertTriangleIcon,
   CalendarIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
   CloudIcon,
   DownloadIcon,
   PencilIcon,
@@ -21,6 +22,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/shared/ui/dialog'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/shared/ui/collapsible'
 import { Spinner } from '@/shared/ui/spinner'
 import {
   addMcpServer,
@@ -392,7 +398,9 @@ export function McpPanel({ onCountChange }: { onCountChange?: (n: number) => voi
           if (!open) closePicker()
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent
+          className={cn(!importing && !manual && !chosen ? 'sm:max-w-4xl' : 'sm:max-w-lg')}
+        >
           {importing ? (
             <ImportPicker
               catalog={catalog}
@@ -620,7 +628,7 @@ function ConnectorPicker({
       </DialogHeader>
 
       <div className={BODY_CLASS}>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
           {/* Google connectors first: they are the first-party ones, and OAuth
               is less to fill in than any credentials form below them. */}
           {GOOGLE_SERVICES.map((svc) => (
@@ -1412,6 +1420,9 @@ function ServerDetail({
       : (server.url ?? '')
   const credentials = [...(server.headerKeys ?? []), ...(server.envKeys ?? [])]
   const tools = server.capabilities.filter((c) => c.kind === 'tool')
+  const readTools = tools.filter((tool) => tool.access === 'read')
+  const writeTools = tools.filter((tool) => tool.access === 'write')
+  const hasAccessGroups = readTools.length + writeTools.length === tools.length
 
   return (
     <>
@@ -1473,17 +1484,14 @@ function ServerDetail({
         {tools.length ? (
           <div className="flex flex-col gap-1.5">
             <span className="label text-muted-foreground">Tools it offers</span>
-            <div className="flex flex-wrap gap-1.5">
-              {tools.map((tool) => (
-                <span
-                  key={tool.name}
-                  title={tool.description ?? undefined}
-                  className="readout rounded-md border px-1.5 py-1 text-[0.625rem] text-muted-foreground"
-                >
-                  {tool.name}
-                </span>
-              ))}
-            </div>
+            {hasAccessGroups ? (
+              <div className="overflow-hidden rounded-lg border">
+                <ToolAccessGroup access="read" tools={readTools} />
+                <ToolAccessGroup access="write" tools={writeTools} />
+              </div>
+            ) : (
+              <ToolList tools={tools} className="rounded-lg border p-2.5" />
+            )}
           </div>
         ) : null}
 
@@ -1519,6 +1527,68 @@ function ServerDetail({
         </Button>
       </div>
     </>
+  )
+}
+
+type ToolCapability = McpServerRow['capabilities'][number]
+
+function ToolAccessGroup({
+  access,
+  tools,
+}: {
+  access: 'read' | 'write'
+  tools: ToolCapability[]
+}) {
+  const write = access === 'write'
+  const label = write ? 'Write' : 'Read'
+
+  return (
+    <Collapsible className="group border-b last:border-b-0">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50">
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        <span className="text-xs font-medium">{label}</span>
+        <span
+          className={cn(
+            'readout rounded-full px-1.5 py-0.5 text-[0.625rem] leading-none',
+            write
+              ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+              : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+          )}
+        >
+          {tools.length}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="border-t bg-muted/20 p-2.5">
+          {tools.length ? (
+            <ToolList tools={tools} />
+          ) : (
+            <p className="text-[0.625rem] text-muted-foreground">No {label.toLowerCase()} tools.</p>
+          )}
+          {write && tools.length ? (
+            <p className="mt-2 text-[0.625rem] leading-relaxed text-muted-foreground">
+              Write tools ask for your approval before they run.
+            </p>
+          ) : null}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function ToolList({ tools, className }: { tools: ToolCapability[]; className?: string }) {
+  return (
+    <div className={cn('flex flex-wrap gap-1.5', className)}>
+      {tools.map((tool) => (
+        <span
+          key={tool.name}
+          title={tool.description ?? undefined}
+          className="readout inline-flex items-center rounded-md border bg-background px-1.5 py-1 text-[0.625rem] text-muted-foreground"
+        >
+          {tool.name}
+        </span>
+      ))}
+    </div>
   )
 }
 
