@@ -22,14 +22,22 @@ function freshStore() {
   return new SqliteDatabaseConnectionStore(drizzle(sqlite) as any);
 }
 
+const baseConfig = {
+  engine: "postgresql" as const,
+  host: "db.example.com",
+  port: 5432,
+  database: "sales",
+  username: "reader",
+  password: "hunter2",
+  ssl: { mode: "disable" as const, ca: null, serverName: null },
+};
+
 const conn = (over: Partial<Parameters<SqliteDatabaseConnectionStore["create"]>[0]> = {}) => ({
   id: "c1",
   workspaceId: "ws1",
   name: "sales",
-  url: "postgres://reader:hunter2@db.example.com:5432/sales",
-  displayHost: "db.example.com",
-  displayDatabase: "sales",
   ...over,
+  config: { ...baseConfig, ...over.config },
 });
 
 let store: SqliteDatabaseConnectionStore;
@@ -43,8 +51,11 @@ describe("SqliteDatabaseConnectionStore", () => {
     const rows = await store.list("ws1");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.name).toBe("sales");
-    expect(rows[0]!.displayHost).toBe("db.example.com");
+    expect(rows[0]!.host).toBe("db.example.com");
+    expect(rows[0]!.port).toBe(5432);
+    expect(rows[0]!.username).toBe("reader");
     expect(JSON.stringify(rows[0])).not.toContain("hunter2");
+    expect(JSON.stringify(rows[0])).not.toContain("postgres://");
   });
 
   it("does not store the connection string in plaintext", async () => {
@@ -54,14 +65,39 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(raw?.startsWith("v1.")).toBe(true);
   });
 
-  it("resolves the decrypted url for its owner", async () => {
+  it("resolves the decrypted structured config for its owner", async () => {
     await store.create(conn());
-    expect(await store.resolveUrl("ws1", "c1")).toContain("hunter2");
+    expect(await store.resolveConfig("ws1", "c1")).toEqual(baseConfig);
   });
 
-  it("refuses to resolve a url for a different user", async () => {
+  it("resolves public fields and private config together without mixing ownership", async () => {
     await store.create(conn());
-    expect(await store.resolveUrl("someone-else", "c1")).toBeNull();
+    const resolved = await store.resolveConnection("ws1", "c1");
+    expect(resolved?.row.name).toBe("sales");
+    expect(JSON.stringify(resolved?.row)).not.toContain("hunter2");
+    expect(resolved?.config.password).toBe("hunter2");
+    expect(await store.resolveConnection("someone-else", "c1")).toBeNull();
+  });
+
+  it("refuses to resolve credentials for a different user", async () => {
+    await store.create(conn());
+    expect(await store.resolveConfig("someone-else", "c1")).toBeNull();
+  });
+
+  it("updates public fields while preserving encrypted response redaction", async () => {
+    await store.create(conn());
+    const config = { ...baseConfig, host: "10.35.180.238", password: "new-secret" };
+    expect(await store.update("ws1", "c1", {
+      name: "warehouse",
+      config,
+      status: "connected",
+      error: null,
+    })).toBe(true);
+    const row = (await store.list("ws1"))[0]!;
+    expect(row.name).toBe("warehouse");
+    expect(row.host).toBe("10.35.180.238");
+    expect(JSON.stringify(row)).not.toContain("new-secret");
+    expect((await store.resolveConfig("ws1", "c1"))?.password).toBe("new-secret");
   });
 
   it("scopes listing by user", async () => {
@@ -74,6 +110,12 @@ describe("SqliteDatabaseConnectionStore", () => {
     await store.create(conn());
     expect((await store.findByName("ws1", "sales"))?.id).toBe("c1");
     expect(await store.findByName("ws1", "nope")).toBeNull();
+  });
+
+  it("finds a public connection by owned id", async () => {
+    await store.create(conn());
+    expect((await store.findById("ws1", "c1"))?.name).toBe("sales");
+    expect(await store.findById("someone-else", "c1")).toBeNull();
   });
 
   it("rejects a duplicate name for the same user", async () => {

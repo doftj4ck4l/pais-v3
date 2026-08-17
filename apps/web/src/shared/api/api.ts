@@ -253,29 +253,59 @@ export async function listConnections(scope: Scope): Promise<DbConnectionRow[]> 
   return connections
 }
 
+export type DatabaseApiError = {
+  code: string
+  message: string
+  field?: string
+  retryable?: boolean
+}
+
+export type DatabaseConnectionInput = {
+  name: string
+  engine: 'postgresql'
+  host: string
+  port: number
+  database: string
+  username: string
+  password?: string
+  ssl: {
+    mode: 'disable' | 'require' | 'verify-full'
+    ca?: string | null
+    serverName?: string | null
+  }
+}
+
+type DatabaseResult<T> = { ok: true; value: T } | { ok: false; error: DatabaseApiError }
+
+async function databaseError(res: Response): Promise<DatabaseApiError> {
+  const body = (await res.json().catch(() => ({}))) as { error?: DatabaseApiError | string }
+  if (typeof body.error === 'string') return { code: 'request_failed', message: body.error }
+  return body.error ?? { code: 'request_failed', message: `HTTP ${res.status}` }
+}
+
 /**
  * Connect a read-only database. An unreachable database is not a form error —
  * the API still returns 201 with a connection whose status is 'error', which
  * the panel lists like any other. `error` here is only for a rejected request:
- * a bad name, a missing url, a duplicate name, or a missing server config.
+ * a bad name, missing settings, a duplicate name, or missing server config.
  */
 export async function addConnection(
   scope: Scope,
-  name: string,
-  url: string,
-): Promise<{ connection?: DbConnectionRow; error?: string }> {
+  input: DatabaseConnectionInput,
+): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
   const res = await fetch(`/api/databases?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name, url }),
+    body: JSON.stringify(input),
   })
+  if (!res.ok) return { error: await databaseError(res) }
   return await res.json()
 }
 
 /** One step of an attach, as the server reports it. Mirrors IntrospectPhase. */
 export type AttachPhase =
   | { phase: 'connected'; name: string }
-  | { phase: 'catalog'; step: string; count: number }
+  | { phase: 'catalog'; step: 'tables' | 'columns' | 'primaryKeys' | 'foreignKeys' | 'indexes'; count: number }
   | { phase: 'building'; tables: number; columns: number }
   | { phase: 'indexing'; entries: number }
   | { phase: 'done'; tables: number; columns: number; entries: number; ms: number }
@@ -291,18 +321,17 @@ export type AttachPhase =
  */
 export async function addConnectionStreaming(
   scope: Scope,
-  name: string,
-  url: string,
+  input: DatabaseConnectionInput,
   onPhase: (p: AttachPhase) => void,
-): Promise<{ connection?: DbConnectionRow; error?: string }> {
+): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
   const res = await fetch(`/api/databases/stream?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name, url }),
+    body: JSON.stringify(input),
   })
 
-  if (!res.ok) return (await res.json()) as { error?: string }
-  if (!res.body) return { error: 'The server sent no stream' }
+  if (!res.ok) return { error: await databaseError(res) }
+  if (!res.body) return { error: { code: 'empty_stream', message: 'The server sent no stream' } }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -338,17 +367,60 @@ export async function addConnectionStreaming(
     }
   }
 
-  return connection ? { connection } : { error: 'The attach ended without a result' }
+  return connection
+    ? { connection }
+    : { error: { code: 'empty_stream', message: 'The attach ended without a result' } }
 }
 
-export async function refreshConnection(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/databases/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, {
+export async function testConnection(
+  scope: Scope,
+  input: DatabaseConnectionInput,
+): Promise<DatabaseResult<{ latencyMs: number; serverVersion?: string }>> {
+  const res = await fetch(`/api/databases/test?${scoped(scope)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) return { ok: false, error: await databaseError(res) }
+  return (await res.json()) as DatabaseResult<{ latencyMs: number; serverVersion?: string }>
+}
+
+export async function testStoredConnection(
+  scope: Scope,
+  id: string,
+): Promise<DatabaseResult<{ latencyMs: number; serverVersion?: string }>> {
+  const res = await fetch(`/api/databases/${encodeURIComponent(id)}/test?${scoped(scope)}`, {
     method: 'POST',
   })
+  if (!res.ok) return { ok: false, error: await databaseError(res) }
+  return (await res.json()) as DatabaseResult<{ latencyMs: number; serverVersion?: string }>
+}
+
+export async function updateConnection(
+  scope: Scope,
+  id: string,
+  input: DatabaseConnectionInput,
+): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
+  const res = await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) return { error: await databaseError(res) }
+  return (await res.json()) as { connection?: DbConnectionRow }
+}
+
+export async function refreshConnection(scope: Scope, id: string): Promise<DbConnectionRow> {
+  const res = await fetch(`/api/databases/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, {
+    method: 'POST',
+  })
+  const { connection } = await json<{ connection: DbConnectionRow }>(res)
+  return connection
 }
 
 export async function deleteConnection(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  const res = await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 export async function listMcpServers(scope: Scope): Promise<McpServerRow[]> {

@@ -43,6 +43,13 @@
       "when": 1786894915399,
       "tag": "0005_greedy_chamber",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786937262692,
+      "tag": "0006_striped_zombie",
+      "breakpoints": true
     }
   ]
 }

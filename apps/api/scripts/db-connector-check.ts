@@ -14,16 +14,41 @@
  * CTE and a trailing `--` comment both survive being wrapped in the row-cap
  * subquery.
  *
- *   DB_CHECK_URL=postgres://user:pass@host:5432/db bun scripts/db-connector-check.ts
+ *   DB_CHECK_HOST=10.0.0.10 DB_CHECK_DATABASE=app DB_CHECK_USERNAME=reader \
+ *   DB_CHECK_PASSWORD=... bun scripts/db-connector-check.ts
  */
-import { fetchCatalog, probe, runReadOnly } from "../src/services/db/postgres.driver";
+import { readFileSync } from "node:fs";
+import type { DatabaseConnectionConfig } from "../src/services/db/database-adapter";
+import { redactDatabaseError } from "../src/services/db/database-adapter";
+import { DatabaseConnectorService, databaseAdapterRegistry } from "../src/services/db/database-connector.service";
+import { DatabaseNetworkPolicy, DEFAULT_DATABASE_ALLOWED_CIDRS } from "../src/services/db/network-policy";
 import { buildSnapshot } from "../src/services/db/introspect.service";
 
-const url = process.env.DB_CHECK_URL;
-if (!url) {
-  console.error("Set DB_CHECK_URL to a PostgreSQL connection string.");
+const passwordFile = process.env.DB_CHECK_PASSWORD_FILE;
+const password = process.env.DB_CHECK_PASSWORD ?? (passwordFile
+  ? readFileSync(passwordFile, "utf8").replace(/\r?\n$/, "")
+  : "");
+
+const config: DatabaseConnectionConfig = {
+  engine: "postgresql",
+  host: process.env.DB_CHECK_HOST ?? "",
+  port: Number(process.env.DB_CHECK_PORT ?? 5432),
+  database: process.env.DB_CHECK_DATABASE ?? "",
+  username: process.env.DB_CHECK_USERNAME ?? "",
+  password,
+  ssl: { mode: (process.env.DB_CHECK_SSL_MODE as any) ?? "disable" },
+};
+if (!config.host || !config.database || !config.username || !config.password) {
+  console.error("Set database host, database, username, and password/password-file check inputs.");
   process.exit(1);
 }
+
+const allowedCidrs = (process.env.DATABASE_ALLOWED_CIDRS ?? DEFAULT_DATABASE_ALLOWED_CIDRS.join(","))
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const networkPolicy = new DatabaseNetworkPolicy({ allowedCidrs });
+const connector = new DatabaseConnectorService(databaseAdapterRegistry, networkPolicy);
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail = "") => {
@@ -31,50 +56,102 @@ const check = (label: string, ok: boolean, detail = "") => {
   if (!ok) failures++;
 };
 
-const reached = await probe(url);
-check("connects", reached.ok, reached.ok ? `${reached.database} @ ${reached.host}` : reached.error);
+const reached = await connector.testConnection(config);
+check("connects", reached.ok, reached.ok ? `${config.database} @ ${config.host}` : reached.error.message);
 if (!reached.ok) process.exit(1);
 
-const catalog = await fetchCatalog(url);
+const catalogResult = await connector.fetchCatalog(config);
+if (!catalogResult.ok) {
+  check("introspects", false, catalogResult.error.message);
+  process.exit(1);
+}
+const catalog = catalogResult.value;
 const snapshot = buildSnapshot(catalog);
 check("introspects", snapshot.length > 0, `${snapshot.length} tables`);
+
+const expectedSchema = process.env.DB_CHECK_EXPECTED_SCHEMA;
+const expectedTables = Number(process.env.DB_CHECK_EXPECTED_TABLES ?? 0);
+if (expectedSchema && expectedTables) {
+  const schemaTables = snapshot.filter((table) => table.schemaName === expectedSchema);
+  check(
+    `discovers ${expectedTables} ${expectedSchema} tables`,
+    schemaTables.length === expectedTables,
+    `${schemaTables.length} found`,
+  );
+}
+
+const expectedTable = process.env.DB_CHECK_TABLE;
+const expectedCount = process.env.DB_CHECK_EXPECTED_COUNT;
+if (expectedTable) {
+  const [schemaName, tableName, extra] = expectedTable.split(".");
+  if (!schemaName || !tableName || extra || !/^[a-z_][a-z0-9_$]*$/i.test(schemaName) || !/^[a-z_][a-z0-9_$]*$/i.test(tableName)) {
+    throw new Error("DB_CHECK_TABLE must be a safe schema-qualified identifier");
+  }
+  const described = snapshot.find((table) => table.schemaName === schemaName && table.name === tableName);
+  check(
+    `describes ${expectedTable}`,
+    Boolean(described?.columns.length),
+    described ? `${described.columns.length} columns` : "not found",
+  );
+  if (expectedCount !== undefined) {
+    const quoted = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`;
+    const counted = await connector.executeReadOnly(
+      config,
+      `SELECT count(*) AS count FROM ${quoted(schemaName)}.${quoted(tableName)}`,
+    );
+    const actual = counted.ok ? String(counted.rows[0]?.count ?? "") : "";
+    check(
+      `${expectedTable} has ${expectedCount} rows`,
+      counted.ok && actual === expectedCount,
+      counted.ok ? `${actual} found` : counted.error.message,
+    );
+  }
+}
+
+const requireRichSchema = process.env.DB_CHECK_REQUIRE_RICH_SCHEMA === "1";
 // A schema with zero foreign keys would make this pass vacuously no matter
 // what buildSnapshot does with them, so the check first demands the seed
 // schema actually has some to exercise — "cannot verify" beats a false ok.
-check(
-  "captures foreign keys",
-  catalog.foreignKeys.length > 0 && snapshot.some((t) => t.columns.some((c) => c.fkTable !== null)),
-  catalog.foreignKeys.length === 0
-    ? "the target database has no foreign keys — this check cannot verify anything against it, seed a schema with at least one FK"
-    : `${catalog.foreignKeys.length} in catalog`,
-);
-check(
-  "captures table and column comments",
-  snapshot.some((t) => t.comment !== null) && snapshot.some((t) => t.columns.some((c) => c.comment !== null)),
-);
-check(
-  "captures indexes",
-  snapshot.some((t) => t.indexes.length > 0),
-);
+if (requireRichSchema) {
+  check(
+    "captures foreign keys",
+    catalog.foreignKeys.length > 0 && snapshot.some((t) => t.columns.some((c) => c.fkTable !== null)),
+    catalog.foreignKeys.length === 0
+      ? "the target database has no foreign keys — this check cannot verify anything against it"
+      : `${catalog.foreignKeys.length} in catalog`,
+  );
+  check(
+    "captures table and column comments",
+    snapshot.some((t) => t.comment !== null) && snapshot.some((t) => t.columns.some((c) => c.comment !== null)),
+  );
+  check("captures indexes", snapshot.some((t) => t.indexes.length > 0));
+}
 
-const select = await runReadOnly(url, "SELECT 1 AS one");
+const select = await connector.executeReadOnly(config, "SELECT 1 AS one");
 check("runs a select", select.ok && select.rows.length === 1);
 
-const capped = await runReadOnly(url, "SELECT generate_series(1, 500) AS n", 10);
+const capped = await connector.executeReadOnly(config, "SELECT generate_series(1, 500) AS n", 10);
 check("caps rows", capped.ok && capped.rows.length === 10 && capped.truncated);
 
-const cte = await runReadOnly(url, "WITH ranked AS (SELECT n FROM generate_series(1, 5) AS n) SELECT * FROM ranked");
+const byteCapped = await connector.executeReadOnly(config, "SELECT repeat('x', 60000) AS payload");
+check(
+  "caps an individually oversized row by bytes",
+  byteCapped.ok && byteCapped.rows.length === 0 && byteCapped.truncatedReason === "bytes",
+  byteCapped.ok ? `${byteCapped.rows.length} rows returned` : byteCapped.error.message,
+);
+
+const cte = await connector.executeReadOnly(config, "WITH ranked AS (SELECT n FROM generate_series(1, 5) AS n) SELECT * FROM ranked");
 check(
   "a WITH CTE survives the row-cap subquery wrap",
   cte.ok && cte.rows.length === 5,
-  cte.ok ? "" : cte.error,
+  cte.ok ? "" : cte.error.message,
 );
 
-const trailingComment = await runReadOnly(url, "SELECT 1 AS one -- note");
+const trailingComment = await connector.executeReadOnly(config, "SELECT 1 AS one -- note");
 check(
   "a trailing line comment survives the row-cap subquery wrap",
   trailingComment.ok && trailingComment.rows.length === 1,
-  trailingComment.ok ? "" : trailingComment.error,
+  trailingComment.ok ? "" : trailingComment.error.message,
 );
 
 // Match on the guard's own distinctive wording, not merely `!ok`. If the
@@ -83,11 +160,11 @@ check(
 // the point here is to prove the guard itself fired, before the statement
 // ever reached the server.
 const GUARD_REJECTION = /only SELECT, WITH, and EXPLAIN are permitted|this connection is read-only/i;
-const blocked = await runReadOnly(url, "CREATE TABLE pixelspace_should_not_exist (id int)");
+const blocked = await connector.executeReadOnly(config, "CREATE TABLE pixelspace_should_not_exist (id int)");
 check(
   "guard rejects a write",
-  !blocked.ok && GUARD_REJECTION.test(blocked.error),
-  blocked.ok ? "query succeeded — guard did not fire at all" : blocked.error,
+  !blocked.ok && GUARD_REJECTION.test(blocked.error.message),
+  blocked.ok ? "query succeeded — guard did not fire at all" : blocked.error.message,
 );
 
 // The guard is bypassed here on purpose: this is the only assertion that tests
@@ -98,14 +175,29 @@ check(
 // the wrong reason. Only PostgreSQL's own read-only-transaction rejection
 // counts.
 const READ_ONLY_REJECTION = /read-only transaction/i;
-const sql = new Bun.SQL({ url, max: 1 });
+const approved = await networkPolicy.approve(config.host);
+if (!approved.ok) throw new Error(approved.error.message);
+const directOptions = {
+  adapter: "postgres" as const,
+  hostname: approved.value.address,
+  port: config.port,
+  database: config.database,
+  username: config.username,
+  password: config.password,
+  tls: config.ssl.mode === "disable" ? false : { rejectUnauthorized: config.ssl.mode === "verify-full", serverName: config.host },
+  max: 1,
+};
+const sql = new Bun.SQL(directOptions);
 let engineBlocked = false;
 let engineDetail = "";
 try {
   await sql.unsafe("BEGIN TRANSACTION READ ONLY");
   await sql.unsafe("CREATE TABLE pixelspace_should_not_exist (id int)");
 } catch (e: any) {
-  engineDetail = e?.message ?? String(e);
+  engineDetail = redactDatabaseError(
+    { code: "query_failed", message: e?.message ?? String(e) },
+    config,
+  ).message;
   engineBlocked = READ_ONLY_REJECTION.test(engineDetail);
 } finally {
   await sql.unsafe("ROLLBACK").catch(() => {});
@@ -129,7 +221,7 @@ if (!engineBlocked) {
 // backends, the transaction would not actually wrap the query, while every
 // other check above would still appear to pass. Proved directly by reading
 // the backend pid at both ends of the same shape of sequence.
-const pidClient = new Bun.SQL({ url, max: 1 });
+const pidClient = new Bun.SQL(directOptions);
 let pidAtStart: number | null = null;
 let pidAtEnd: number | null = null;
 try {
@@ -155,12 +247,11 @@ check(
 // proves `SET LOCAL statement_timeout` is the thing enforcing the budget —
 // `client()` widens `idleTimeout` well past it specifically so this check
 // exercises the server-side bound deterministically rather than racing it.
-const STATEMENT_TIMEOUT_REJECTION = /statement timeout/i;
-const timeout = await runReadOnly(url, "SELECT pg_sleep(30)");
+const timeout = await connector.executeReadOnly(config, "SELECT pg_sleep(30)");
 check(
   "cancels a slow statement via statement_timeout",
-  !timeout.ok && STATEMENT_TIMEOUT_REJECTION.test(timeout.error),
-  timeout.ok ? "query succeeded — nothing cancelled it" : timeout.error,
+  !timeout.ok && timeout.error.code === "timeout",
+  timeout.ok ? "query succeeded — nothing cancelled it" : timeout.error.message,
 );
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

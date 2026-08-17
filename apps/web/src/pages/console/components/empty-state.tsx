@@ -36,13 +36,11 @@ export function Greeting() {
 }
 
 export function Suggestions({
-  harnessId,
   onPick,
 }: {
-  harnessId: string | null
   onPick: (text: string) => void
 }) {
-  const suggestions = useSuggestions(harnessId)
+  const suggestions = useSuggestions()
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pt-1 pb-8 sm:px-6">

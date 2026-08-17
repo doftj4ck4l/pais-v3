@@ -3,6 +3,11 @@ import { db, dbConnections, dbTables, dbColumns } from "../db/client";
 import type { DbConnectionRow, DbConnectionStatus, DbColumnRow } from "../models/schema";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import type { SnapshotTable } from "../services/db/introspect.service";
+import type {
+  DatabaseConnectionConfig,
+  DatabaseEngine,
+  DatabaseSslMode,
+} from "../services/db/database-adapter";
 
 /**
  * The only thing that touches `db_connections`, `db_tables`, `db_columns`, and
@@ -17,15 +22,20 @@ export type NewConnection = {
   id: string;
   workspaceId: string;
   name: string;
-  url: string;
-  displayHost: string;
-  displayDatabase: string;
+  config: DatabaseConnectionConfig;
   // Lets a caller that already knows the outcome of a reachability probe (see
   // database.controller.ts) store the row as already-correct, rather than
   // inserting "connected" and immediately correcting it — the gap between
   // those two writes is otherwise visible to a concurrent read.
   status?: DbConnectionStatus;
   error?: string | null;
+};
+
+export type DatabaseConnectionUpdate = {
+  name: string;
+  config: DatabaseConnectionConfig;
+  status: DbConnectionStatus;
+  error: string | null;
 };
 
 /**
@@ -82,11 +92,23 @@ export type SchemaHit = {
   score: number;
 };
 
+export type ResolvedDatabaseConnection = {
+  row: DbConnectionRow;
+  config: DatabaseConnectionConfig;
+};
+
 export interface DatabaseConnectionStore {
   create(conn: NewConnection): Promise<void>;
+  update(
+    workspaceId: string,
+    id: string,
+    update: DatabaseConnectionUpdate,
+  ): Promise<boolean>;
   list(workspaceId: string): Promise<DbConnectionRow[]>;
+  findById(workspaceId: string, id: string): Promise<DbConnectionRow | null>;
   findByName(workspaceId: string, name: string): Promise<DbConnectionRow | null>;
-  resolveUrl(workspaceId: string, connectionId: string): Promise<string | null>;
+  resolveConnection(workspaceId: string, connectionId: string): Promise<ResolvedDatabaseConnection | null>;
+  resolveConfig(workspaceId: string, connectionId: string): Promise<DatabaseConnectionConfig | null>;
   markStatus(
     workspaceId: string,
     id: string,
@@ -109,12 +131,91 @@ const PUBLIC_COLUMNS = {
   engine: dbConnections.engine,
   status: dbConnections.status,
   error: dbConnections.error,
-  displayHost: dbConnections.displayHost,
-  displayDatabase: dbConnections.displayDatabase,
+  host: dbConnections.host,
+  port: dbConnections.port,
+  database: dbConnections.database,
+  username: dbConnections.username,
+  sslMode: dbConnections.sslMode,
+  hasCustomCa: dbConnections.hasCustomCa,
   tableCount: dbConnections.tableCount,
   lastIntrospectedAt: dbConnections.lastIntrospectedAt,
   createdAt: dbConnections.createdAt,
 };
+
+type StoredSecretV2 = {
+  version: 2;
+  password: string;
+  sslCa: string | null;
+  sslServerName: string | null;
+};
+
+const normalizeEngine = (engine: string): DatabaseEngine =>
+  engine === "postgres" ? "postgresql" : engine;
+
+function encodeSecret(config: DatabaseConnectionConfig): string {
+  const value: StoredSecretV2 = {
+    version: 2,
+    password: config.password,
+    sslCa: config.ssl.ca ?? null,
+    sslServerName: config.ssl.serverName ?? null,
+  };
+  return encryptSecret(JSON.stringify(value));
+}
+
+function decodeConfig(row: {
+  engine: string;
+  secret: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  sslMode: string;
+}): DatabaseConnectionConfig {
+  const plaintext = decryptSecret(row.secret);
+  try {
+    const parsed = JSON.parse(plaintext) as StoredSecretV2;
+    if (parsed.version === 2 && typeof parsed.password === "string") {
+      return {
+        engine: normalizeEngine(row.engine),
+        host: row.host,
+        port: row.port,
+        database: row.database,
+        username: row.username,
+        password: parsed.password,
+        ssl: {
+          mode: row.sslMode as DatabaseSslMode,
+          ca: parsed.sslCa,
+          serverName: parsed.sslServerName,
+        },
+      };
+    }
+  } catch {
+    // Pre-structured rows encrypted a full PostgreSQL URL. Decode them only in
+    // this private resolution path so existing connections keep working.
+  }
+
+  const legacy = new URL(plaintext);
+  const legacyMode = legacy.searchParams.get("sslmode");
+  return {
+    engine: "postgresql",
+    host: legacy.hostname || row.host,
+    port: Number(legacy.port || row.port || 5432),
+    database: legacy.pathname.replace(/^\//, "") || row.database,
+    username: decodeURIComponent(legacy.username || row.username),
+    password: decodeURIComponent(legacy.password),
+    ssl: {
+      mode: legacyMode === "require" ? "require" : legacyMode === "verify-full" ? "verify-full" : "disable",
+    },
+  };
+}
+
+function publicRow(row: any): DbConnectionRow {
+  return {
+    ...row,
+    engine: normalizeEngine(row.engine) as "postgresql",
+    sslMode: row.sslMode as DbConnectionRow["sslMode"],
+  };
+}
 
 export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
   constructor(private readonly dbImpl: typeof db = db) {}
@@ -125,10 +226,14 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
         id: conn.id,
         workspaceId: conn.workspaceId,
         name: conn.name,
-        engine: "postgres",
-        secret: encryptSecret(conn.url),
-        displayHost: conn.displayHost,
-        displayDatabase: conn.displayDatabase,
+        engine: conn.config.engine,
+        secret: encodeSecret(conn.config),
+        host: conn.config.host,
+        port: conn.config.port,
+        database: conn.config.database,
+        username: conn.config.username,
+        sslMode: conn.config.ssl.mode,
+        hasCustomCa: Boolean(conn.config.ssl.ca),
         status: conn.status ?? "connected",
         error: conn.error ?? null,
         tableCount: 0,
@@ -141,13 +246,58 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     }
   }
 
+  async update(
+    workspaceId: string,
+    id: string,
+    update: DatabaseConnectionUpdate,
+  ): Promise<boolean> {
+    try {
+      // Drizzle's Bun SQLite update result is typed as void, so use the
+      // underlying prepared statement here to observe the atomic affected-row
+      // count instead of doing a racy SELECT-before-UPDATE ownership check.
+      const result = this.dbImpl.$client.query(`
+        UPDATE db_connections
+        SET name = ?, engine = ?, secret = ?, display_host = ?, port = ?,
+            display_database = ?, username = ?, ssl_mode = ?, has_custom_ca = ?,
+            status = ?, error = ?
+        WHERE workspace_id = ? AND id = ?
+      `).run(
+        update.name,
+        update.config.engine,
+        encodeSecret(update.config),
+        update.config.host,
+        update.config.port,
+        update.config.database,
+        update.config.username,
+        update.config.ssl.mode,
+        Boolean(update.config.ssl.ca),
+        update.status,
+        update.error,
+        workspaceId,
+        id,
+      );
+      return result.changes > 0;
+    } catch (e) {
+      if (isDuplicateNameViolation(e)) throw new DuplicateConnectionNameError(update.name);
+      throw e;
+    }
+  }
+
   async list(workspaceId: string): Promise<DbConnectionRow[]> {
     const rows = await this.dbImpl
       .select(PUBLIC_COLUMNS)
       .from(dbConnections)
       .where(eq(dbConnections.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
-    return rows as DbConnectionRow[];
+    return rows.map(publicRow);
+  }
+
+  async findById(workspaceId: string, id: string): Promise<DbConnectionRow | null> {
+    const rows = await this.dbImpl
+      .select(PUBLIC_COLUMNS)
+      .from(dbConnections)
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, id)));
+    return rows[0] ? publicRow(rows[0]) : null;
   }
 
   async findByName(workspaceId: string, name: string): Promise<DbConnectionRow | null> {
@@ -155,17 +305,38 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
       .select(PUBLIC_COLUMNS)
       .from(dbConnections)
       .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.name, name)));
-    return (rows[0] as DbConnectionRow) ?? null;
+    return rows[0] ? publicRow(rows[0]) : null;
   }
 
   /** Decrypts only after confirming the caller owns the row. */
-  async resolveUrl(workspaceId: string, connectionId: string): Promise<string | null> {
+  async resolveConnection(
+    workspaceId: string,
+    connectionId: string,
+  ): Promise<ResolvedDatabaseConnection | null> {
     const rows = await this.dbImpl
-      .select({ secret: dbConnections.secret })
+      .select({ ...PUBLIC_COLUMNS, secret: dbConnections.secret })
       .from(dbConnections)
       .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
-    const secret = rows[0]?.secret;
-    return secret ? decryptSecret(secret) : null;
+    if (!rows[0]) return null;
+    const { secret: _secret, ...safeFields } = rows[0];
+    return { row: publicRow(safeFields), config: decodeConfig(rows[0]) };
+  }
+
+  /** Decrypts only after confirming the caller owns the row. */
+  async resolveConfig(workspaceId: string, connectionId: string): Promise<DatabaseConnectionConfig | null> {
+    const rows = await this.dbImpl
+      .select({
+        engine: dbConnections.engine,
+        secret: dbConnections.secret,
+        host: dbConnections.host,
+        port: dbConnections.port,
+        database: dbConnections.database,
+        username: dbConnections.username,
+        sslMode: dbConnections.sslMode,
+      })
+      .from(dbConnections)
+      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
+    return rows[0] ? decodeConfig(rows[0]) : null;
   }
 
   async markStatus(

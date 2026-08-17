@@ -79,7 +79,8 @@ That loop was reached when `harness.driver` was anything but `"pi"`. Every
 harness the catalog shipped was `"pi"`, so it was unreachable for as long as it
 existed while still answering every search for where a turn is taken. It is
 gone, along with `Harness.driver` and `Harness.maxIterations`, which existed
-only to feed it. A harness is now a system prompt plus optional tool groups.
+only to feed it. The catalog now exposes one harness; capabilities follow the
+resources connected to the workspace rather than a separate harness choice.
 
 The model's tool list is assembled in one place there, from seven sources — not
 just `catalog/tools.ts` as the README's "Adding a tool" implies:
@@ -92,7 +93,7 @@ just `catalog/tools.ts` as the README's "Adding a tool" implies:
 | `documents/document-tools` (document search) | always |
 | `image-tools` | `OPENROUTER_API_KEY` **and** RustFS configured |
 | `vision-tools` (`read_image`) | the gateway is configured — *not* RustFS |
-| `db-tools` | `harness.tools` includes `"db"` |
+| `db-tools` | the workspace has a connected database with an inventory snapshot |
 | `mcp-tools` | a workspace has servers — deliberately *not* harness-gated |
 
 MCP tools are also deferred: only previously-used ones start active, and

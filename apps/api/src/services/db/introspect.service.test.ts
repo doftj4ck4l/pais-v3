@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { RawCatalog } from "./postgres.driver";
+import type { RawCatalog } from "./database-adapter";
 import { buildSnapshot } from "./introspect.service";
 
 /**

@@ -30,6 +30,7 @@ const ALLOWED = [
   ["dollar-quoted string", "SELECT $$dollar quoted$$ AS x"],
   ["dollar-quoted string with tag", "SELECT $tag$body$tag$ AS x"],
   ["quoted identifiers with keywords", 'SELECT "close", "update" FROM prices'],
+  ["quoted identifier with an escaped quote", 'SELECT "a""b" FROM prices'],
   ["nested block comments", "SELECT 1 /* outer /* nested */ still comment */"],
 ] as const;
 

@@ -1,19 +1,31 @@
-import { guardReadOnly } from "./sql-guard";
+import type {
+  ApprovedDatabaseTarget,
+  CatalogStep,
+  DatabaseAdapter,
+  DatabaseConnectionConfig,
+  DatabaseError,
+  DatabaseResult,
+  QueryOutcome,
+  RawCatalog,
+} from "./database-adapter";
+import { scrubDatabaseMessage } from "./database-adapter";
+import { blankLiteralsAndComments, guardReadOnly } from "./sql-guard";
+import { DATABASE_BYTE_CAP, DATABASE_ROW_CAP } from "./query-policy";
 
 /**
  * Everything that speaks to a user's PostgreSQL server.
  *
- * `Bun.SQL` is used directly rather than behind an interface: there is one
- * engine, and an abstraction with one implementation is a guess about the
- * second. The catalog queries return flat rows and are merged into a snapshot by
- * `buildSnapshot`, which keeps the merge logic pure and testable.
+ * The engine-specific implementation of the shared database adapter contract.
+ * Catalog SQL, transaction syntax, timeout syntax, TLS mapping, error handling,
+ * and unsafe PostgreSQL functions stay here so future drivers do not grow an
+ * engine-conditional connector.
  */
 
 const SYSTEM_SCHEMAS = `('pg_catalog', 'information_schema')`;
 const STATEMENT_TIMEOUT_MS = 10_000;
 
 /** Rows returned to the model in one query. A caller may lower this, never raise it. */
-export const ROW_CAP = 100;
+const ROW_CAP = DATABASE_ROW_CAP;
 
 /**
  * Serialized bytes of row data returned to the model in one query, independent
@@ -21,48 +33,7 @@ export const ROW_CAP = 100;
  * model's context long before 100 rows accumulate, so this is a second,
  * orthogonal cap — not a derivation of the row cap.
  */
-export const BYTE_CAP = 50_000;
-
-export type RawCatalog = {
-  tables: { schemaName: string; name: string; comment: string | null; rowEstimate: number }[];
-  columns: {
-    schemaName: string; tableName: string; seq: number; name: string;
-    dataType: string; nullable: boolean; comment: string | null;
-  }[];
-  primaryKeys: { schemaName: string; tableName: string; columnName: string }[];
-  foreignKeys: {
-    schemaName: string; tableName: string; columnName: string;
-    refSchema: string; refTable: string; refColumn: string;
-  }[];
-  indexes: { schemaName: string; tableName: string; definition: string }[];
-};
-
-export type Probe =
-  | { ok: true; host: string; database: string }
-  | { ok: false; error: string };
-
-export type QueryOutcome =
-  | {
-      ok: true;
-      columns: string[];
-      rows: Record<string, unknown>[];
-      truncated: boolean;
-      /**
-       * Which budget cut the result short, so the tool layer can give advice
-       * that matches the actual problem: too many rows means aggregate in
-       * SQL; too many bytes means select fewer columns or use `left(col, n)`.
-       * `null` when `truncated` is false. When both budgets would have fired,
-       * `"bytes"` wins — it is the one that actually determined how many of
-       * the row-capped rows made it into `rows`.
-       *
-       * Optional (not just nullable) so an outcome built by hand — an older
-       * test, or a future executor — remains a valid `QueryOutcome` without
-       * this field; the tool layer treats a missing reason the same as
-       * `"rows"`, its behavior before this field existed.
-       */
-      truncatedReason?: "rows" | "bytes" | null;
-    }
-  | { ok: false; error: string };
+const BYTE_CAP = DATABASE_BYTE_CAP;
 
 /**
  * `max: 1` is load-bearing everywhere below: `runReadOnly` issues BEGIN, the
@@ -76,8 +47,31 @@ export type QueryOutcome =
  * would cut the connection without ever proving the server-side budget works,
  * and on a slow or congested network the race could go either way run to run.
  */
-function client(url: string): any {
-  return new Bun.SQL({ url, max: 1, idleTimeout: 30, connectionTimeout: 10 });
+function tlsOptions(config: DatabaseConnectionConfig, target: ApprovedDatabaseTarget) {
+  if (config.ssl.mode === "disable") return false;
+  if (config.ssl.mode === "require") {
+    return { rejectUnauthorized: false, serverName: config.ssl.serverName || target.originalHost };
+  }
+  return {
+    rejectUnauthorized: true,
+    serverName: config.ssl.serverName || target.originalHost,
+    ...(config.ssl.ca ? { ca: config.ssl.ca } : {}),
+  };
+}
+
+function client(config: DatabaseConnectionConfig, target: ApprovedDatabaseTarget): any {
+  return new Bun.SQL({
+    adapter: "postgres",
+    hostname: target.address,
+    port: config.port,
+    database: config.database,
+    username: config.username,
+    password: config.password,
+    tls: tlsOptions(config, target),
+    max: 1,
+    idleTimeout: 30,
+    connectionTimeout: 10,
+  });
 }
 
 /**
@@ -98,48 +92,30 @@ function client(url: string): any {
  *   the server log and the browser tooltip, same as the userinfo password,
  *   so it is scrubbed the same way — encoded and decoded form both.
  *
- * Exported (not just used internally) so `db-tools.ts` can apply it again to
- * `outcome.error` before rendering: `runReadOnly`'s own callers are expected
- * to pass already-scrubbed errors, but the tool layer sits directly in front
- * of the model and "the model must never see a connection string" cannot
- * depend on every current and future executor implementation getting this
- * right upstream.
+ * The connector also applies the shared scrubber at its boundary, so this
+ * driver-local pass is defence in depth for errors originating inside Bun.SQL.
  */
-export function scrub(message: string, url: string): string {
-  let out = message;
-  try {
-    const parsed = new URL(url);
-    if (parsed.password) {
-      out = out.split(parsed.password).join("***");
-      try {
-        const decoded = decodeURIComponent(parsed.password);
-        if (decoded && decoded !== parsed.password) out = out.split(decoded).join("***");
-      } catch {
-        // A malformed percent-escape must not throw inside an error handler.
-      }
-    }
-    // `URLSearchParams.get` returns the DECODED value — the mirror image of
-    // `URL.password`, which is encoded. So the raw (possibly still-encoded)
-    // form has to come from the query string text itself, not from the
-    // parsed API, or a password containing `%`, `+`, or `&`-adjacent bytes
-    // would only get scrubbed in one of its two possible on-the-wire forms.
-    const rawQueryMatch = /[?&]password=([^&]*)/.exec(parsed.search);
-    const rawQueryPassword = rawQueryMatch?.[1];
-    if (rawQueryPassword) {
-      out = out.split(rawQueryPassword).join("***");
-      try {
-        const decoded = decodeURIComponent(rawQueryPassword);
-        if (decoded && decoded !== rawQueryPassword) out = out.split(decoded).join("***");
-      } catch {
-        // A malformed percent-escape must not throw inside an error handler.
-      }
-    }
-  } catch {
-    // Fail safe, not silent: strip any "//user:pass@" userinfo segment even
-    // though the URL itself didn't parse.
-    out = out.replace(/\/\/[^/@\s]*@/g, "//***@");
+function scrub(message: string, config: Pick<DatabaseConnectionConfig, "password">): string {
+  return scrubDatabaseMessage(message, config, "postgresql://***");
+}
+
+function databaseError(
+  error: unknown,
+  config: DatabaseConnectionConfig,
+  fallback: DatabaseError["code"],
+): DatabaseError {
+  const message = scrub(error instanceof Error ? error.message : String(error), config);
+  if (/statement timeout|timed out|timeout/i.test(message)) {
+    return { code: "timeout", message: "Database statement timeout", retryable: true };
   }
-  return out;
+  if (/password authentication failed|authentication failed|28P01/i.test(message)) {
+    return { code: "authentication_failed", message: "Database authentication failed" };
+  }
+  return {
+    code: fallback,
+    message: fallback === "connection_failed" ? "Could not connect to the database" : message,
+    retryable: fallback === "connection_failed",
+  };
 }
 
 /**
@@ -162,40 +138,26 @@ function serializeForSize(row: Record<string, unknown>): string {
   return JSON.stringify(row, (_key, value) => (typeof value === "bigint" ? value.toString() : value));
 }
 
-export async function probe(url: string): Promise<Probe> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { ok: false, error: "not a valid connection URL" };
-  }
-  if (!/^postgres(ql)?:$/.test(parsed.protocol)) {
-    return { ok: false, error: `only postgres:// URLs are supported, got ${parsed.protocol}//` };
-  }
-
-  // Constructed inside the try: `new Bun.SQL(...)` can throw synchronously on
-  // a malformed connection string, and that error must be scrubbed too.
+async function testConnection(
+  config: DatabaseConnectionConfig,
+  target: ApprovedDatabaseTarget,
+): Promise<DatabaseResult<{ serverVersion?: string }>> {
   let sql: any;
+  let inTransaction = false;
   try {
-    sql = client(url);
-    await sql`SELECT 1`;
-    return {
-      ok: true,
-      host: parsed.hostname,
-      database: parsed.pathname.replace(/^\//, "") || "postgres",
-    };
-  } catch (e: any) {
-    return { ok: false, error: scrub(e?.message ?? String(e), url) };
+    sql = client(config, target);
+    await sql.unsafe("BEGIN TRANSACTION READ ONLY");
+    inTransaction = true;
+    await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
+    const rows = await sql`SELECT current_setting('server_version') AS version`;
+    return { ok: true, value: { serverVersion: String(rows[0]?.version ?? "") || undefined } };
+  } catch (error) {
+    return { ok: false, error: databaseError(error, config, "connection_failed") };
   } finally {
+    if (inTransaction) await sql.unsafe("ROLLBACK").catch(() => {});
     if (sql) await sql.close().catch(() => {});
   }
 }
-
-/** Which catalog query just landed, and how many rows it returned. */
-export type CatalogStep = {
-  step: "tables" | "columns" | "primaryKeys" | "foreignKeys" | "indexes";
-  count: number;
-};
 
 /**
  * `onStep` reports each catalog query as it completes.
@@ -205,14 +167,19 @@ export type CatalogStep = {
  * query is the finest granularity available without splitting a single query,
  * and it is what lets the console show progress rather than a spinner.
  */
-export async function fetchCatalog(
-  url: string,
+async function fetchCatalog(
+  config: DatabaseConnectionConfig,
+  target: ApprovedDatabaseTarget,
   onStep?: (step: CatalogStep) => void,
-): Promise<RawCatalog> {
+): Promise<DatabaseResult<RawCatalog>> {
   // Constructed inside the try: see `probe` for why.
   let sql: any;
+  let inTransaction = false;
   try {
-    sql = client(url);
+    sql = client(config, target);
+    await sql.unsafe("BEGIN TRANSACTION READ ONLY");
+    inTransaction = true;
+    await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
     const tables = await sql.unsafe(`
       SELECT n.nspname AS "schemaName",
              c.relname AS "name",
@@ -288,15 +255,19 @@ export async function fetchCatalog(
     onStep?.({ step: "indexes", count: indexes.length });
 
     return {
-      tables: tables.map((t: any) => ({ ...t, rowEstimate: Number(t.rowEstimate) })),
-      columns,
-      primaryKeys,
-      foreignKeys,
-      indexes,
+      ok: true,
+      value: {
+        tables: tables.map((t: any) => ({ ...t, rowEstimate: Number(t.rowEstimate) })),
+        columns,
+        primaryKeys,
+        foreignKeys,
+        indexes,
+      },
     };
-  } catch (e: any) {
-    throw new Error(scrub(e?.message ?? String(e), url));
+  } catch (error) {
+    return { ok: false, error: databaseError(error, config, "connection_failed") };
   } finally {
+    if (inTransaction) await sql.unsafe("ROLLBACK").catch(() => {});
     if (sql) await sql.close().catch(() => {});
   }
 }
@@ -316,13 +287,78 @@ export async function fetchCatalog(
  * paren and LIMIT go on their own line — otherwise a trailing `-- comment` in
  * agent-written SQL (routine in LLM output) would comment out both.
  */
-export async function runReadOnly(
-  url: string,
+const UNSAFE_POSTGRES_FUNCTIONS = [
+  "dblink",
+  "dblink_exec",
+  "lo_export",
+  "lo_create",
+  "lo_creat",
+  "lo_import",
+  "lo_open",
+  "lo_truncate",
+  "lo_unlink",
+  "lowrite",
+  "nextval",
+  "setval",
+  "pg_advisory_lock",
+  "pg_advisory_lock_shared",
+  "pg_cancel_backend",
+  "pg_log_backend_memory_contexts",
+  "pg_logical_emit_message",
+  "pg_ls_dir",
+  "pg_ls_logdir",
+  "pg_ls_tmpdir",
+  "pg_ls_waldir",
+  "pg_notify",
+  "pg_promote",
+  "pg_read_binary_file",
+  "pg_read_file",
+  "pg_reload_conf",
+  "pg_rotate_logfile",
+  "pg_stat_file",
+  "pg_terminate_backend",
+  "pg_try_advisory_lock",
+  "pg_try_advisory_lock_shared",
+  "set_config",
+  "pg_wal_replay_pause",
+  "pg_wal_replay_resume",
+  "pg_switch_wal",
+];
+
+const UNSAFE_POSTGRES_FUNCTION_PATTERNS = UNSAFE_POSTGRES_FUNCTIONS.map((name) => ({
+  name,
+  pattern: new RegExp(`\\b${name}\\s*\\(`, "i"),
+}));
+
+export function guardPostgresqlFunctions(sql: string): DatabaseError | null {
+  const inspected = blankLiteralsAndComments(sql, { preserveQuotedIdentifiers: true });
+  if (!inspected.ok) {
+    return { code: "query_rejected", message: "Statement contains an unterminated string or comment" };
+  }
+  if (/\bU&"/i.test(inspected.blanked)) {
+    return { code: "query_rejected", message: "Unicode-escaped PostgreSQL identifiers are not permitted" };
+  }
+  const functionScan = inspected.blanked.replaceAll('"', " ");
+  for (const { name, pattern } of UNSAFE_POSTGRES_FUNCTION_PATTERNS) {
+    if (pattern.test(functionScan)) {
+      return { code: "query_rejected", message: `PostgreSQL function ${name} is not permitted` };
+    }
+  }
+  return null;
+}
+
+async function runReadOnly(
+  config: DatabaseConnectionConfig,
+  target: ApprovedDatabaseTarget,
   rawSql: string,
   cap: number = ROW_CAP,
 ): Promise<QueryOutcome> {
   const guarded = guardReadOnly(rawSql);
-  if (!guarded.ok) return { ok: false, error: guarded.reason };
+  if (!guarded.ok) {
+    return { ok: false, error: { code: "query_rejected", message: guarded.reason } };
+  }
+  const unsafeFunction = guardPostgresqlFunctions(guarded.sql);
+  if (unsafeFunction) return { ok: false, error: unsafeFunction };
 
   const bounded = boundCap(cap);
   // `isExplain` is a fact the guard already decided against the blanked
@@ -338,7 +374,7 @@ export async function runReadOnly(
   let sql: any;
   let inTransaction = false;
   try {
-    sql = client(url);
+    sql = client(config, target);
     await sql.unsafe("BEGIN TRANSACTION READ ONLY");
     inTransaction = true;
     await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
@@ -349,25 +385,20 @@ export async function runReadOnly(
 
     // Byte budget applies AFTER the row cap (so a query already trimmed to
     // `bounded` rows is what gets measured) but is not exempt for EXPLAIN —
-    // an EXPLAIN plan is itself unbounded and can be large. At least one row
-    // is always kept even if it alone exceeds the budget: a single-row,
-    // single-column result cannot be partially truncated, so it is returned
-    // whole with `truncated: true` rather than dropped entirely.
+    // an EXPLAIN plan is itself unbounded and can be large. An individually
+    // oversized row is omitted: returning it whole would make the byte ceiling
+    // advisory instead of an enforced result limit.
     let bytes = 0;
     let byteCapped = false;
     const shown: Record<string, unknown>[] = [];
     for (const row of rowLimited) {
       const size = Buffer.byteLength(serializeForSize(row));
-      if (shown.length > 0 && bytes + size > BYTE_CAP) {
+      if (bytes + size > BYTE_CAP) {
         byteCapped = true;
         break;
       }
       shown.push(row);
       bytes += size;
-      if (bytes > BYTE_CAP) {
-        byteCapped = true;
-        break;
-      }
     }
 
     const truncated = rowCapped || byteCapped;
@@ -375,15 +406,73 @@ export async function runReadOnly(
 
     return {
       ok: true,
-      columns: shown.length ? Object.keys(shown[0]!) : [],
+      columns: rowLimited.length ? Object.keys(rowLimited[0]!) : [],
       rows: shown,
       truncated,
       truncatedReason,
     };
-  } catch (e: any) {
-    return { ok: false, error: scrub(e?.message ?? String(e), url) };
+  } catch (error) {
+    return { ok: false, error: databaseError(error, config, "query_failed") };
   } finally {
     if (inTransaction) await sql.unsafe("ROLLBACK").catch(() => {});
     if (sql) await sql.close().catch(() => {});
   }
 }
+
+function validate(config: DatabaseConnectionConfig): DatabaseError | null {
+  if (config.engine !== "postgresql") {
+    return { code: "unsupported_engine", message: "PostgreSQL adapter received another engine", field: "engine" };
+  }
+  if (!config.host.trim()) return { code: "invalid_configuration", message: "Host is required", field: "host" };
+  if (config.host.length > 253 || /[\0\r\n]/.test(config.host)) {
+    return { code: "invalid_configuration", message: "Host is invalid", field: "host" };
+  }
+  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65_535) {
+    return { code: "invalid_configuration", message: "Port must be between 1 and 65535", field: "port" };
+  }
+  if (!config.database.trim()) {
+    return { code: "invalid_configuration", message: "Database name is required", field: "database" };
+  }
+  if (config.database.length > 128 || /[\0\r\n]/.test(config.database)) {
+    return { code: "invalid_configuration", message: "Database name is invalid", field: "database" };
+  }
+  if (!config.username.trim()) {
+    return { code: "invalid_configuration", message: "Username is required", field: "username" };
+  }
+  if (config.username.length > 128 || /[\0\r\n]/.test(config.username)) {
+    return { code: "invalid_configuration", message: "Username is invalid", field: "username" };
+  }
+  if (!config.password) {
+    return { code: "invalid_configuration", message: "Password is required", field: "password" };
+  }
+  if (config.password.length > 4096 || config.password.includes("\0")) {
+    return { code: "invalid_configuration", message: "Password is invalid", field: "password" };
+  }
+  if (!["disable", "require", "verify-full"].includes(config.ssl.mode)) {
+    return { code: "invalid_configuration", message: "Unsupported PostgreSQL SSL mode", field: "ssl.mode" };
+  }
+  if (config.ssl.ca && config.ssl.ca.length > 131_072) {
+    return { code: "invalid_configuration", message: "Custom CA is too large", field: "ssl.ca" };
+  }
+  if (config.ssl.serverName && (config.ssl.serverName.length > 253 || /[\s/\\\0]/.test(config.ssl.serverName))) {
+    return { code: "invalid_configuration", message: "TLS server name is invalid", field: "ssl.serverName" };
+  }
+  return null;
+}
+
+export const postgresqlAdapter: DatabaseAdapter = {
+  engine: "postgresql",
+  defaultPort: 5432,
+  capabilities: {
+    schemas: true,
+    explain: true,
+    sslModes: ["disable", "require", "verify-full"],
+    readOnlyTransactions: true,
+    statementTimeout: true,
+  },
+  validate,
+  quoteIdentifier: (identifier) => `"${identifier.replaceAll('"', '""')}"`,
+  testConnection,
+  fetchCatalog,
+  executeReadOnly: runReadOnly,
+};

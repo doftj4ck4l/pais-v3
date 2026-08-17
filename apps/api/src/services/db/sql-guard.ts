@@ -56,7 +56,10 @@ const FORBIDDEN = [
  * Returns { blanked, ok } where ok is false if any literal or comment is
  * unterminated. Fail closed: incomplete strings reject the statement.
  */
-function blankLiteralsAndComments(sql: string): { blanked: string; ok: boolean } {
+export function blankLiteralsAndComments(
+  sql: string,
+  options: { preserveQuotedIdentifiers?: boolean } = {},
+): { blanked: string; ok: boolean } {
   const out = sql.split("");
   let i = 0;
   const blank = (from: number, to: number) => {
@@ -141,12 +144,33 @@ function blankLiteralsAndComments(sql: string): { blanked: string; ok: boolean }
       // Quoted identifier: not a literal, but its contents must not be scanned
       // for keywords either — a column may legitimately be named "update".
       let j = i + 1;
-      while (j < sql.length && sql[j] !== '"') j++;
-      if (j >= sql.length) {
+      let terminated = false;
+      while (j < sql.length) {
+        if (sql[j] === '"' && sql[j + 1] === '"') {
+          j += 2;
+          continue;
+        }
+        if (sql[j] === '"') {
+          terminated = true;
+          break;
+        }
+        j++;
+      }
+      if (!terminated) {
         // Unterminated quoted identifier.
         return { blanked: out.join(""), ok: false };
       }
-      blank(i, j + 1);
+      if (options.preserveQuotedIdentifiers) {
+        for (let k = i + 1; k < j; k++) {
+          if (sql[k] === '"' && sql[k + 1] === '"') {
+            out[k] = '"';
+            out[k + 1] = " ";
+            k++;
+          }
+        }
+      } else {
+        blank(i, j + 1);
+      }
       i = j + 1;
       continue;
     }

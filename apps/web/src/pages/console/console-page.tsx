@@ -164,7 +164,6 @@ export function Console() {
             <div className="min-h-0 overflow-hidden">
               {waiting ? (
                 <Suggestions
-                  harnessId={board.harnessId}
                   onPick={(text) => board.spawn(text, board.modelIdForNew)}
                 />
               ) : null}

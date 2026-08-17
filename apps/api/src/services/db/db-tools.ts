@@ -4,7 +4,14 @@ import {
   type TableDetail,
 } from "../../repositories/database-connection.repository";
 import { toFtsQuery } from "../documents/search.service";
-import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./postgres.driver";
+import {
+  redactDatabaseError,
+  type DatabaseConnectionConfig,
+  type DatabaseError,
+  type QueryOutcome,
+} from "./database-adapter";
+import { databaseConnector } from "./database-connector.service";
+import { DATABASE_BYTE_CAP, DATABASE_ROW_CAP } from "./query-policy";
 
 /**
  * The agent's three database tools, bound to one user's connections.
@@ -20,13 +27,76 @@ import { BYTE_CAP, ROW_CAP, runReadOnly, scrub, type QueryOutcome } from "./post
  * prompt-injected document cannot ask the agent to reveal it.
  */
 
-type Execute = typeof runReadOnly;
+type Execute = (
+  config: DatabaseConnectionConfig,
+  sql: string,
+  cap?: number,
+) => Promise<QueryOutcome>;
+
+type DatabaseTool = {
+  name: string;
+  label: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(id: string, params: unknown): Promise<ReturnType<typeof text>>;
+};
+
+type DatabaseCapability = { tools: DatabaseTool[]; prompt: string };
+
+const DATABASE_INVENTORY_TABLE_LIMIT = 60;
+
+function limitedInventory(entry: { tables: string[]; tableCount: number }) {
+  const tables = entry.tables.slice(0, DATABASE_INVENTORY_TABLE_LIMIT);
+  return { tables, remaining: Math.max(0, entry.tableCount - tables.length) };
+}
+
+/**
+ * Load database access from the resources attached to this workspace.
+ *
+ * Database access is a capability of the one agent, not a separate agent
+ * personality. Empty workspaces keep these tool schemas and their prompt out
+ * of the model context entirely.
+ */
+export async function loadDatabaseCapability(
+  workspaceId: string,
+  store: DatabaseConnectionStore = databaseConnectionStore,
+): Promise<DatabaseCapability> {
+  const inventory = await store.inventory(workspaceId);
+  if (!inventory.length) return { tools: [], prompt: "" };
+
+  const connections = inventory
+    .map((connection) => {
+      const { tables, remaining } = limitedInventory(connection);
+      return (
+        `- "${connection.name}" — ${connection.tableCount} table(s): ${tables.join(", ")}` +
+        (remaining ? `, … (${remaining} more — use search_schema)` : "")
+      );
+    })
+    .join("\n");
+
+  const prompt = `
+
+Connected databases:
+${connections}
+
+Use the read-only database tools whenever the user asks about one of these databases:
+1. If you do not know which table holds the answer, call "search_schema".
+2. Call "describe_table" on every table you intend to query. These are table names
+   only; never guess columns or joins.
+3. Call "run_query" with one SELECT, WITH, or EXPLAIN statement.
+
+Queries are read-only, capped, and cancelled after 10 seconds. Aggregate in SQL
+instead of fetching rows to count them. When answering, name the tables used and
+show the SQL you ran.`;
+
+  return { tools: createDatabaseTools(workspaceId, store), prompt };
+}
 
 export function createDatabaseTools(
   workspaceId: string,
   store: DatabaseConnectionStore = databaseConnectionStore,
-  execute: Execute = runReadOnly,
-): any[] {
+  execute: Execute = (config, sql, cap) => databaseConnector.executeReadOnly(config, sql, cap),
+): DatabaseTool[] {
   /**
    * Resolve a connection name to its row, or explain what is available.
    * Deliberately does not decrypt anything — `store.list` returns only the
@@ -54,14 +124,14 @@ export function createDatabaseTools(
   }
 
   /**
-   * Decrypt the URL for an already-resolved connection. Split out from
+   * Decrypt the configuration for an already-resolved connection. Split out from
    * `resolveConnection` so only `run_query` — the one tool that actually
-   * executes SQL — ever puts a plaintext connection string in memory.
+   * executes SQL — ever puts a plaintext password in memory.
    */
-  async function resolveUrl(row: { id: string; name: string }) {
-    const url = await store.resolveUrl(workspaceId, row.id);
-    if (!url) return { ok: false as const, message: `unknown database "${row.name}"` };
-    return { ok: true as const, url };
+  async function resolveConfig(row: { id: string; name: string }) {
+    const config = await store.resolveConfig(workspaceId, row.id);
+    if (!config) return { ok: false as const, message: `unknown database "${row.name}"` };
+    return { ok: true as const, config };
   }
 
   return [
@@ -75,14 +145,33 @@ export function createDatabaseTools(
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "what to look for, e.g. 'refund' or 'customer email'" },
+          query: { type: "string", description: "what to look for; omit to list schemas and tables" },
           connection: { type: "string", description: "limit to one database by name (optional)" },
           limit: { type: "integer", description: "max matches, default 10" },
         },
-        required: ["query"],
+        required: [],
       },
       async execute(_id: string, params: any) {
         const raw = String(params?.query ?? "").trim();
+        if (!raw) {
+          const connection = params?.connection ? String(params.connection).trim() : null;
+          const inventory = (await store.inventory(workspaceId)).filter(
+            (entry) => !connection || entry.name === connection,
+          );
+          if (!inventory.length) return text(connection ? `unknown database "${connection}"` : "no databases are connected");
+          return text(
+            inventory
+              .map((entry) => {
+                const { tables, remaining } = limitedInventory(entry);
+                const shown = tables.map((table) => `  ${table}`).join("\n");
+                const continuation = remaining
+                  ? `\n  ... (${remaining} more - use search_schema with a query)`
+                  : "";
+                return `${entry.name} (${entry.tableCount} tables)\n${shown}${continuation}`;
+              })
+              .join("\n\n"),
+          );
+        }
         const ftsQuery = toFtsQuery(raw);
         if (!ftsQuery) return text(`no searchable terms in "${raw}" — try different wording`);
 
@@ -103,8 +192,8 @@ export function createDatabaseTools(
         const body = hits
           .map((h) =>
             h.columnName
-              ? `${h.connectionName}.${h.tableName}.${h.columnName} — ${h.detail}`
-              : `${h.connectionName}.${h.tableName} (table) — ${h.detail}`,
+              ? `${h.connectionName}.${h.schemaName}.${h.tableName}.${h.columnName} — ${h.detail}`
+              : `${h.connectionName}.${h.schemaName}.${h.tableName} (table) — ${h.detail}`,
           )
           .join("\n");
         return text(`${hits.length} match(es) for "${raw}":\n\n${body}`);
@@ -151,7 +240,7 @@ export function createDatabaseTools(
       label: "run_query",
       description:
         "Run one read-only SQL SELECT against a connected database. " +
-        `At most ${ROW_CAP} rows are returned and the statement is cancelled after 10 seconds, ` +
+        `At most ${DATABASE_ROW_CAP} rows are returned and the statement is cancelled after 10 seconds, ` +
         "so aggregate in SQL rather than fetching rows and counting them yourself. " +
         "Only SELECT, WITH, and EXPLAIN are permitted.",
       parameters: {
@@ -159,7 +248,7 @@ export function createDatabaseTools(
         properties: {
           connection: { type: "string", description: "database name" },
           sql: { type: "string", description: "one SELECT statement" },
-          limit: { type: "integer", description: `max rows, at most ${ROW_CAP}` },
+          limit: { type: "integer", description: `max rows, at most ${DATABASE_ROW_CAP}` },
         },
         required: ["connection", "sql"],
       },
@@ -170,24 +259,19 @@ export function createDatabaseTools(
         const statement = String(params?.sql ?? "").trim();
         if (!statement) return text("error: sql required");
 
-        // Only run_query ever decrypts a connection string — it is the only
-        // one of the three tools that actually needs it.
-        const resolved = await resolveUrl(found.row);
+        // Only run_query resolves the encrypted configuration — it is the only
+        // one of the three tools that needs the password in memory.
+        const resolved = await resolveConfig(found.row);
         if (!resolved.ok) return text(resolved.message);
 
-        // No clamping here: the driver's `boundCap` is the single authority
-        // on what a caller-supplied limit is allowed to mean (see
-        // postgres.driver.ts). `?? ROW_CAP` substitutes a default only when
-        // `limit` is genuinely absent — unlike `||`, it does not also
-        // (mis)treat an explicit `limit: 0` as "no limit given".
-        const cap = Number(params?.limit ?? ROW_CAP);
-        const outcome = await execute(resolved.url, statement, cap);
-        // `runReadOnly` already scrubs its own errors, but this is the last
-        // point before the text reaches the model — scrub again defensively
-        // rather than trust every executor implementation to have done it.
-        const safe: QueryOutcome = outcome.ok
+        // No clamping here: the registered adapter is the single authority on
+        // what a caller-supplied limit means. `??` substitutes the default only
+        // when `limit` is absent; unlike `||`, it preserves an explicit zero.
+        const cap = Number(params?.limit ?? DATABASE_ROW_CAP);
+        const outcome = await execute(resolved.config, statement, cap);
+        const safe = outcome.ok
           ? outcome
-          : { ok: false, error: scrub(outcome.error, resolved.url) };
+          : { ok: false as const, error: redactDatabaseError(outcome.error, resolved.config) };
         return text(renderOutcome(safe));
       },
     },
@@ -233,23 +317,15 @@ function renderTable(detail: TableDetail): string {
   return `${ambiguity}${head}\nColumns:\n${columns}${indexes}`;
 }
 
-/**
- * Postgres's own wording for a `statement_timeout` cancellation. Detected here
- * (rather than in the driver) because the guidance that follows is about how
- * the *agent* should change its next call — a tool-layer concern, same as the
- * truncation advice below.
- */
-const STATEMENT_TIMEOUT_PATTERN = /statement timeout/i;
-
-function renderQueryError(error: string): string {
-  if (STATEMENT_TIMEOUT_PATTERN.test(error)) {
+function renderQueryError(error: DatabaseError): string {
+  if (error.code === "timeout") {
     return (
-      `${error} — this query was cancelled for taking too long. Re-running it unchanged ` +
+      `${error.message} — this query was cancelled for taking too long. Re-running it unchanged ` +
       "will time out again. Aggregate in SQL (COUNT/SUM/GROUP BY), add a WHERE filter to " +
       "narrow it, or select fewer rows instead."
     );
   }
-  return error;
+  return error.message;
 }
 
 /**
@@ -271,7 +347,7 @@ function renderQueryError(error: string): string {
 function truncationNote(reason: "rows" | "bytes" | null | undefined, rowCount: number): string {
   if (reason === "bytes") {
     return (
-      `(truncated: this result exceeds the ${BYTE_CAP.toLocaleString("en-US")}-byte budget. ` +
+      `(truncated: this result exceeds the ${DATABASE_BYTE_CAP.toLocaleString("en-US")}-byte budget. ` +
       "Select fewer columns, or wrap a wide column with left(col, n), rather than re-running as-is.)"
     );
   }
@@ -279,8 +355,12 @@ function truncationNote(reason: "rows" | "bytes" | null | undefined, rowCount: n
 }
 
 function renderOutcome(outcome: QueryOutcome): string {
-  if (!outcome.ok) return `query failed: ${renderQueryError(outcome.error)}`;
-  if (!outcome.rows.length) return "no rows";
+  if (!outcome.ok) return `query failed [${outcome.error.code}]: ${renderQueryError(outcome.error)}`;
+  if (!outcome.rows.length) {
+    return outcome.truncated
+      ? `no rows returned\n\n${truncationNote(outcome.truncatedReason, 0)}`
+      : "no rows";
+  }
 
   const header = outcome.columns.join(" | ");
   const body = outcome.rows

@@ -180,11 +180,15 @@ export type PlaybookBullet = {
 export type DbConnectionRow = {
   id: string
   name: string
-  engine: string
+  engine: 'postgresql'
   status: 'connected' | 'error'
   error: string | null
-  displayHost: string
-  displayDatabase: string
+  host: string
+  port: number
+  database: string
+  username: string
+  sslMode: 'disable' | 'require' | 'verify-full'
+  hasCustomCa: boolean
   tableCount: number
   lastIntrospectedAt: number | null
   createdAt: number

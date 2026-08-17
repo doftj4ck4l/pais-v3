@@ -1,14 +1,35 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangleIcon, DatabaseIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import type { InputHTMLAttributes } from 'react'
+import {
+  AlertTriangleIcon,
+  ChevronLeftIcon,
+  DatabaseIcon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  Trash2Icon,
+} from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import {
   addConnectionStreaming,
   deleteConnection,
   listConnections,
   refreshConnection,
+  testConnection,
+  testStoredConnection,
+  updateConnection,
   type AttachPhase,
+  type DatabaseConnectionInput,
 } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { DbConnectionRow } from '@/shared/lib/types'
@@ -24,14 +45,24 @@ import { cn } from '@/shared/lib/utils'
  */
 export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) => void }) {
   const [connections, setConnections] = useState<DbConnectionRow[]>([])
-  const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
+  const [formMode, setFormMode] = useState<FormMode>(null)
+  const [form, setForm] = useState(emptyForm)
   const [error, setError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<string | null>(null)
   useEffect(() => onCountChange?.(connections.length), [connections.length, onCountChange])
   const [steps, setSteps] = useState<AttachPhase[]>([])
   const scope = useScope()
+  const editing = formMode?.kind === 'edit' ? formMode.connection : null
+  const dialogOpen = formMode !== null
+  const formReady = Boolean(
+    form.name.trim() &&
+    form.host.trim() &&
+    form.port.trim() &&
+    form.database.trim() &&
+    form.username.trim() &&
+    (editing || form.password),
+  )
 
   const refresh = useCallback(async () => {
     try {
@@ -46,28 +77,30 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
   }, [refresh])
 
   const submit = useCallback(async () => {
-    if (!name.trim() || !url.trim()) return
+    if (!formReady) return
     setBusy(true)
     setError(null)
     setSteps([])
     try {
-      const out = await addConnectionStreaming(scope, name.trim(), url.trim(), (p) =>
-        setSteps((prev) => [...prev, p]),
-      )
+      const input = connectionInput(form, editing)
+      const out = editing
+        ? await updateConnection(scope, editing.id, input)
+        : await addConnectionStreaming(scope, input, (p) => setSteps((prev) => [...prev, p]))
       if (out.error) {
-        setError(out.error)
-        // Drop the credential, keep the name: a rejection here is a bad
-        // name, a duplicate name, or a missing server config, so the user
-        // is more likely correcting the name than retyping the password.
-        // The url must not sit in a live input for as long as the panel
-        // stays mounted.
-        setUrl('')
+        setError(out.error.message)
+        setForm((current) => ({ ...current, password: '', sslCa: '' }))
         return
       }
-      setName('')
-      setUrl('')
-      setAdding(false)
-      await refresh()
+      if (!out.connection) {
+        setError('The API completed without returning the connection')
+        return
+      }
+      setConnections((current) => editing
+        ? current.map((connection) => connection.id === out.connection!.id ? out.connection! : connection)
+        : [out.connection!, ...current])
+      setForm(emptyForm)
+      setFormMode(null)
+      setTestResult(null)
     } catch {
       setError('Could not reach the API')
     } finally {
@@ -77,7 +110,51 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
       // — the log survives until the next attach or an explicit cancel, leaving
       // a record of what just happened above the row it produced.
     }
-  }, [name, url, refresh, scope])
+  }, [editing, form, formReady, scope])
+
+  const testSettings = useCallback(async () => {
+    if (!formReady) return
+    if (editing && !form.password && !matchesSavedConnection(form, editing)) {
+      setError('Enter the password to test changed settings. Saving can still preserve the current password.')
+      setTestResult(null)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setTestResult(null)
+    try {
+      const result = editing && !form.password
+        ? await testStoredConnection(scope, editing.id)
+        : await testConnection(scope, connectionInput(form, editing))
+      if (result.ok) {
+        setTestResult(
+          `Connected in ${result.value.latencyMs.toLocaleString()}ms${result.value.serverVersion ? ` · PostgreSQL ${result.value.serverVersion}` : ''}`,
+        )
+      } else {
+        setError(result.error.message)
+      }
+    } catch {
+      setError('Could not reach the API')
+    } finally {
+      setBusy(false)
+    }
+  }, [editing, form, formReady, scope])
+
+  const closeForm = useCallback(() => {
+    setFormMode(null)
+    setError(null)
+    setTestResult(null)
+    setForm(emptyForm)
+    setSteps([])
+  }, [])
+
+  const openPicker = useCallback(() => {
+    setForm(emptyForm)
+    setFormMode({ kind: 'pick' })
+    setError(null)
+    setTestResult(null)
+    setSteps([])
+  }, [])
 
   const connected = connections.filter((c) => c.status === 'connected')
   const tableTotal = connected.reduce((n, c) => n + c.tableCount, 0)
@@ -92,8 +169,8 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
             : null
         }
         action={
-          connections.length && !adding ? (
-            <Button size="sm" onClick={() => setAdding(true)}>
+          connections.length && !dialogOpen ? (
+            <Button size="sm" onClick={openPicker}>
               <PlusIcon data-icon="inline-start" />
               Connect database
             </Button>
@@ -101,57 +178,13 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
         }
       />
 
-      {adding ? (
-        <form
-          className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-4"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void submit()
-          }}
-        >
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Name, e.g. sales"
-            aria-label="Connection name"
-            className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-foreground/30"
-          />
-          <input
-            type="password"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="postgres://readonly@host:5432/db"
-            aria-label="PostgreSQL connection URL"
-            className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-foreground/30"
-          />
-          {error ? <p className="text-xs text-muted-foreground">{error}</p> : null}
-          <div className="flex justify-end gap-2">
-            <Button type="submit" size="sm" disabled={busy}>
-              {busy ? 'Connecting…' : 'Connect'}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setAdding(false)
-                setError(null)
-                setName('')
-                setUrl('')
-                setSteps([])
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      ) : connections.length === 0 ? (
+      {connections.length === 0 ? (
         <PanelEmpty
           icon={DatabaseIcon}
           title="No databases connected"
-          description="Point the agent at a read-only PostgreSQL database and it can answer questions from your own data."
+          description="Choose a database connector and the agent can safely explore its schemas and data."
           action={
-            <Button size="sm" onClick={() => setAdding(true)}>
+            <Button size="sm" onClick={openPicker}>
               <PlusIcon data-icon="inline-start" />
               Connect a database
             </Button>
@@ -159,7 +192,121 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
         />
       ) : null}
 
-      {steps.length ? (
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeForm()
+        }}
+      >
+        <DialogContent className={cn(formMode?.kind === 'pick' ? 'sm:max-w-4xl' : 'sm:max-w-lg')}>
+          {formMode?.kind === 'pick' ? (
+            <DatabaseConnectorPicker
+              onChoose={() => {
+                setForm(emptyForm)
+                setFormMode({ kind: 'create' })
+              }}
+            />
+          ) : formMode ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submit()
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {!editing ? (
+                    <BackButton onClick={openPicker} />
+                  ) : null}
+                  {editing ? `Edit ${editing.name}` : 'PostgreSQL'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editing
+                    ? 'Update the connection settings. Leave secret fields blank to keep their saved values.'
+                    : 'Connect a read-only PostgreSQL database for schema discovery and safe queries.'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="max-h-[min(70vh,36rem)] overflow-y-auto px-5 py-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Name" value={form.name} onChange={(name) => setForm((v) => ({ ...v, name }))} placeholder="sales" />
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    Engine
+                    <select disabled value="postgresql" className={inputClass}>
+                      <option value="postgresql">PostgreSQL</option>
+                    </select>
+                  </label>
+                  <Field label="Host" value={form.host} onChange={(host) => setForm((v) => ({ ...v, host }))} placeholder="10.35.180.238" />
+                  <Field label="Port" value={form.port} onChange={(port) => setForm((v) => ({ ...v, port }))} inputMode="numeric" />
+                  <Field label="Database" value={form.database} onChange={(database) => setForm((v) => ({ ...v, database }))} placeholder="takaful" />
+                  <Field label="Username" value={form.username} onChange={(username) => setForm((v) => ({ ...v, username }))} placeholder="readonly_user" />
+                  <Field
+                    label={editing ? 'Password (leave blank to keep)' : 'Password'}
+                    value={form.password}
+                    onChange={(password) => setForm((v) => ({ ...v, password }))}
+                    type="password"
+                    autoComplete="new-password"
+                  />
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    SSL mode
+                    <select
+                      value={form.sslMode}
+                      onChange={(event) => setForm((v) => ({ ...v, sslMode: event.target.value as FormState['sslMode'] }))}
+                      className={inputClass}
+                    >
+                      <option value="disable">Disable</option>
+                      <option value="require">Require (no certificate verification)</option>
+                      <option value="verify-full">Verify certificate and host</option>
+                    </select>
+                  </label>
+                  {form.sslMode === 'verify-full' ? (
+                    <>
+                      <Field label="TLS server name (optional)" value={form.serverName} onChange={(serverName) => setForm((v) => ({ ...v, serverName }))} />
+                      <label className="flex flex-col gap-1 text-xs text-muted-foreground sm:col-span-2">
+                        Custom CA PEM {editing?.hasCustomCa ? '(leave blank to keep saved CA)' : '(optional)'}
+                        <textarea
+                          value={form.sslCa}
+                          onChange={(event) => setForm((v) => ({ ...v, sslCa: event.target.value, removeCa: false }))}
+                          rows={3}
+                          className={inputClass}
+                        />
+                      </label>
+                      {editing?.hasCustomCa ? (
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
+                          <input type="checkbox" checked={form.removeCa} onChange={(event) => setForm((v) => ({ ...v, removeCa: event.target.checked, sslCa: '' }))} />
+                          Remove saved custom CA
+                        </label>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+
+                {steps.length ? <div className="mt-3"><AttachLog steps={steps} /></div> : null}
+                {error ? <p className="mt-3 text-xs text-muted-foreground">{error}</p> : null}
+                {testResult ? <p className="mt-3 text-xs text-muted-foreground">{testResult}</p> : null}
+
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={busy || !formReady} onClick={() => void testSettings()}>
+                    Test connection
+                  </Button>
+                  <Button type="submit" size="sm" disabled={busy || !formReady}>
+                    {busy ? 'Working…' : editing ? 'Save' : 'Connect'}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={closeForm}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {!dialogOpen && (error || testResult) ? (
+        <p className="mt-2 text-xs text-muted-foreground">{error ?? testResult}</p>
+      ) : null}
+
+      {!dialogOpen && steps.length ? (
         <div className="mt-2">
           <AttachLog steps={steps} />
         </div>
@@ -171,25 +318,221 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
             <ConnectionItem
               key={c.id}
               connection={c}
+              onEdit={() => {
+                setFormMode({ kind: 'edit', connection: c })
+                setError(null)
+                setTestResult(null)
+                setSteps([])
+                setForm(formFromConnection(c))
+              }}
+              onTest={async () => {
+                setBusy(true)
+                setError(null)
+                setTestResult(null)
+                try {
+                  const result = await testStoredConnection(scope, c.id)
+                  if (result.ok) setTestResult(`${c.name}: connected in ${result.value.latencyMs.toLocaleString()}ms`)
+                  else setError(result.error.message)
+                } catch {
+                  setError(`Could not test ${c.name}`)
+                } finally {
+                  setBusy(false)
+                }
+              }}
               onRefresh={async () => {
                 setBusy(true)
                 try {
-                  await refreshConnection(scope, c.id)
-                  await refresh()
+                  const updated = await refreshConnection(scope, c.id)
+                  setConnections((current) => current.map((connection) => connection.id === updated.id ? updated : connection))
+                } catch {
+                  setError(`Could not refresh ${c.name}`)
                 } finally {
                   setBusy(false)
                 }
               }}
               onRemove={async () => {
-                setConnections((prev) => prev.filter((x) => x.id !== c.id)) // optimistic
-                await deleteConnection(scope, c.id)
-                await refresh()
+                setConnections((prev) => prev.filter((x) => x.id !== c.id))
+                try {
+                  await deleteConnection(scope, c.id)
+                } catch {
+                  setError(`Could not remove ${c.name}`)
+                  await refresh()
+                }
               }}
             />
           ))}
         </PanelGrid>
       ) : null}
     </div>
+  )
+}
+
+type FormState = {
+  name: string
+  host: string
+  port: string
+  database: string
+  username: string
+  password: string
+  sslMode: DatabaseConnectionInput['ssl']['mode']
+  sslCa: string
+  serverName: string
+  removeCa: boolean
+}
+
+type FormMode =
+  | { kind: 'pick' }
+  | { kind: 'create' }
+  | { kind: 'edit'; connection: DbConnectionRow }
+  | null
+
+const DATABASE_CONNECTORS = [
+  {
+    engine: 'postgresql',
+    name: 'PostgreSQL',
+    summary: 'Explore schemas and run guarded, read-only queries.',
+    detail: 'Read-only connector · port 5432',
+    available: true,
+    tint: '51 103 145',
+  },
+  {
+    engine: 'mysql',
+    name: 'MySQL',
+    summary: 'Connect MySQL-compatible databases with the same safe tools.',
+    detail: 'Coming soon',
+    available: false,
+    tint: '0 117 143',
+  },
+  {
+    engine: 'sqlserver',
+    name: 'SQL Server',
+    summary: 'Explore Microsoft SQL Server without changing agent workflows.',
+    detail: 'Coming soon',
+    available: false,
+    tint: '204 41 38',
+  },
+] as const
+
+const emptyForm: FormState = {
+  name: '', host: '', port: '5432', database: '', username: '', password: '',
+  sslMode: 'disable', sslCa: '', serverName: '', removeCa: false,
+}
+
+const inputClass = 'rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:border-foreground/30 disabled:opacity-60'
+
+function DatabaseConnectorPicker({ onChoose }: { onChoose: () => void }) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Connect a database</DialogTitle>
+        <DialogDescription>
+          Choose a database engine. You&apos;ll enter its connection details next.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div className="px-5 py-4">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+          {DATABASE_CONNECTORS.map((connector) => (
+            <button
+              key={connector.engine}
+              type="button"
+              disabled={!connector.available}
+              onClick={onChoose}
+              className={cn(
+                'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
+                'transition-colors outline-none',
+                'hover:border-foreground/30 hover:bg-accent',
+                'focus-visible:border-foreground/40 focus-visible:bg-accent',
+                'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-transparent',
+              )}
+            >
+              <span
+                className="mb-1.5 flex size-7 items-center justify-center rounded-md"
+                style={{ color: `rgb(${connector.tint})`, backgroundColor: `rgb(${connector.tint} / 0.12)` }}
+              >
+                <DatabaseIcon className="size-4" />
+              </span>
+              <span className="text-sm leading-snug">{connector.name}</span>
+              <span className="text-xs leading-relaxed text-muted-foreground">
+                {connector.summary}
+              </span>
+              <span className="readout mt-auto w-full truncate pt-2.5 text-[0.625rem] text-muted-foreground/70">
+                {connector.detail}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Back to database connectors"
+      className="-ml-1 rounded-md p-1 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground"
+    >
+      <ChevronLeftIcon className="size-4" />
+    </button>
+  )
+}
+
+function Field({ label, value, onChange, ...props }: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {label}
+      <input {...props} value={value} onChange={(event) => onChange(event.target.value)} className={inputClass} />
+    </label>
+  )
+}
+
+function formFromConnection(connection: DbConnectionRow): FormState {
+  return {
+    ...emptyForm,
+    name: connection.name,
+    host: connection.host,
+    port: String(connection.port),
+    database: connection.database,
+    username: connection.username,
+    sslMode: connection.sslMode,
+  }
+}
+
+function connectionInput(form: FormState, editing: DbConnectionRow | null): DatabaseConnectionInput {
+  return {
+    name: form.name.trim(),
+    engine: 'postgresql',
+    host: form.host.trim(),
+    port: Number(form.port),
+    database: form.database.trim(),
+    username: form.username.trim(),
+    ...(form.password ? { password: form.password } : {}),
+    ssl: {
+      mode: form.sslMode,
+      ...(form.serverName ? { serverName: form.serverName.trim() } : {}),
+      ...(form.sslCa ? { ca: form.sslCa } : form.removeCa && editing?.hasCustomCa ? { ca: null } : {}),
+    },
+  }
+}
+
+function matchesSavedConnection(form: FormState, connection: DbConnectionRow): boolean {
+  return (
+    form.name.trim() === connection.name &&
+    form.host.trim() === connection.host &&
+    Number(form.port) === connection.port &&
+    form.database.trim() === connection.database &&
+    form.username.trim() === connection.username &&
+    form.sslMode === connection.sslMode &&
+    !form.sslCa &&
+    !form.serverName &&
+    !form.removeCa
   )
 }
 
@@ -211,7 +554,9 @@ function describe(p: AttachPhase): string {
   }
 }
 
-const CATALOG_LABEL: Record<string, string> = {
+type CatalogStep = Extract<AttachPhase, { phase: 'catalog' }>['step']
+
+const CATALOG_LABEL: Record<CatalogStep, string> = {
   tables: 'tables',
   columns: 'columns',
   primaryKeys: 'primary keys',
@@ -261,10 +606,14 @@ function AttachLog({ steps }: { steps: AttachPhase[] }) {
 
 function ConnectionItem({
   connection,
+  onEdit,
+  onTest,
   onRefresh,
   onRemove,
 }: {
   connection: DbConnectionRow
+  onEdit: () => void
+  onTest: () => Promise<void>
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
 }) {
@@ -290,10 +639,28 @@ function ConnectionItem({
       meta={
         failed
           ? 'could not connect'
-          : `${connection.displayDatabase} @ ${connection.displayHost} · ${connection.tableCount} tables`
+          : `${connection.database} @ ${connection.host}:${connection.port} · ${connection.tableCount} tables`
       }
       actions={
         <>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void onTest()}
+            aria-label={`Test ${connection.name}`}
+            className="text-muted-foreground"
+          >
+            <ShieldCheckIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onEdit}
+            aria-label={`Edit ${connection.name}`}
+            className="text-muted-foreground"
+          >
+            <PencilIcon />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"

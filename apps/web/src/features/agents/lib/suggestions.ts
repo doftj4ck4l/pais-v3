@@ -26,8 +26,6 @@ export type SuggestionContext = {
   databases: string[]
   /** Names of MCP servers that connected successfully. */
   mcpServers: string[]
-  /** Whether the selected harness actually has the SQL tools. */
-  canQueryDatabases: boolean
 }
 
 const SLOTS = 4
@@ -69,11 +67,8 @@ export function buildSuggestions(context: SuggestionContext): Suggestion[] {
     })
   }
 
-  // Gated on the harness, not just on a connection existing: the SQL tools are
-  // only assembled for a harness that asks for them, so suggesting a query
-  // under the general harness offers something the agent cannot do.
   const [database] = context.databases
-  if (database && context.canQueryDatabases) {
+  if (database) {
     contextual.push({
       text: `In ${database}, find the largest tables and show me how they join.`,
       hint: 'read-only sql',

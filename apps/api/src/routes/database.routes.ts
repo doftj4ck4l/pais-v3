@@ -7,5 +7,8 @@ databaseRoutes.get("/", databaseController.index);
 databaseRoutes.post("/", databaseController.create);
 // Registered before "/:id/..." so the literal path is not captured as an id.
 databaseRoutes.post("/stream", databaseController.createStreaming);
+databaseRoutes.post("/test", databaseController.testConnection);
+databaseRoutes.patch("/:id", databaseController.update);
+databaseRoutes.post("/:id/test", databaseController.testStoredConnection);
 databaseRoutes.post("/:id/refresh", databaseController.refresh);
 databaseRoutes.delete("/:id", databaseController.destroy);

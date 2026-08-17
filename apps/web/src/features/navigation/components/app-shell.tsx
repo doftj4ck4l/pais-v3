@@ -56,9 +56,9 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
             a console you have to guess at. */}
         <aside
           className={cn(
-            'hidden shrink-0 overflow-hidden border-r transition-[width] duration-300 ease-out lg:block',
+            'w-14 shrink-0 overflow-hidden border-r transition-[width] duration-300 ease-out',
             'motion-reduce:transition-none',
-            sidebar.open && onChats ? 'w-[19.5rem]' : 'w-14',
+            sidebar.open && onChats && 'lg:w-[19.5rem]',
           )}
         >
           <div className="h-full w-[19.5rem]">
@@ -76,21 +76,19 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
           */}
           <header
             className={cn(
-              'flex h-12 shrink-0 items-center gap-3 border-b px-3',
+              'sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3',
               sidebar.open && onChats && !topbar && 'lg:hidden',
             )}
           >
             <button
               type="button"
               onClick={() => (isWide() ? sidebar.toggle() : setSheetOpen(true))}
-              aria-label={sidebar.open ? 'Hide the chat list' : 'Show the chat list'}
-              // Off the wide layout everywhere but Chats: there the only thing
-              // it can collapse is the chat list, and elsewhere it would be a
-              // button that visibly does nothing. Below `lg` it stays — that is
-              // the only way to reach the sidebar sheet at all.
+              aria-label="Toggle navigation and chat list"
+              // The icon rail is always visible, including on narrow screens.
+              // Only Chats needs this separate control for its session list.
               className={cn(
                 'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
-                !onChats && 'lg:hidden',
+                !onChats && 'hidden',
               )}
             >
               <PanelLeftIcon className="size-4" />
@@ -121,8 +119,6 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         meta={board.meta}
-        harnessId={board.harnessId}
-        onHarnessChange={board.setHarnessId}
         modelId={board.modelIdForNew}
         onModelChange={board.setModelIdForNew}
         agentCount={board.agents.length}
