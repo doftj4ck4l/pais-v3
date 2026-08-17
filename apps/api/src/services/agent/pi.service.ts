@@ -37,7 +37,7 @@ import { createVisionTools } from "../media/vision-tools";
 import { visionConfigured } from "../media/vision.service";
 import { mediaConfigured } from "../media/media.service";
 import { documentStore } from "../../repositories/document.repository";
-import { createDatabaseTools } from "../db/db-tools";
+import { loadDatabaseCapability } from "../db/db-tools";
 import { createCalendarTools } from "../connectors/calendar-tools";
 import {
   APPROVAL_OPTIONS,
@@ -46,7 +46,6 @@ import {
   createUserInputRequester,
 } from "./ask-user-tool";
 import { connectorStore } from "../../repositories/connector.repository";
-import { databaseConnectionStore } from "../../repositories/database-connection.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
 import { playbookStore } from "../../repositories/playbook.repository";
 import { renderPlaybook } from "../playbook/prompt";
@@ -67,8 +66,6 @@ type Emit = (event: AgentEvent) => void;
 export async function runPiAgent(opts: {
   model: ModelConfig;
   systemPrompt: string;
-  /** Capability gates from the harness (e.g. "db"). Empty for harnesses that named none. */
-  harnessTools?: string[];
   history: ChatMessage[];
   emit: Emit;
   signal?: AbortSignal;
@@ -84,7 +81,6 @@ export async function runPiAgent(opts: {
   const {
     model,
     systemPrompt,
-    harnessTools = [],
     history,
     emit,
     signal,
@@ -289,11 +285,14 @@ export async function runPiAgent(opts: {
     });
   }
 
-  // --- context layer: read-only database access, only where a harness asks ---
-  // Gated rather than always-on: the inventory prompt and three extra tools are
-  // dead weight on a run that will never touch a database.
-  if (harnessTools.includes("db")) {
-    for (const dbt of createDatabaseTools(workspaceId)) {
+  // --- context layer: read-only access to databases connected to this workspace ---
+  // Database access belongs to the one agent rather than a separate harness.
+  // Empty workspaces still avoid the three tool schemas and inventory prompt.
+  let dbPrompt = "";
+  try {
+    const database = await loadDatabaseCapability(workspaceId);
+    dbPrompt = database.prompt;
+    for (const dbt of database.tools) {
       agentTools.push({
         name: dbt.name,
         description: dbt.description,
@@ -302,6 +301,8 @@ export async function runPiAgent(opts: {
         execute: dbt.execute,
       });
     }
+  } catch (e: any) {
+    logger.warn("db.inventory_failed", { workspaceId, message: e?.message ?? String(e) });
   }
 
   // --- calendar: live Google Calendar tools, only when an account is connected ---
@@ -329,9 +330,9 @@ export async function runPiAgent(opts: {
   }
 
   // --- MCP: whatever servers this workspace has enabled ---
-  // Not gated behind `harnessTools`, unlike `db`. A workspace only has an MCP
-  // server because someone added it, so the opt-in has already happened; a
-  // second gate would mean adding a server and seeing nothing change.
+  // A workspace only has an MCP server because someone added it, so the opt-in
+  // has already happened; a second gate would mean adding a server and seeing
+  // nothing change.
   //
   // This connects, so it can be slow and it can fail. `createMcpTools` swallows
   // per-server failures itself; the try/catch is for the store being
@@ -514,36 +515,6 @@ export async function runPiAgent(opts: {
     playbookPrompt = renderPlaybook(await playbookStore.list(workspaceId));
   } catch (e: any) {
     logger.warn("playbook.load_failed", { workspaceId, message: e?.message ?? String(e) });
-  }
-
-  // Table names, not table structures. Naming the corpus is what turns the
-  // schema tools from ones the model *could* call into ones it knows are worth
-  // calling; loading full structure here would not survive a real schema.
-  let dbPrompt = "";
-  if (harnessTools.includes("db")) {
-    try {
-      const inventory = await databaseConnectionStore.inventory(workspaceId);
-      if (inventory.length) {
-        dbPrompt =
-          `\n\nConnected databases:\n` +
-          inventory
-            .map(
-              (c) =>
-                `- "${c.name}" — ${c.tableCount} table(s): ` +
-                (c.tables.length > 60
-                  ? `${c.tables.slice(0, 60).join(", ")}, … (${c.tables.length - 60} more — use search_schema)`
-                  : c.tables.join(", ")),
-            )
-            .join("\n") +
-          `\nThese are table names only. Call "describe_table" for columns and foreign keys ` +
-          `before writing SQL against any of them.`;
-      } else {
-        dbPrompt =
-          `\n\nNo databases are connected yet. Say so if the user asks you to query one.`;
-      }
-    } catch (e: any) {
-      logger.warn("db.inventory_failed", { workspaceId, message: e?.message ?? String(e) });
-    }
   }
 
   // The user's own Google Calendar is authoritative over any other calendar a

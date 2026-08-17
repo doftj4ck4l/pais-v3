@@ -1,4 +1,8 @@
-import { fetchCatalog, type CatalogStep, type RawCatalog } from "./postgres.driver";
+import type { CatalogStep, DatabaseConnectionConfig, RawCatalog } from "./database-adapter";
+import {
+  databaseConnector,
+  type DatabaseConnectorService,
+} from "./database-connector.service";
 import {
   databaseConnectionStore,
   type DatabaseConnectionStore,
@@ -107,7 +111,7 @@ export type IntrospectPhase =
   | { phase: "failed"; step: string; error: string };
 
 /** Human-readable name for the step a failure happened on. */
-const STEP_LABEL: Record<string, string> = {
+const STEP_LABEL: Record<CatalogStep["step"] | "building" | "indexing", string> = {
   tables: "reading tables",
   columns: "reading columns",
   primaryKeys: "reading primary keys",
@@ -131,23 +135,30 @@ const STEP_LABEL: Record<string, string> = {
 export async function introspectConnection(
   connectionId: string,
   workspaceId: string,
-  url: string,
-  store: DatabaseConnectionStore = databaseConnectionStore,
-  onPhase?: (event: IntrospectPhase) => void,
+  config: DatabaseConnectionConfig,
+  options: {
+    store?: DatabaseConnectionStore;
+    onPhase?: (event: IntrospectPhase) => void;
+    connector?: DatabaseConnectorService;
+  } = {},
 ): Promise<{ ok: true; tableCount: number } | { ok: false; error: string }> {
+  const store = options.store ?? databaseConnectionStore;
+  const onPhase = options.onPhase;
+  const connector = options.connector ?? databaseConnector;
   const startedAt = Date.now();
   // Tracks how far we got, so a failure can name the step rather than leaving
   // the user to guess which of five round trips died.
-  let reached = "tables";
+  let reached: CatalogStep["step"] | "building" | "indexing" = "tables";
 
   try {
-    const raw = await fetchCatalog(url, (s) => {
+    const catalog = await connector.fetchCatalog(config, (s) => {
       reached = s.step;
       onPhase?.({ phase: "catalog", step: s.step, count: s.count });
     });
+    if (!catalog.ok) throw new Error(catalog.error.message);
 
     reached = "building";
-    const tables = buildSnapshot(raw);
+    const tables = buildSnapshot(catalog.value);
     const columnCount = tables.reduce((n, t) => n + t.columns.length, 0);
     onPhase?.({ phase: "building", tables: tables.length, columns: columnCount });
 

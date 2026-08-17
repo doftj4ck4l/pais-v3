@@ -355,10 +355,10 @@ export type ChunkRow = {
 export type DbConnectionStatus = "connected" | "error";
 
 /**
- * One database a user has connected. `secret` holds the encrypted connection
- * string and is never selected into anything that reaches the client or the
- * model — `displayHost` / `displayDatabase` exist so the UI can identify a
- * connection without it.
+ * One database a user has connected. `secret` holds the encrypted password and
+ * private TLS options and is never selected into anything that reaches the
+ * client or model. The non-secret connection fields remain individually
+ * addressable so the API can support safe edits without reconstructing a URL.
  */
 export const dbConnections = sqliteTable(
   "db_connections",
@@ -366,10 +366,14 @@ export const dbConnections = sqliteTable(
     id: text("id").primaryKey(),
     workspaceId: text("workspace_id"),
     name: text("name").notNull(), // how the agent refers to it
-    engine: text("engine").notNull().default("postgres"),
+    engine: text("engine").notNull().default("postgresql"),
     secret: text("secret").notNull(),
-    displayHost: text("display_host").notNull(),
-    displayDatabase: text("display_database").notNull(),
+    host: text("display_host").notNull(),
+    port: integer("port").notNull().default(5432),
+    database: text("display_database").notNull(),
+    username: text("username").notNull().default(""),
+    sslMode: text("ssl_mode").notNull().default("disable"),
+    hasCustomCa: integer("has_custom_ca", { mode: "boolean" }).notNull().default(false),
     status: text("status").$type<DbConnectionStatus>().notNull().default("connected"),
     error: text("error"),
     tableCount: integer("table_count").notNull().default(0),
@@ -388,11 +392,15 @@ export type DbConnectionRow = {
   id: string;
   workspaceId: string | null;
   name: string;
-  engine: string;
+  engine: "postgresql";
   status: DbConnectionStatus;
   error: string | null;
-  displayHost: string;
-  displayDatabase: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  sslMode: "disable" | "require" | "verify-full";
+  hasCustomCa: boolean;
   tableCount: number;
   lastIntrospectedAt: number | null;
   createdAt: number;

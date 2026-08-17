@@ -29,15 +29,13 @@ import type { Meta } from '@/shared/lib/types'
  * of thing: resources answer "what can it see", settings answer "how is it set
  * up". Only the second belongs behind a gear.
  *
- * Model and harness apply to the *next* agent, not the selected one — a run's
- * model is fixed once it starts.
+ * The model applies to the *next* agent, not the selected one — a run's model
+ * is fixed once it starts.
  */
 export function SettingsModal({
   open,
   onOpenChange,
   meta,
-  harnessId,
-  onHarnessChange,
   modelId,
   onModelChange,
   agentCount,
@@ -48,8 +46,6 @@ export function SettingsModal({
   open: boolean
   onOpenChange: (open: boolean) => void
   meta: Meta | null
-  harnessId: string
-  onHarnessChange: (id: string) => void
   modelId: string
   onModelChange: (id: string) => void
   agentCount: number
@@ -92,23 +88,6 @@ export function SettingsModal({
                 Add an API key to use this model.
               </p>
             ) : null}
-          </Field>
-
-          <Field label="Harness">
-            <Select value={harnessId} onValueChange={onHarnessChange}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue placeholder="Loading…" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {meta?.harnesses.map((h) => (
-                    <SelectItem key={h.id} value={h.id}>
-                      {h.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
           </Field>
         </div>
 

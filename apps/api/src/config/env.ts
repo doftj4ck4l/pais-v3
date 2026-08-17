@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { DEFAULT_DATABASE_ALLOWED_CIDRS } from "../services/db/network-policy";
 
 /**
  * Every environment variable the API reads, resolved once. Import this instead
@@ -71,6 +72,16 @@ export const env = {
    * stance the sandbox takes when Docker is down.
    */
   connectionSecret: process.env.CONNECTION_SECRET ?? "",
+
+  /**
+   * CIDRs database connectors may reach. Every resolved address must be in
+   * this list; loopback, link-local, metadata, and multicast stay denied even
+   * if a future environment broadens it.
+   */
+  databaseAllowedCidrs: (process.env.DATABASE_ALLOWED_CIDRS ?? DEFAULT_DATABASE_ALLOWED_CIDRS.join(","))
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
 
   /**
    * OAuth client for the Google Drive connector. Absent, the connector is

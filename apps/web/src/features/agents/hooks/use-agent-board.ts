@@ -107,7 +107,6 @@ function historyFrom(items: Item[]): { role: 'user' | 'assistant'; content: stri
  */
 export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
-  const [harnessId, setHarnessId] = useState('')
   const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
   // Chosen reasoning effort for a thinking model. Null when the selected model
   // has no adjustable effort; the server falls back to the model's default.
@@ -120,17 +119,12 @@ export function useAgentBoard(scope: Scope) {
   const itemsRef = useRef<Map<string, Item[]>>(new Map())
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
   const streamRefs = useRef<Map<string, StreamRef>>(new Map())
-  const harnessIdRef = useRef(harnessId)
   const effortRef = useRef(effort)
   const agentsRef = useRef<AgentRun[]>([])
 
   useEffect(() => {
     agentsRef.current = agents
   })
-
-  useEffect(() => {
-    harnessIdRef.current = harnessId
-  }, [harnessId])
 
   useEffect(() => {
     effortRef.current = effort
@@ -168,7 +162,6 @@ export function useAgentBoard(scope: Scope) {
     fetchMeta()
       .then((d) => {
         setMeta(d)
-        if (d.harnesses.length) setHarnessId((h) => h || d.harnesses[0].id)
         // Keep the preferred default, but fall back if the gateway doesn't serve it.
         if (d.models.length) {
           setModelIdForNew((m) => (d.models.some((x) => x.id === m) ? m : d.models[0].id))
@@ -402,7 +395,6 @@ export function useAgentBoard(scope: Scope) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: seed.conversationId ?? undefined,
-          harnessId: harnessIdRef.current,
           modelId: seed.modelId,
           workspaceId: scope.workspaceId ?? undefined,
           // Only meaningful for a thinking model; null on every other, where the
@@ -611,8 +603,6 @@ export function useAgentBoard(scope: Scope) {
 
   return {
     meta,
-    harnessId,
-    setHarnessId,
     modelIdForNew,
     setModelIdForNew,
     effort,

@@ -3,9 +3,6 @@ import { listConnections, listDocuments, listMcpServers } from '@/shared/api/api
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { buildSuggestions, type Suggestion } from '@/features/agents/lib/suggestions'
 
-/** Harnesses whose tool list includes the read-only SQL tools. */
-const SQL_HARNESSES = new Set(['db-analyst'])
-
 /**
  * The starter prompts, tailored to what this workspace actually holds.
  *
@@ -17,10 +14,10 @@ const SQL_HARNESSES = new Set(['db-analyst'])
  * exactly what an empty workspace would have been offered anyway, so there is
  * nothing to tell anyone about.
  */
-export function useSuggestions(harnessId: string | null): Suggestion[] {
+export function useSuggestions(): Suggestion[] {
   const scope = useScope()
   const [suggestions, setSuggestions] = useState<Suggestion[]>(() =>
-    buildSuggestions({ documents: [], databases: [], mcpServers: [], canQueryDatabases: false }),
+    buildSuggestions({ documents: [], databases: [], mcpServers: [] }),
   )
 
   useEffect(() => {
@@ -42,7 +39,6 @@ export function useSuggestions(harnessId: string | null): Suggestion[] {
           mcpServers: servers
             .filter((s) => s.enabled && s.status === 'connected')
             .map((s) => s.name),
-          canQueryDatabases: SQL_HARNESSES.has(harnessId ?? ''),
         }),
       )
     })
@@ -50,7 +46,7 @@ export function useSuggestions(harnessId: string | null): Suggestion[] {
     return () => {
       live = false
     }
-  }, [scope, harnessId])
+  }, [scope])
 
   return suggestions
 }

@@ -7,10 +7,9 @@ import { runPiAgent } from "./pi.service";
 /**
  * Turns a harness into a run.
  *
- * This is the only thing that knows a harness is a system prompt plus a set of
- * tool groups; `pi.service` takes those and nothing about catalogs, and the
- * controller takes neither. It is a thin seam on purpose — it exists so the
- * controller does not have to unpack a catalog entry, not to make decisions.
+ * This is the only thing that turns the catalog's unified system prompt into
+ * `runPiAgent` arguments. The runtime discovers workspace capabilities itself;
+ * the controller therefore needs to know about neither prompts nor resources.
  *
  * It used to hold a second agent loop as well, reached when `harness.driver`
  * was anything but "pi". Every harness the catalog shipped was "pi", so that
@@ -36,7 +35,6 @@ export async function runAgent(
   return runPiAgent({
     model,
     systemPrompt: harness.systemPrompt,
-    harnessTools: harness.tools ?? [],
     history,
     emit,
     signal,

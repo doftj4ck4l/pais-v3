@@ -1,9 +1,8 @@
 # Pixelspace
 
-An agent console that pairs **agent harnesses** (how an agent reasons and uses
-tools) with **models** (which backend powers the loop) and runs a **real
-tool-calling agent loop** you can watch step by step, over a **context layer**
-built from your own documents.
+An agent console that runs one **tool-calling agent** across selectable models.
+The agent automatically gains capabilities from the resources connected to its
+workspace, including documents, databases, calendars, and MCP servers.
 
 ```
 packages
@@ -56,8 +55,8 @@ console renders inline — the run is never silently swapped for another model.
 - **Parallel agents** – every question spawns its own agent on its own SSE
   connection. The sidebar lists them all with live status; selecting one shows
   its transcript.
-- **Harness × model matrix** – pick a harness and a model; each combination runs
-  the same loop.
+- **One agent, selectable models** – resources add capabilities automatically;
+  users do not have to choose a specialised harness first.
 - **Tool-calling loop** – the agent streams text, calls tools, feeds results back
   in, and iterates until it answers (or hits the harness max-iterations).
 - **The loop rail** – every reasoning pass, tool call, and result lands as a node
@@ -76,9 +75,9 @@ console renders inline — the run is never silently swapped for another model.
 | `random_number`  | Random integer in a range                          |
 | `fetch_url`      | Fetch a URL and return the first ~1000 chars       |
 | `echo`           | Echo text back                                     |
-| `search_schema`  | Find tables/columns by keyword across connected databases (`db-analyst` harness only) |
-| `describe_table` | Columns, types, primary key, foreign keys, indexes for one table (`db-analyst` harness only) |
-| `run_query`      | Run one read-only SELECT against a connected database (`db-analyst` harness only) |
+| `search_schema`  | Find tables/columns by keyword across connected databases |
+| `describe_table` | Columns, types, primary key, foreign keys, indexes for one table |
+| `run_query`      | Run one read-only SELECT against a connected database |
 
 ## Architecture
 
@@ -258,11 +257,18 @@ cd apps/api && bun scripts/sandbox-persistence-check.ts
 
 ### Connected databases
 
-The `db-analyst` harness can query a workspace's PostgreSQL databases,
-read-only. A connection is added in the console, encrypted with
-`CONNECTION_SECRET`, and introspected once into a schema snapshot the agent
+The agent can query a workspace's connected PostgreSQL databases read-only,
+without switching modes or harnesses. A connection is configured with an explicit engine, host, port,
+database, username, password, and SSL policy. Passwords and private TLS options
+are encrypted with `CONNECTION_SECRET`; full URLs are neither stored nor
+returned. The connector introspects once into a schema snapshot the agent
 searches. Connection names are unique per workspace, so two workspaces may each
 have a `prod` without the agent being unable to tell them apart.
+
+Database egress is allowlisted by `DATABASE_ALLOWED_CIDRS` (RFC1918 and IPv6
+ULA by default). Every DNS answer must be allowed, and the driver connects to
+the validated literal address so a second resolution cannot redirect it.
+Loopback, link-local, cloud metadata, Unix sockets, and multicast are denied.
 
 ```bash
 CONNECTION_SECRET=$(openssl rand -base64 32)   # required, else connections are refused
@@ -295,12 +301,15 @@ the agent to reveal it.
 Prove the guarantee against your own server:
 
 ```bash
-cd apps/api && DB_CHECK_URL=postgres://... bun scripts/db-connector-check.ts
+cd apps/api && \
+  DB_CHECK_HOST=10.0.0.10 DB_CHECK_DATABASE=app DB_CHECK_USERNAME=reader \
+  DB_CHECK_PASSWORD=... bun scripts/db-connector-check.ts
 ```
 
-**Not yet safe for production data.** Connections are stored against a `userId`
-the browser generates, with no authentication — anyone who forges one can use
-that user's connections. Encryption protects `app.db` at rest, not the API.
+Database create, update, test, refresh, and delete operations all resolve the
+authenticated caller's workspace before accessing a connection. Encryption
+protects credentials at rest; the proxy/firewall boundary described below is
+what makes the caller identity trustworthy.
 
 ### MCP servers
 
@@ -326,9 +335,8 @@ What the agent gets:
 - **Prompts** as pi prompt templates. Argument-free ones are pre-rendered; the
   rest map positional placeholders onto named arguments via `mcp_get_prompt`.
 
-Unlike the database tools, MCP is not gated behind a harness capability: a
-workspace only has a server because someone added it, so the opt-in already
-happened.
+Like database tools, MCP capabilities follow the resources attached to the
+workspace: adding a server is the opt-in, with no separate harness selection.
 
 Connections last exactly one run and are closed in the same `finally` that
 cleans up the execution environment, so a stdio server's child process cannot
@@ -406,12 +414,6 @@ automatic backup. Do not publish `WEB_PORT` beyond a trusted network.
 Add an entry to `MODELS` in `apps/api/src/catalog/llm-models.ts` (OpenAI-compatible
 base URL + env var for the key). The model picker and ready state update
 automatically.
-
-### Adding a harness
-
-Add an entry to `HARNESSES` in `apps/api/src/catalog/harnesses.ts` (a system
-prompt and a `maxIterations` budget). The only observable difference is the
-prompt, which is the point of the POC.
 
 ### Adding a tool
 

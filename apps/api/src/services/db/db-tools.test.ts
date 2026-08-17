@@ -4,9 +4,9 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { applySchema } from "../../db/client";
 import { env } from "../../config/env";
 import { SqliteDatabaseConnectionStore } from "../../repositories/database-connection.repository";
-import type { QueryOutcome } from "./postgres.driver";
+import type { QueryOutcome } from "./database-adapter";
 import type { SnapshotTable } from "./introspect.service";
-import { createDatabaseTools } from "./db-tools";
+import { createDatabaseTools, loadDatabaseCapability } from "./db-tools";
 
 /**
  * Exercises the three agent-facing database tools against a real SQLite-backed
@@ -39,7 +39,7 @@ let lastCap: number | undefined;
 let outcome: QueryOutcome;
 
 const toolsFor = () =>
-  createDatabaseTools("ws1", store, async (_url, sql, cap) => {
+  createDatabaseTools("ws1", store, async (_config, sql, cap) => {
     lastSql = sql;
     lastCap = cap;
     return outcome;
@@ -55,8 +55,10 @@ beforeEach(async () => {
   store = new SqliteDatabaseConnectionStore(drizzle(sqlite) as any);
   await store.create({
     id: "c1", workspaceId: "ws1", name: "sales",
-    url: "postgres://reader:hunter2@db.example.com:5432/sales",
-    displayHost: "db.example.com", displayDatabase: "sales",
+    config: {
+      engine: "postgresql", host: "db.example.com", port: 5432, database: "sales",
+      username: "reader", password: "hunter2", ssl: { mode: "disable" },
+    },
   });
   await store.saveSnapshot("c1", "ws1", snapshot);
   lastSql = null;
@@ -85,19 +87,19 @@ describe("createDatabaseTools", () => {
   });
 
   it("never decrypts a connection string for describe_table or search_schema, only for run_query", async () => {
-    let resolveUrlCalls = 0;
-    const originalResolveUrl = store.resolveUrl.bind(store);
-    store.resolveUrl = async (...args: Parameters<typeof originalResolveUrl>) => {
-      resolveUrlCalls++;
-      return originalResolveUrl(...args);
+    let resolveConfigCalls = 0;
+    const originalResolveConfig = store.resolveConfig.bind(store);
+    store.resolveConfig = async (...args: Parameters<typeof originalResolveConfig>) => {
+      resolveConfigCalls++;
+      return originalResolveConfig(...args);
     };
 
     await tool("describe_table").execute("1", { connection: "sales", table: "orders" });
     await tool("search_schema").execute("1", { query: "orders" });
-    expect(resolveUrlCalls).toBe(0);
+    expect(resolveConfigCalls).toBe(0);
 
     await tool("run_query").execute("1", { connection: "sales", sql: "SELECT 1" });
-    expect(resolveUrlCalls).toBe(1);
+    expect(resolveConfigCalls).toBe(1);
   });
 
   it("tells the agent which tables exist when it names an unknown one", async () => {
@@ -115,6 +117,32 @@ describe("createDatabaseTools", () => {
     expect(out).toContain("orders");
   });
 
+  it("lists schemas and tables through the same engine-neutral search tool", async () => {
+    const out = textOf(await tool("search_schema").execute("1", {}));
+    expect(out).toContain("sales (1 tables)");
+    expect(out).toContain("orders");
+  });
+
+  it("caps an unfiltered schema listing and tells the agent how to continue", async () => {
+    await store.saveSnapshot(
+      "c1",
+      "ws1",
+      Array.from({ length: 65 }, (_, index) => ({
+        schemaName: "public",
+        name: `table_${String(index).padStart(3, "0")}`,
+        comment: null,
+        rowEstimate: 0,
+        indexes: [],
+        columns: [],
+      })),
+    );
+
+    const out = textOf(await tool("search_schema").execute("1", {}));
+    expect(out).toContain("table_059");
+    expect(out).not.toContain("table_060");
+    expect(out).toContain("5 more - use search_schema with a query");
+  });
+
   it("reports no match rather than returning an empty result", async () => {
     const out = textOf(await tool("search_schema").execute("1", { query: "zzzznothing" }));
     expect(out.toLowerCase()).toContain("no schema");
@@ -127,7 +155,7 @@ describe("createDatabaseTools", () => {
   });
 
   it("returns a query error as text so the loop can retry", async () => {
-    outcome = { ok: false, error: 'column "totl" does not exist' };
+    outcome = { ok: false, error: { code: "query_failed", message: 'column "totl" does not exist' } };
     const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT totl FROM orders" }));
     expect(out).toContain("totl");
   });
@@ -173,6 +201,15 @@ describe("createDatabaseTools", () => {
     expect(out.toLowerCase()).toContain("left(");
   });
 
+  it("explains when an individually oversized row is omitted by the byte cap", async () => {
+    outcome = {
+      ok: true, columns: ["payload"], rows: [], truncated: true, truncatedReason: "bytes",
+    };
+    const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT payload FROM blobs" }));
+    expect(out.toLowerCase()).toContain("no rows returned");
+    expect(out.toLowerCase()).toContain("byte");
+  });
+
   it("falls back to the row-cap wording when an outcome is truncated with no reason given", async () => {
     // Guards a caller (e.g. an older test, or a future executor) that builds
     // a QueryOutcome by hand without `truncatedReason` — the message must
@@ -186,7 +223,7 @@ describe("createDatabaseTools", () => {
   });
 
   it("appends aggregation guidance to a statement-timeout error, not just the raw Postgres message", async () => {
-    outcome = { ok: false, error: "canceling statement due to statement timeout" };
+    outcome = { ok: false, error: { code: "timeout", message: "Database statement timeout" } };
     const out = textOf(await tool("run_query").execute("1", { connection: "sales", sql: "SELECT * FROM orders" }));
     expect(out).toContain("statement timeout");
     expect(out.toLowerCase()).toContain("aggregate");
@@ -207,7 +244,10 @@ describe("createDatabaseTools", () => {
     // below meaningful rather than vacuously true.
     outcome = {
       ok: false,
-      error: "connection to postgres://reader:hunter2@db.example.com:5432/sales failed",
+      error: {
+        code: "query_failed",
+        message: "connection to postgres://reader:hunter2@db.example.com:5432/sales failed",
+      },
     };
     for (const t of toolsFor()) {
       const out = textOf(await t.execute("1", { connection: "sales", table: "orders", query: "orders", sql: "SELECT 1" }));
@@ -225,6 +265,26 @@ describe("createDatabaseTools", () => {
 
     const searchOut = textOf(await tool("search_schema").execute("1", { query: "orders" }));
     expect(searchOut).not.toContain("hunter2");
+  });
+});
+
+describe("loadDatabaseCapability", () => {
+  it("automatically exposes database tools and schema-first guidance for a connected workspace", async () => {
+    const capability = await loadDatabaseCapability("ws1", store);
+
+    expect(capability.tools.map((t) => t.name).sort()).toEqual([
+      "describe_table", "run_query", "search_schema",
+    ]);
+    expect(capability.prompt).toContain('Connected databases:');
+    expect(capability.prompt).toContain('"sales"');
+    expect(capability.prompt).toContain('Call "describe_table"');
+  });
+
+  it("stays absent when the workspace has no connected database", async () => {
+    const capability = await loadDatabaseCapability("another-workspace", store);
+
+    expect(capability.tools).toEqual([]);
+    expect(capability.prompt).toBe("");
   });
 });
 
