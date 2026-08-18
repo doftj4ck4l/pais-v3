@@ -18,6 +18,7 @@ import type { AgentEvent, ChatRequest } from "../types/agent";
 import type { ChatMessage } from "../types/chat";
 import type { ConversationStatus } from "../models/schema";
 import { currentUserId } from "../middleware/auth";
+import { isChatOnlyModel, prepareHistoryForModel } from "../services/agent/model-runtime-policy";
 
 const newRunId = () => Math.random().toString(36).slice(2, 8);
 
@@ -68,12 +69,27 @@ export function stream(c: Context) {
       }
 
       const { harness, model } = resolved;
+      const chatOnly = isChatOnlyModel(model);
+      if (chatOnly && body.imageIds?.length) {
+        emit({
+          type: "error",
+          message: `${model.label} supports text chat only. Remove image attachments and try again.`,
+        });
+        return;
+      }
+      if (chatOnly && body.template) {
+        emit({
+          type: "error",
+          message: `${model.label} accepts plain text prompts only. Prompt templates are unavailable.`,
+        });
+        return;
+      }
       const userId = currentUserId(c);
       // Resolved here, once. Every tool and repository below takes the
       // workspace id rather than the user id, so this is the single place a
       // client-supplied value is checked against ownership.
       const workspace = await workspaceRegistry.resolve(userId, body.workspaceId);
-      const history = body.messages ?? [];
+      const history = prepareHistoryForModel(model, body.messages ?? []);
 
       // Attachments become part of the last user message, before the recorder
       // is built from `history` — so the note is what gets stored, and every

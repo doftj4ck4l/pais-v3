@@ -24,6 +24,11 @@ export type ModelConfig = {
   provider: "openai" | "deepseek" | "custom" | "mock";
   model: string;
   /**
+   * `chat-only` models receive text messages only: no tool schemas, tool
+   * history, attachments, or agent-specific prompt additions.
+   */
+  mode?: "agent" | "chat-only";
+  /**
    * Present when the model always reasons and exposes an adjustable effort. Its
    * mere presence is what tells the UI to show the effort control and the run to
    * inject the thinking body — a model without it is a plain chat model.
@@ -137,6 +142,7 @@ export const MODELS: ModelConfig[] = [
     label: "qwen3.8-27b-uncensored",
     provider: "custom",
     model: "qwen3.8-27b-uncensored",
+    mode: "chat-only",
     thinking: qwenThinking(["low", "medium", "xhigh"], "xhigh"),
     apiKeyEnv: "QWEN38_UNCENSORED_API_KEY",
     apiKey: QWEN38_UNCENSORED_KEY,

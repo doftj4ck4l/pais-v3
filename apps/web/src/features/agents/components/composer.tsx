@@ -54,7 +54,20 @@ export function Composer({
   const [uploading, setUploading] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
+  const attachmentGeneration = useRef(0)
   const scope = useScope()
+  const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
+  const chatOnly = activeModel?.mode === 'chat-only'
+
+  useEffect(() => {
+    if (chatOnly) attachmentGeneration.current += 1
+  }, [chatOnly])
+
+  useEffect(() => {
+    if (!chatOnly || !images.length) return
+    setImages([])
+    setError('Images were removed because this model supports text chat only.')
+  }, [chatOnly, images.length])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -67,11 +80,17 @@ export function Composer({
   const attach = useCallback(
     async (files: File[]) => {
       if (!files.length) return
+      if (chatOnly) {
+        setError('This model supports text chat only. Choose an agent model to use images.')
+        return
+      }
       setError(null)
       setUploading((n) => n + files.length)
+      const generation = attachmentGeneration.current
       for (const file of files) {
         try {
           const uploaded = await uploadChatImage(scope, file, conversationId)
+          if (attachmentGeneration.current !== generation) continue
           setImages((prev) => [...prev, uploaded])
         } catch (e) {
           // The API's message names the actual problem ("image is 20MB, over
@@ -82,7 +101,7 @@ export function Composer({
         }
       }
     },
-    [scope, conversationId],
+    [scope, conversationId, chatOnly],
   )
 
   const submit = () => {
@@ -181,7 +200,9 @@ export function Composer({
                   submit()
                 }
               }}
-              placeholder={images.length ? 'Ask about the image…' : 'Ask anything…'}
+              placeholder={
+                images.length ? 'Ask about the image…' : chatOnly ? 'Ask anything (chat only)…' : 'Ask anything…'
+              }
               aria-label="Start a new agent"
               className="max-h-[200px] min-h-0 resize-none border-0 bg-transparent px-0 py-2 text-[0.9375rem] shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
@@ -207,7 +228,6 @@ export function Composer({
           {(() => {
             // The model the next send will use decides whether an effort control
             // belongs here at all — only a thinking model carries the levels.
-            const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
             const thinking = activeModel?.thinking
             if (!thinking || !onEffortChange) return null
             return (
@@ -224,8 +244,14 @@ export function Composer({
               <span className="text-destructive">{error}</span>
             ) : (
               <>
-                <ImageIcon className="size-3 shrink-0" />
-                Paste or drop an image to ask about it
+                {chatOnly ? (
+                  <span>Chat only · no tools, connected resources, or images</span>
+                ) : (
+                  <>
+                    <ImageIcon className="size-3 shrink-0" />
+                    Paste or drop an image to ask about it
+                  </>
+                )}
               </>
             )}
           </p>

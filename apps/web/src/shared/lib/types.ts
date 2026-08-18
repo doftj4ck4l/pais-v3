@@ -11,6 +11,8 @@ export type Model = {
   provider: string
   hint: string
   brand: string
+  /** Whether this model runs the full agent or receives text chat only. */
+  mode: 'agent' | 'chat-only'
   ready: boolean
   /** Usable context window in tokens, as declared by the API catalog. */
   contextWindow: number

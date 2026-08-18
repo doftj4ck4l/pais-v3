@@ -19,6 +19,7 @@ import {
 } from '@/shared/ui/select'
 import { Separator } from '@/shared/ui/separator'
 import { ModelLogo } from '@/shared/components/model-logo'
+import { ChatOnlyBadge } from '@/shared/components/chat-only-badge'
 import type { Meta } from '@/shared/lib/types'
 
 /**
@@ -77,13 +78,18 @@ export function SettingsModal({
                       <span className="flex items-center gap-2">
                         <ModelLogo model={m} size={16} className="rounded-[4px]" />
                         <span className="readout">{m.label}</span>
+                        {m.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
                       </span>
                     </SelectItem>
                   ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
-            {model && !model.ready ? (
+            {model?.mode === 'chat-only' ? (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Text prompts only. Tools, connected resources, and images are unavailable.
+              </p>
+            ) : model && !model.ready ? (
               <p className="mt-1.5 text-xs text-muted-foreground">
                 Add an API key to use this model.
               </p>

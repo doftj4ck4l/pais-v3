@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { CHAT_ONLY_SYSTEM_PROMPT } from "./services/agent/model-runtime-policy";
 
 /**
  * These assert the wiring, not the middleware itself: that tenant-scoped
@@ -56,5 +57,132 @@ describe("GET /api/me", () => {
     const res = await createApp().request("/api/me");
 
     expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /api/chat", () => {
+  it("rejects image attachments for a chat-only model", async () => {
+    const res = await createApp().request("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-authentik-uid": "alice-uid",
+      },
+      body: JSON.stringify({
+        modelId: "local-qwen3.8-27b-uncensored",
+        messages: [{ role: "user", content: "Describe this" }],
+        imageIds: ["image-1"],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("supports text chat only");
+  });
+
+  it("rejects prompt templates for a chat-only model", async () => {
+    const res = await createApp().request("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-authentik-uid": "alice-uid",
+      },
+      body: JSON.stringify({
+        modelId: "local-qwen3.8-27b-uncensored",
+        messages: [{ role: "user", content: "Run a template" }],
+        template: { name: "research" },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("accepts plain text prompts only");
+  });
+
+  it("sends one plain provider request without agent resources", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const provider = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests.push((await req.json()) as Record<string, unknown>);
+        const chunk = {
+          id: "chatcmpl-test",
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: "chat-only-test",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", content: "CHAT_ONLY_OK" },
+              finish_reason: null,
+            },
+          ],
+        };
+        const done = {
+          ...chunk,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 24, completion_tokens: 3, total_tokens: 27 },
+        };
+        return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`, {
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
+
+    try {
+      const res = await createApp().request("/api/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-authentik-uid": "chat-only-user",
+        },
+        body: JSON.stringify({
+          modelId: "local-qwen3.8-27b-uncensored",
+          modelConfig: {
+            baseUrl: `http://127.0.0.1:${provider.port}/v1`,
+            model: "chat-only-test",
+            apiKey: "test-key",
+          },
+          messages: [
+            {
+              role: "user",
+              content:
+                "Earlier question\n\n[The user attached an image to this message: /api/images/image-1. " +
+                "You cannot see it directly — call read_image with that source and a specific " +
+                "question to find out what it shows.]",
+            },
+            {
+              role: "assistant",
+              content: "Earlier answer",
+              tool_calls: [
+                {
+                  id: "call-1",
+                  type: "function",
+                  function: { name: "read_image", arguments: '{"source":"image-1"}' },
+                },
+              ],
+            },
+            { role: "tool", tool_call_id: "call-1", content: "image details" },
+            { role: "user", content: "Reply with CHAT_ONLY_OK" },
+          ],
+          reasoningEffort: "low",
+        }),
+      });
+
+      const stream = await res.text();
+      await Bun.sleep(50);
+
+      expect(stream).toContain('"tools":[]');
+      expect(stream).not.toContain('"step":"sandbox.acquire"');
+      expect(stream).not.toContain('"step":"mcp.catalog"');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.tools).toBeUndefined();
+      expect(requests[0]?.messages).toEqual([
+        { role: "system", content: CHAT_ONLY_SYSTEM_PROMPT },
+        { role: "user", content: "Earlier question" },
+        { role: "assistant", content: "Earlier answer" },
+        { role: "user", content: [{ type: "text", text: "Reply with CHAT_ONLY_OK" }] },
+      ]);
+    } finally {
+      provider.stop(true);
+    }
   });
 });
