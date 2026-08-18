@@ -1,0 +1,52 @@
+import { describe, expect, test } from "bun:test";
+import { getModel } from "../../catalog/llm-models";
+import type { ChatMessage } from "../../types/chat";
+import {
+  CHAT_ONLY_SYSTEM_PROMPT,
+  prepareHistoryForModel,
+  systemPromptForModel,
+} from "./model-runtime-policy";
+
+const chatOnly = getModel("local-qwen3.8-27b-uncensored")!;
+const agent = getModel("gw-qwen3.8-27b")!;
+
+describe("model runtime policy", () => {
+  test("uses the minimal chat prompt instead of the agent harness prompt", () => {
+    const harnessPrompt = "Use tools before answering.";
+
+    expect(systemPromptForModel(chatOnly, harnessPrompt)).toBe(CHAT_ONLY_SYSTEM_PROMPT);
+    expect(systemPromptForModel(agent, harnessPrompt)).toBe(harnessPrompt);
+  });
+
+  test("keeps text while removing prior tool calls and results", () => {
+    const history: ChatMessage[] = [
+      { role: "user", content: "Check the database" },
+      {
+        role: "assistant",
+        content: "I checked it.",
+        tool_calls: [
+          {
+            id: "call-1",
+            type: "function",
+            function: { name: "run_query", arguments: '{"sql":"select 1"}' },
+          },
+        ],
+      },
+      { role: "tool", name: "run_query", tool_call_id: "call-1", content: "1" },
+      {
+        role: "user",
+        content:
+          "Explain the result\n\n[The user attached an image to this message: /api/images/image-1. " +
+          "You cannot see it directly — call read_image with that source and a specific question " +
+          "to find out what it shows.]",
+      },
+    ];
+
+    expect(prepareHistoryForModel(chatOnly, history)).toEqual([
+      { role: "user", content: "Check the database" },
+      { role: "assistant", content: "I checked it." },
+      { role: "user", content: "Explain the result" },
+    ]);
+    expect(prepareHistoryForModel(agent, history)).toBe(history);
+  });
+});

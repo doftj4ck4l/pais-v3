@@ -6,6 +6,7 @@ import {
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu'
 import { ModelLogo } from '@/shared/components/model-logo'
+import { ChatOnlyBadge } from '@/shared/components/chat-only-badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/shared/lib/utils'
 import type { Model } from '@/shared/lib/types'
@@ -52,6 +53,7 @@ export function ModelPicker({
           <span className="flex cursor-default items-center gap-1.5 py-0.5 pr-1 pl-0.5 text-[0.6875rem]">
             <ModelLogo model={locked} size={14} className="rounded-[3px]" />
             <span className="readout">{locked?.label ?? lockedId}</span>
+            {locked?.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
           </span>
         </TooltipTrigger>
         <TooltipContent>Start a new chat to use a different model</TooltipContent>
@@ -72,6 +74,7 @@ export function ModelPicker({
       >
         <ModelLogo model={current} size={14} className="rounded-[3px]" />
         <span className="readout">{current?.label ?? 'Pick a model'}</span>
+        {current?.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
         <ChevronDownIcon className="size-3" />
       </DropdownMenuTrigger>
 
@@ -84,11 +87,18 @@ export function ModelPicker({
           >
             <ModelLogo model={m} size={18} className="mt-px rounded-[4px]" />
             <span className="min-w-0 flex-1">
-              <span className="readout block truncate">{m.label}</span>
+              <span className="flex items-center gap-2">
+                <span className="readout min-w-0 truncate">{m.label}</span>
+                {m.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
+              </span>
               <span className="block truncate text-xs text-muted-foreground">
                 {/* A model with no key cannot answer, and saying so here beats
                     letting it be chosen and fail on send. */}
-                {m.ready ? m.hint : 'Needs an API key'}
+                {m.ready
+                  ? m.mode === 'chat-only'
+                    ? 'Text prompts only · no tools or images'
+                    : m.hint
+                  : 'Needs an API key'}
               </span>
             </span>
             {m.id === modelId ? <CheckIcon className="mt-1 size-3.5 shrink-0" /> : null}

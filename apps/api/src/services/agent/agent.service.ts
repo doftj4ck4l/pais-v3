@@ -3,6 +3,7 @@ import type { ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
 import type { AgentEvent, AgentOptions } from "../../types/agent";
 import { runPiAgent } from "./pi.service";
+import { systemPromptForModel } from "./model-runtime-policy";
 
 /**
  * Turns a harness into a run.
@@ -34,7 +35,7 @@ export async function runAgent(
 ): Promise<number> {
   return runPiAgent({
     model,
-    systemPrompt: harness.systemPrompt,
+    systemPrompt: systemPromptForModel(model, harness.systemPrompt),
     history,
     emit,
     signal,

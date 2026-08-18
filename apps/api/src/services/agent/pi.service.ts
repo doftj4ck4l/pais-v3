@@ -47,6 +47,7 @@ import {
 } from "./ask-user-tool";
 import { connectorStore } from "../../repositories/connector.repository";
 import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
+import { isChatOnlyModel } from "./model-runtime-policy";
 import { playbookStore } from "../../repositories/playbook.repository";
 import { renderPlaybook } from "../playbook/prompt";
 import { reflect } from "../playbook/reflector";
@@ -94,6 +95,7 @@ export async function runPiAgent(opts: {
 
   const key = effectiveApiKey(model);
   if (!key) throw new Error(`No API key for ${model.id} (${model.apiKeyEnv})`);
+  const chatOnly = isChatOnlyModel(model);
 
   // The same denominator the pre-run estimate uses, so the meter does not jump
   // when it switches from estimate to provider-reported.
@@ -149,7 +151,12 @@ export async function runPiAgent(opts: {
   /** Where the file and shell tools resolve paths, for the prompt to name. */
   let execCwd: string;
 
-  if (appEnv.sandboxBackend === "docker") {
+  if (chatOnly) {
+    // A chat-only request has no execution surface. Avoid acquiring a sandbox
+    // merely to hand Pi an environment none of its zero tools can use.
+    execCwd = workspace ?? process.cwd();
+    execEnv = new NodeExecutionEnv({ cwd: execCwd });
+  } else if (appEnv.sandboxBackend === "docker") {
     // Timed because a cold acquire pulls an image and starts a container, which
     // is seconds; a warm one is milliseconds. On the timeline the difference
     // between those two is the whole explanation for a slow first run.
@@ -174,34 +181,33 @@ export async function runPiAgent(opts: {
   }
 
   // --- built-in pi tools: bash + file read/write/edit (scoped to workspace) ---
-  const builtinTools: any[] = [
-    createBashTool(),
-    createReadTool(),
-    createWriteTool(),
-    createEditTool(),
-  ];
+  const builtinTools: any[] = chatOnly
+    ? []
+    : [createBashTool(), createReadTool(), createWriteTool(), createEditTool()];
 
   // --- our custom tools convert into pi AgentTools (typebox schemas) ---
-  const agentTools: any[] = TOOLS.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: jsonSchemaToTypebox(tool.parameters),
-    label: tool.name,
-    execute: async (_id: string, params: any) => {
-      const out = await runTool(tool.name, params ?? {});
-      return { content: [{ type: "text" as const, text: out }], details: { output: out } };
-    },
-  }));
+  const agentTools: any[] = chatOnly
+    ? []
+    : TOOLS.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: jsonSchemaToTypebox(tool.parameters),
+        label: tool.name,
+        execute: async (_id: string, params: any) => {
+          const out = await runTool(tool.name, params ?? {});
+          return { content: [{ type: "text" as const, text: out }], details: { output: out } };
+        },
+      }));
 
   // One queue for every way this run can pause for its human. Sharing it keeps
   // parallel MCP writes from replacing each other's approval prompt, and also
   // prevents a model-authored ask_user call from racing an enforced approval.
-  const requestUserInput = conversationId
+  const requestUserInput = !chatOnly && conversationId
     ? createUserInputRequester(conversationId, emit)
     : undefined;
 
   // --- long-term memory tools (remember/recall), scoped to the workspace ---
-  for (const mt of createMemoryTools(workspaceId)) {
+  for (const mt of chatOnly ? [] : createMemoryTools(workspaceId)) {
     agentTools.push({
       name: mt.name,
       description: mt.description,
@@ -226,7 +232,7 @@ export async function runPiAgent(opts: {
   }
 
   // --- context layer: search the user's uploaded documents ---
-  for (const dt of createDocumentTools(workspaceId)) {
+  for (const dt of chatOnly ? [] : createDocumentTools(workspaceId)) {
     agentTools.push({
       name: dt.name,
       description: dt.description,
@@ -239,7 +245,7 @@ export async function runPiAgent(opts: {
   // --- image generation, when both halves of it are configured ---
   // Gated on storage as well as the key: generating an image bills immediately,
   // so a tool that can produce bytes it cannot then keep is worse than absent.
-  if (appEnv.openrouterApiKey && mediaConfigured()) {
+  if (!chatOnly && appEnv.openrouterApiKey && mediaConfigured()) {
     for (const it of createImageTools(workspaceId, conversationId)) {
       agentTools.push({
         name: it.name,
@@ -257,7 +263,7 @@ export async function runPiAgent(opts: {
   // the workspace, which needs no bucket. `execCwd` is passed rather than
   // recomputed because it is the directory the system prompt already names, so
   // a relative path the model writes resolves where the model was told it would.
-  if (visionConfigured()) {
+  if (!chatOnly && visionConfigured()) {
     for (const vt of createVisionTools(workspaceId, execCwd)) {
       agentTools.push({
         name: vt.name,
@@ -275,7 +281,9 @@ export async function runPiAgent(opts: {
   // needs a bucket or a gateway; this one degrades to a workspace download URL
   // that the API serves either way. A run that produces a file and cannot say
   // where it is has not finished, whatever else is configured.
-  for (const st of createShareTools(workspaceId, execCwd, undefined, conversationId)) {
+  for (const st of chatOnly
+    ? []
+    : createShareTools(workspaceId, execCwd, undefined, conversationId)) {
     agentTools.push({
       name: st.name,
       description: st.description,
@@ -289,20 +297,22 @@ export async function runPiAgent(opts: {
   // Database access belongs to the one agent rather than a separate harness.
   // Empty workspaces still avoid the three tool schemas and inventory prompt.
   let dbPrompt = "";
-  try {
-    const database = await loadDatabaseCapability(workspaceId);
-    dbPrompt = database.prompt;
-    for (const dbt of database.tools) {
-      agentTools.push({
-        name: dbt.name,
-        description: dbt.description,
-        parameters: jsonSchemaToTypebox(dbt.parameters as Record<string, unknown>),
-        label: dbt.name,
-        execute: dbt.execute,
-      });
+  if (!chatOnly) {
+    try {
+      const database = await loadDatabaseCapability(workspaceId);
+      dbPrompt = database.prompt;
+      for (const dbt of database.tools) {
+        agentTools.push({
+          name: dbt.name,
+          description: dbt.description,
+          parameters: jsonSchemaToTypebox(dbt.parameters as Record<string, unknown>),
+          label: dbt.name,
+          execute: dbt.execute,
+        });
+      }
+    } catch (e: any) {
+      logger.warn("db.inventory_failed", { workspaceId, message: e?.message ?? String(e) });
     }
-  } catch (e: any) {
-    logger.warn("db.inventory_failed", { workspaceId, message: e?.message ?? String(e) });
   }
 
   // --- calendar: live Google Calendar tools, only when an account is connected ---
@@ -311,22 +321,24 @@ export async function runPiAgent(opts: {
   // account. A workspace with no calendar sees none of these tools, so the list
   // stays clean. The store read is one indexed query and must not fail the run.
   let hasCalendar = false;
-  try {
-    const wsConnectors = await connectorStore.list(workspaceId);
-    if (wsConnectors.some((con) => con.kind === "gcal")) {
-      hasCalendar = true;
-      for (const ct of createCalendarTools(workspaceId)) {
-        agentTools.push({
-          name: ct.name,
-          description: ct.description,
-          parameters: jsonSchemaToTypebox(ct.parameters as Record<string, unknown>),
-          label: ct.label,
-          execute: ct.execute,
-        });
+  if (!chatOnly) {
+    try {
+      const wsConnectors = await connectorStore.list(workspaceId);
+      if (wsConnectors.some((con) => con.kind === "gcal")) {
+        hasCalendar = true;
+        for (const ct of createCalendarTools(workspaceId)) {
+          agentTools.push({
+            name: ct.name,
+            description: ct.description,
+            parameters: jsonSchemaToTypebox(ct.parameters as Record<string, unknown>),
+            label: ct.label,
+            execute: ct.execute,
+          });
+        }
       }
+    } catch (e) {
+      logger.warn("calendar.tools_failed", { run: runId, error: (e as Error).message });
     }
-  } catch (e) {
-    logger.warn("calendar.tools_failed", { run: runId, error: (e as Error).message });
   }
 
   // --- MCP: whatever servers this workspace has enabled ---
@@ -342,134 +354,138 @@ export async function runPiAgent(opts: {
   // Filled in once the harness exists; `search_tools` widens its active tool
   // set through this. See `createToolActivator`.
   const mcpActivator = createToolActivator();
-  try {
-    mcp = await createMcpTools(workspaceId, undefined, undefined, {
-      activator: mcpActivator,
-      // The agent's own working directory, so a spilled result's path is one
-      // the `read` and `bash` tools resolve — under Docker the workspace is
-      // mounted at an identical host and container path, and under the node
-      // backend there is only one path to begin with.
-      workspacePath: execCwd,
-      // A connection is now opened by the first tool call that needs one, which
-      // is somewhere in the middle of a run rather than at its start. Traced
-      // where it happens, or the seconds it costs would go unattributed.
-      onConnect: (o) =>
-        emit({
-          type: "trace",
-          step: "mcp.connect",
-          fields: {
-            server: o.server,
-            ms: o.ms,
-            ok: o.ok,
-            ...(o.error ? { error: o.error } : {}),
-          },
-        }),
-      requestApproval: requestUserInput
-        ? async (request, toolSignal) => {
-            const answer = await requestUserInput(
-              {
-                question: request.question,
-                options: [...APPROVAL_OPTIONS],
-                kind: "approval",
-              },
-              toolSignal ?? signal,
-            );
-            const approved = approvalGranted(answer);
-            emit({
-              type: "trace",
-              step: "mcp.approval",
-              fields: {
-                server: request.server,
-                tool: request.tool,
-                destructive: request.destructive,
-                approved,
-              },
-            });
-            return approved;
-          }
-        : undefined,
-    });
-    // Building the runtime no longer connects to anything — the catalog comes
-    // from `mcp_capabilities`. This span is what proves that: it read ~4-6
-    // seconds per run before, and should now read single-digit milliseconds
-    // unless a server had no cached catalog and had to be probed.
-    emit({
-      type: "trace",
-      step: "mcp.catalog",
-      fields: {
-        ms: mcpTimer.elapsed(),
-        servers: mcp.servers.map((sv) => sv.name).join(", ") || "(none)",
-        ok: mcp.servers.every((sv) => sv.ok),
-        failed: mcp.servers.filter((sv) => !sv.ok).length,
-        // The two numbers this whole mechanism exists to separate: how many
-        // tools the workspace can reach, and how many are occupying context.
-        advertised: mcp.tools.length,
-        active: mcp.activeToolNames.length,
-        probed: mcp.servers.filter((sv) => !sv.cached).length,
-      },
-    });
-    // One span per server as well, so a failure names which one.
-    for (const sv of mcp.servers) {
+  if (!chatOnly) {
+    try {
+      mcp = await createMcpTools(workspaceId, undefined, undefined, {
+        activator: mcpActivator,
+        // The agent's own working directory, so a spilled result's path is one
+        // the `read` and `bash` tools resolve — under Docker the workspace is
+        // mounted at an identical host and container path, and under the node
+        // backend there is only one path to begin with.
+        workspacePath: execCwd,
+        // A connection is now opened by the first tool call that needs one, which
+        // is somewhere in the middle of a run rather than at its start. Traced
+        // where it happens, or the seconds it costs would go unattributed.
+        onConnect: (o) =>
+          emit({
+            type: "trace",
+            step: "mcp.connect",
+            fields: {
+              server: o.server,
+              ms: o.ms,
+              ok: o.ok,
+              ...(o.error ? { error: o.error } : {}),
+            },
+          }),
+        requestApproval: requestUserInput
+          ? async (request, toolSignal) => {
+              const answer = await requestUserInput(
+                {
+                  question: request.question,
+                  options: [...APPROVAL_OPTIONS],
+                  kind: "approval",
+                },
+                toolSignal ?? signal,
+              );
+              const approved = approvalGranted(answer);
+              emit({
+                type: "trace",
+                step: "mcp.approval",
+                fields: {
+                  server: request.server,
+                  tool: request.tool,
+                  destructive: request.destructive,
+                  approved,
+                },
+              });
+              return approved;
+            }
+          : undefined,
+      });
+      // Building the runtime no longer connects to anything — the catalog comes
+      // from `mcp_capabilities`. This span is what proves that: it read ~4-6
+      // seconds per run before, and should now read single-digit milliseconds
+      // unless a server had no cached catalog and had to be probed.
       emit({
         type: "trace",
-        step: "mcp.server",
+        step: "mcp.catalog",
         fields: {
-          name: sv.name,
-          ms: sv.ms,
-          transport: sv.transport,
-          ok: sv.ok,
-          cached: sv.cached,
-          tools: sv.toolCount,
-          resources: sv.resourceCount,
-          prompts: sv.promptCount,
-          ...(sv.error ? { error: sv.error } : {}),
+          ms: mcpTimer.elapsed(),
+          servers: mcp.servers.map((sv) => sv.name).join(", ") || "(none)",
+          ok: mcp.servers.every((sv) => sv.ok),
+          failed: mcp.servers.filter((sv) => !sv.ok).length,
+          // The two numbers this whole mechanism exists to separate: how many
+          // tools the workspace can reach, and how many are occupying context.
+          advertised: mcp.tools.length,
+          active: mcp.activeToolNames.length,
+          probed: mcp.servers.filter((sv) => !sv.cached).length,
         },
       });
-    }
-    for (const outcome of mcp.servers) {
-      if (!outcome.ok) {
+      // One span per server as well, so a failure names which one.
+      for (const sv of mcp.servers) {
         emit({
           type: "trace",
-          step: "mcp",
-          fields: { server: outcome.name, ok: false, error: outcome.error },
+          step: "mcp.server",
+          fields: {
+            name: sv.name,
+            ms: sv.ms,
+            transport: sv.transport,
+            ok: sv.ok,
+            cached: sv.cached,
+            tools: sv.toolCount,
+            resources: sv.resourceCount,
+            prompts: sv.promptCount,
+            ...(sv.error ? { error: sv.error } : {}),
+          },
         });
       }
+      for (const outcome of mcp.servers) {
+        if (!outcome.ok) {
+          emit({
+            type: "trace",
+            step: "mcp",
+            fields: { server: outcome.name, ok: false, error: outcome.error },
+          });
+        }
+      }
+      if (mcp.tools.length) {
+        logger.info("mcp.ready", {
+          run: runId,
+          servers: mcp.servers.filter((s) => s.ok).length,
+          tools: mcp.tools.length,
+        });
+      }
+      agentTools.push(...mcp.tools);
+    } catch (e: any) {
+      logger.warn("mcp.load_failed", { run: runId, message: e?.message ?? String(e) });
     }
-    if (mcp.tools.length) {
-      logger.info("mcp.ready", {
-        run: runId,
-        servers: mcp.servers.filter((s) => s.ok).length,
-        tools: mcp.tools.length,
-      });
-    }
-    agentTools.push(...mcp.tools);
-  } catch (e: any) {
-    logger.warn("mcp.load_failed", { run: runId, message: e?.message ?? String(e) });
   }
 
   // --- pi-native skills (SKILL.md) loaded from apps/api/skills ---
-  const { skills } = await getSkills();
-  agentTools.push({
-    name: "call_skill",
-    description:
-      "Invoke a loaded skill by running its command. Skills available: " +
-      skills.map((s) => s.name).join(", ") +
-      ". Pass the query or URL as 'query'.",
-    parameters: Type.Object({
-      skill: Type.String(),
-      query: Type.String(),
-    }),
-    label: "call_skill",
-    execute: async (_id: string, params: any) => {
-      const out = await invokeSkill(String(params?.skill ?? ""), String(params?.query ?? ""), execEnv);
-      return { content: [{ type: "text" as const, text: out }], details: { output: out } };
-    },
-  });
+  const skills = chatOnly ? [] : (await getSkills()).skills;
+  if (!chatOnly) {
+    agentTools.push({
+      name: "call_skill",
+      description:
+        "Invoke a loaded skill by running its command. Skills available: " +
+        skills.map((s) => s.name).join(", ") +
+        ". Pass the query or URL as 'query'.",
+      parameters: Type.Object({
+        skill: Type.String(),
+        query: Type.String(),
+      }),
+      label: "call_skill",
+      execute: async (_id: string, params: any) => {
+        const out = await invokeSkill(String(params?.skill ?? ""), String(params?.query ?? ""), execEnv);
+        return { content: [{ type: "text" as const, text: out }], details: { output: out } };
+      },
+    });
+  }
 
   // --- prompt templates loaded from apps/api/prompts/*.md ---
   const promptsDir = path.resolve(process.cwd(), "prompts");
   let promptTemplates: any[] = [];
-  if (fs.existsSync(promptsDir)) {
+  if (!chatOnly && fs.existsSync(promptsDir)) {
     const loaded = await loadPromptTemplates(execEnv, promptsDir);
     promptTemplates = loaded.promptTemplates;
   }
@@ -484,26 +500,28 @@ export async function runPiAgent(opts: {
     ];
   }
 
-  const skillsPrompt = await skillsBlock();
+  const skillsPrompt = chatOnly ? "" : await skillsBlock();
 
   // Naming the corpus up front is what turns search_docs from a tool the model
   // *could* call into one it knows is worth calling. Listed only when something
   // is actually indexed — advertising an empty corpus invites fruitless searches.
   let docsPrompt = "";
-  try {
-    const indexed = (await documentStore.list(workspaceId)).filter((d) => d.status === "indexed");
-    if (indexed.length) {
-      docsPrompt =
-        `\n\nThe user has uploaded ${indexed.length} document(s) you can search with the ` +
-        `"search_docs" tool: ${indexed.map((d) => `${d.title} (${d.pages}p)`).join(", ")}.\n` +
-        `When a question could be answered from them, search before answering, and cite the ` +
-        `passages you used as [file p.N]. If a search returns nothing useful, try different ` +
-        `wording before falling back on your own knowledge — and say so when you do.\n` +
-        `These documents are indexed passages, not files in your workspace: reach them only ` +
-        `through "search_docs". Do not try to open them with the read tool.`;
+  if (!chatOnly) {
+    try {
+      const indexed = (await documentStore.list(workspaceId)).filter((d) => d.status === "indexed");
+      if (indexed.length) {
+        docsPrompt =
+          `\n\nThe user has uploaded ${indexed.length} document(s) you can search with the ` +
+          `"search_docs" tool: ${indexed.map((d) => `${d.title} (${d.pages}p)`).join(", ")}.\n` +
+          `When a question could be answered from them, search before answering, and cite the ` +
+          `passages you used as [file p.N]. If a search returns nothing useful, try different ` +
+          `wording before falling back on your own knowledge — and say so when you do.\n` +
+          `These documents are indexed passages, not files in your workspace: reach them only ` +
+          `through "search_docs". Do not try to open them with the read tool.`;
+      }
+    } catch (e: any) {
+      logger.warn("context.list_failed", { workspaceId, message: e?.message ?? String(e) });
     }
-  } catch (e: any) {
-    logger.warn("context.list_failed", { workspaceId, message: e?.message ?? String(e) });
   }
 
   // What earlier runs in this workspace learned. Injected rather than offered
@@ -511,10 +529,12 @@ export async function runPiAgent(opts: {
   // that motivated this one never called it — a fact the model has to decide to
   // look up is a fact it does not have.
   let playbookPrompt = "";
-  try {
-    playbookPrompt = renderPlaybook(await playbookStore.list(workspaceId));
-  } catch (e: any) {
-    logger.warn("playbook.load_failed", { workspaceId, message: e?.message ?? String(e) });
+  if (!chatOnly) {
+    try {
+      playbookPrompt = renderPlaybook(await playbookStore.list(workspaceId));
+    } catch (e: any) {
+      logger.warn("playbook.load_failed", { workspaceId, message: e?.message ?? String(e) });
+    }
   }
 
   // The user's own Google Calendar is authoritative over any other calendar a
@@ -546,6 +566,7 @@ export async function runPiAgent(opts: {
       step: "llm.tools",
       fields: { count: activeNames.length, tools: activeTools },
     });
+    if (chatOnly) return systemPrompt;
     let out = systemPrompt;
     if (activeTools) out += `\n\nAvailable tools: ${activeTools}.`;
     // Before the MCP block, deliberately. The agent's own machine is the
@@ -1004,16 +1025,18 @@ export async function runPiAgent(opts: {
     // the user sees. Its failures are logged inside `reflect` and swallowed
     // here — a run that answered correctly must not be reported as failed
     // because the thing that learns from it did not.
-    void reflect({
-      workspaceId,
-      runId: runId === "-" ? null : runId,
-      model,
-      history,
-      answer: answerText,
-      toolCalls: toolLog,
-    }).catch((e) => {
-      logger.warn("playbook.reflect_crashed", { run: runId, message: (e as Error)?.message });
-    });
+    if (!chatOnly) {
+      void reflect({
+        workspaceId,
+        runId: runId === "-" ? null : runId,
+        model,
+        history,
+        answer: answerText,
+        toolCalls: toolLog,
+      }).catch((e) => {
+        logger.warn("playbook.reflect_crashed", { run: runId, message: (e as Error)?.message });
+      });
+    }
   } catch (e) {
     logger.warn("run.error", { run: runId, ms: t.elapsed(), error: (e as Error)?.message });
     emit({ type: "error", message: (e as Error)?.message ?? String(e) });

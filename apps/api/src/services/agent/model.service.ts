@@ -10,6 +10,7 @@ export type MetaPayload = {
     provider: string;
     hint: string;
     brand: string;
+    mode: "agent" | "chat-only";
     ready: boolean;
     /** Usable context window, so the console can meter a thread against it. */
     contextWindow: number;
@@ -31,6 +32,7 @@ export function getMeta(): MetaPayload {
       provider: m.provider,
       hint: m.hint,
       brand: m.brand,
+      mode: m.mode ?? "agent",
       ready: isLikelyConfigured(m),
       contextWindow: m.contextWindow,
       // Only the levels and default reach the UI; the sampling recipe stays server-side.
