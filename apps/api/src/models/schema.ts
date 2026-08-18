@@ -158,7 +158,10 @@ export const conversations = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("idx_conversations_workspace").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("idx_conversations_workspace").on(t.workspaceId, t.createdAt),
+    index("idx_conversations_created").on(t.createdAt),
+  ],
 );
 export type ConversationRow = {
   id: string;
@@ -605,6 +608,7 @@ export const runs = sqliteTable(
   },
   (t) => [
     index("idx_runs_workspace").on(t.workspaceId, t.startedAt),
+    index("idx_runs_started").on(t.startedAt),
     index("idx_runs_conversation").on(t.conversationId, t.startedAt),
   ],
 );

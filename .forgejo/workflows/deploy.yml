@@ -58,6 +58,9 @@ jobs:
           echo "running ${#files[@]} test files"
           bun test "${files[@]}"
 
+      - name: Test web
+        run: bun run --cwd apps/web test
+
   deploy:
     needs: test
     runs-on: ubuntu-latest

@@ -8,7 +8,7 @@ import type { ChatMessage } from "../../types/chat";
  * HTTP layer and the agent loop, and is pure enough to test with plain messages.
  */
 
-/** Reserved for the model's own reply plus system prompt and tool schemas. */
+/** Maximum reserved for the model's own reply plus system prompt and tool schemas. */
 export const RESERVE_TOKENS = 8_000;
 
 /** Compact once the thread passes this share of the usable window. */
@@ -41,7 +41,12 @@ export function estimateHistoryTokens(history: ChatMessage[]): number {
 
 /** What a model can actually be given, once room for its reply is reserved. */
 export function usableWindow(contextWindow: number): number {
-  return Math.max(1, contextWindow - RESERVE_TOKENS);
+  // A fixed 8k reserve works for the large gateway models, but would leave an
+  // 8,192-token local model with only 192 usable tokens. Small models split the
+  // window evenly instead: enough room for the system/tool prefix and answer,
+  // without making every ordinary user message look over budget.
+  const reserve = Math.min(RESERVE_TOKENS, Math.floor(contextWindow / 2));
+  return Math.max(1, contextWindow - reserve);
 }
 
 /**

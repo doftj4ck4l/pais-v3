@@ -1,5 +1,13 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db, runs, traces } from "../db/client";
+import {
+  db,
+  organizationMemberships,
+  organizations,
+  runs,
+  traces,
+  users,
+  workspaces,
+} from "../db/client";
 import type { RunRow, RunStatus, TraceRow } from "../models/schema";
 
 /**
@@ -49,8 +57,104 @@ export type RunSpan = {
 /** One tool this workspace has actually called, and how often. */
 export type ToolUsage = { name: string; calls: number };
 
+export type PlatformRunRow = RunRow & {
+  userId: string | null;
+  displayName: string | null;
+  email: string | null;
+  workspaceName: string | null;
+  organizations: Array<{ id: string; name: string }>;
+};
+
+export type PlatformRunFilters = {
+  limit?: number;
+  offset?: number;
+  userId?: string;
+  organizationId?: string;
+  status?: RunStatus;
+  query?: string;
+};
+
 /** How long the prompt preview stored on the row may be. */
 const PROMPT_PREVIEW = 300;
+
+type PlatformRunDatabaseRow = Omit<PlatformRunRow, "organizations">;
+
+async function platformRows(
+  where: ReturnType<typeof sql>,
+  limit: number,
+  offset: number,
+  dbImpl: typeof db,
+): Promise<PlatformRunDatabaseRow[]> {
+  return dbImpl.all<PlatformRunDatabaseRow>(sql`
+    SELECT
+      ${runs.id} AS id,
+      ${runs.conversationId} AS conversationId,
+      ${runs.workspaceId} AS workspaceId,
+      ${runs.harnessId} AS harnessId,
+      ${runs.modelId} AS modelId,
+      ${runs.prompt} AS prompt,
+      ${runs.startedAt} AS startedAt,
+      ${runs.endedAt} AS endedAt,
+      ${runs.status} AS status,
+      ${runs.turns} AS turns,
+      ${runs.tokensIn} AS tokensIn,
+      ${runs.tokensOut} AS tokensOut,
+      ${runs.toolCalls} AS toolCalls,
+      ${runs.toolErrors} AS toolErrors,
+      ${runs.error} AS error,
+      ${workspaces.userId} AS userId,
+      ${users.displayName} AS displayName,
+      (SELECT min(${organizationMemberships.email})
+        FROM ${organizationMemberships}
+        WHERE ${organizationMemberships.userId} = ${workspaces.userId}) AS email,
+      ${workspaces.name} AS workspaceName
+    FROM ${runs}
+    LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+    LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
+    WHERE ${where}
+    ORDER BY ${runs.startedAt} DESC, ${runs.id}
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+}
+
+async function platformTotal(
+  where: ReturnType<typeof sql>,
+  dbImpl: typeof db,
+): Promise<number> {
+  const rows = await dbImpl.all<{ value: number }>(sql`
+    SELECT count(*) AS value
+    FROM ${runs}
+    LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+    LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
+    WHERE ${where}
+  `);
+  return Number(rows[0]?.value ?? 0);
+}
+
+function platformRun(row: PlatformRunDatabaseRow): PlatformRunRow {
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    workspaceId: row.workspaceId,
+    harnessId: row.harnessId,
+    modelId: row.modelId,
+    prompt: row.prompt,
+    startedAt: Number(row.startedAt),
+    endedAt: row.endedAt == null ? null : Number(row.endedAt),
+    status: row.status,
+    turns: Number(row.turns),
+    tokensIn: Number(row.tokensIn),
+    tokensOut: Number(row.tokensOut),
+    toolCalls: Number(row.toolCalls),
+    toolErrors: Number(row.toolErrors),
+    error: row.error,
+    userId: row.userId,
+    displayName: row.displayName,
+    email: row.email,
+    workspaceName: row.workspaceName,
+    organizations: [],
+  };
+}
 
 export const runRepository = {
   /** Record a run as started. Returns nothing; the caller already has the id. */
@@ -105,6 +209,62 @@ export const runRepository = {
       .from(runs)
       .where(and(eq(runs.workspaceId, workspaceId), eq(runs.id, runId)));
     return (rows[0] as RunRow) ?? null;
+  },
+
+  /** Every tenant's runs, with enough owner context for the super-admin ledger. */
+  async listPlatform(
+    filters: PlatformRunFilters = {},
+    dbImpl: typeof db = db,
+  ): Promise<{ runs: PlatformRunRow[]; total: number }> {
+    const conditions = [sql`1 = 1`];
+    if (filters.userId) conditions.push(sql`${workspaces.userId} = ${filters.userId}`);
+    if (filters.status) conditions.push(sql`${runs.status} = ${filters.status}`);
+    if (filters.organizationId) {
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM ${organizationMemberships}
+        WHERE ${organizationMemberships.userId} = ${workspaces.userId}
+          AND ${organizationMemberships.organizationId} = ${filters.organizationId}
+      )`);
+    }
+    const query = filters.query?.trim().toLocaleLowerCase();
+    if (query) {
+      const like = `%${query}%`;
+      conditions.push(sql`lower(
+        coalesce(${runs.prompt}, '') || ' ' || ${runs.modelId} || ' ' ||
+        coalesce(${workspaces.name}, '') || ' ' || coalesce(${workspaces.userId}, '') || ' ' ||
+        coalesce(${users.displayName}, '') || ' ' || coalesce((
+          SELECT min(${organizationMemberships.email})
+          FROM ${organizationMemberships}
+          WHERE ${organizationMemberships.userId} = ${workspaces.userId}
+        ), '')
+      ) LIKE ${like}`);
+    }
+
+    const limit = Math.max(1, Math.min(200, Math.floor(filters.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(filters.offset ?? 0));
+    const where = sql.join(conditions, sql` AND `);
+    const [rows, total] = await Promise.all([
+      platformRows(where, limit, offset, dbImpl),
+      platformTotal(where, dbImpl),
+    ]);
+    return {
+      total,
+      runs: rows.map(platformRun),
+    };
+  },
+
+  /** One unscoped run. Callers must enforce the super-admin policy first. */
+  async getPlatform(runId: string, dbImpl: typeof db = db): Promise<PlatformRunRow | null> {
+    const rows = await platformRows(sql`${runs.id} = ${runId}`, 1, 0, dbImpl);
+    if (!rows[0]) return null;
+    const run = platformRun(rows[0]);
+    if (!run.userId) return run;
+    const memberships = await dbImpl
+      .select({ id: organizations.id, name: organizations.name })
+      .from(organizationMemberships)
+      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(eq(organizationMemberships.userId, run.userId));
+    return { ...run, organizations: memberships };
   },
 
   /**

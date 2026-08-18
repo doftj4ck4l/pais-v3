@@ -148,6 +148,10 @@ describe("usableWindow", () => {
     expect(usableWindow(100_000)).toBe(100_000 - RESERVE_TOKENS);
   });
 
+  it("keeps half of a small context window usable", () => {
+    expect(usableWindow(8_192)).toBe(4_096);
+  });
+
   it("never returns a negative budget for a tiny window", () => {
     expect(usableWindow(10)).toBeGreaterThan(0);
   });

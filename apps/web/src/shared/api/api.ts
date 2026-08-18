@@ -20,6 +20,9 @@ import type {
   OrganizationInvitation,
   InvitationInspection,
   InvitationAcceptance,
+  AdminAnalytics,
+  AdminUser,
+  RunStatus,
 } from '@/shared/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -671,18 +674,43 @@ export async function importMcpServer(
   return { server: body.server }
 }
 
-/** Recent runs in this workspace, newest first. */
-export async function listRuns(scope: Scope, limit = 50): Promise<RunRow[]> {
-  const { runs } = await json<{ runs: RunRow[] }>(
-    await fetch(`/api/admin/runs?${scoped(scope, { limit: String(limit) })}`),
-  )
-  return runs
+export type AdminRunFilters = {
+  limit?: number
+  offset?: number
+  query?: string
+  userId?: string
+  organizationId?: string
+  status?: RunStatus
+}
+
+export async function getAdminAnalytics(days = 30, signal?: AbortSignal): Promise<AdminAnalytics> {
+  return json<AdminAnalytics>(await fetch(`/api/admin/analytics?days=${days}`, { signal }))
+}
+
+export async function listAdminUsers(input: { limit?: number; offset?: number; query?: string; signal?: AbortSignal } = {}): Promise<{ users: AdminUser[]; total: number }> {
+  const query = new URLSearchParams()
+  query.set('limit', String(input.limit ?? 50))
+  query.set('offset', String(input.offset ?? 0))
+  if (input.query) query.set('q', input.query)
+  return json<{ users: AdminUser[]; total: number }>(await fetch(`/api/admin/users?${query}`, { signal: input.signal }))
+}
+
+/** Recent runs across every user and workspace. */
+export async function listRuns(filters: AdminRunFilters = {}, signal?: AbortSignal): Promise<{ runs: RunRow[]; total: number }> {
+  const query = new URLSearchParams()
+  query.set('limit', String(filters.limit ?? 50))
+  query.set('offset', String(filters.offset ?? 0))
+  if (filters.query) query.set('q', filters.query)
+  if (filters.userId) query.set('userId', filters.userId)
+  if (filters.organizationId) query.set('organizationId', filters.organizationId)
+  if (filters.status) query.set('status', filters.status)
+  return json<{ runs: RunRow[]; total: number }>(await fetch(`/api/admin/runs?${query}`, { signal }))
 }
 
 /** One run and its spans, already positioned relative to the run's start. */
-export async function getRun(scope: Scope, id: string): Promise<RunDetail> {
+export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
   return json<RunDetail>(
-    await fetch(`/api/admin/runs/${encodeURIComponent(id)}?${scoped(scope)}`),
+    await fetch(`/api/admin/runs/${encodeURIComponent(id)}`, { signal }),
   )
 }
 

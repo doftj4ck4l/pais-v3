@@ -1,19 +1,26 @@
-import { ActivityIcon, Building2Icon, LayoutDashboardIcon } from 'lucide-react'
+import { ActivityIcon, Building2Icon, LayoutDashboardIcon, UsersIcon } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export type AdminNavItem = {
-  to: '/admin' | '/admin/organizations' | '/admin/runs'
+  to: '/admin' | '/admin/users' | '/admin/organizations' | '/admin/runs'
   label: string
   icon: LucideIcon
 }
 
 export type AdminDestination = AdminNavItem & {
-  to: '/admin/organizations' | '/admin/runs'
+  to: '/admin/users' | '/admin/organizations' | '/admin/runs'
   description: string
   action: string
 }
 
 export const ADMIN_DESTINATIONS: AdminDestination[] = [
+  {
+    to: '/admin/users',
+    label: 'Users',
+    icon: UsersIcon,
+    description: 'Track every account, including independent users, with workspace, conversation, run, and token totals.',
+    action: 'View user activity',
+  },
   {
     to: '/admin/organizations',
     label: 'Organizations',
