@@ -200,6 +200,7 @@ export type RunStatus = 'running' | 'done' | 'error' | 'stopped'
 export type RunRow = {
   id: string
   conversationId: string
+  workspaceId: string | null
   harnessId: string
   modelId: string
   prompt: string | null
@@ -212,6 +213,11 @@ export type RunRow = {
   toolCalls: number
   toolErrors: number
   error: string | null
+  userId: string | null
+  displayName: string | null
+  email: string | null
+  workspaceName: string | null
+  organizations: Array<{ id: string; name: string }>
   /** Null while the run is still in flight. */
   durationMs: number | null
 }
@@ -230,6 +236,62 @@ export type RunSpan = {
 export type RunDetail = {
   run: RunRow & { endedAt: number; durationMs: number }
   spans: RunSpan[]
+}
+
+export type AdminActivityDay = {
+  date: string
+  runs: number
+  conversations: number
+  activeUsers: number
+  tokensIn: number
+  tokensOut: number
+  errors: number
+}
+
+export type AdminAnalytics = {
+  generatedAt: number
+  periodDays: number
+  totals: {
+    users: number
+    workspaces: number
+    organizations: number
+    conversations: number
+    runs: number
+    tokensIn: number
+    tokensOut: number
+    toolCalls: number
+    toolErrors: number
+  }
+  period: {
+    runs: number
+    conversations: number
+    activeUsers: number
+    tokensIn: number
+    tokensOut: number
+    errors: number
+    previousRuns: number
+    previousTokensIn: number
+    previousTokensOut: number
+  }
+  daily: AdminActivityDay[]
+  statuses: Array<{ status: string; runs: number }>
+  models: Array<{ modelId: string; runs: number; tokensIn: number; tokensOut: number }>
+}
+
+export type AdminUser = {
+  userId: string
+  displayName: string | null
+  email: string | null
+  createdAt: number
+  workspaceCount: number
+  conversationCount: number
+  runCount: number
+  tokensIn: number
+  tokensOut: number
+  toolCalls: number
+  toolErrors: number
+  lastActiveAt: number | null
+  organizations: Array<{ id: string; name: string }>
 }
 
 /** What one MCP server advertised the last time it was probed. */

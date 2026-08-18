@@ -31,7 +31,7 @@ export function AdminShell() {
 
   return (
     <div className="flex h-full min-h-0 bg-background">
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar md:flex xl:w-72">
         <AdminBrand />
         <nav aria-label="Admin panel" className="grid gap-1 p-3">
           {ADMIN_NAV.map((item) => <AdminNavLink key={item.to} {...item} />)}
@@ -51,8 +51,8 @@ export function AdminShell() {
           <div className="flex h-14 items-center gap-2.5 px-4">
             <ShieldCheckIcon className="size-5 text-primary" />
             <span className="text-base font-semibold">Admin panel</span>
-            <Button variant="ghost" size="sm" className="ml-auto" asChild>
-              <Link to="/"><ArrowLeftIcon /> Workspace</Link>
+            <Button variant="ghost" size="sm" className="ml-auto px-2 sm:px-2.5" asChild>
+              <Link to="/"><ArrowLeftIcon /><span className="hidden sm:inline">Workspace</span><span className="sr-only sm:hidden">Back to workspace</span></Link>
             </Button>
           </div>
           <nav aria-label="Admin panel" className="flex gap-1.5 overflow-x-auto border-t px-3 py-2">
