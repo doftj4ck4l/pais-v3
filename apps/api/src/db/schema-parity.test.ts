@@ -113,6 +113,63 @@ describe("schema parity", () => {
     expect(indexes).toEqual(["idx_conversations_created", "idx_runs_started"]);
   });
 
+  it("migrates historical runs to cumulative input-token accounting", () => {
+    const database = fresh();
+    database
+      .query(
+        "INSERT INTO runs " +
+          "(id, conversation_id, harness_id, model_id, started_at, status, tokens_in) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("legacy-run", "legacy-conversation", "pi", "model", 1, "done", 180);
+    const insertTrace = database.query(
+      "INSERT INTO traces (id, conversation_id, run_id, step, fields, ts) " +
+        "VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insertTrace.run(
+      "legacy-trace-1",
+      "legacy-conversation",
+      "legacy-run",
+      "context.usage",
+      JSON.stringify({ used: 120, output: 15 }),
+      2,
+    );
+    insertTrace.run(
+      "legacy-trace-2",
+      "legacy-conversation",
+      "legacy-run",
+      "context.usage",
+      JSON.stringify({ used: 180, output: 25 }),
+      3,
+    );
+    insertTrace.run(
+      "legacy-trace-malformed",
+      "legacy-conversation",
+      "legacy-run",
+      "context.usage",
+      "not-json",
+      4,
+    );
+
+    const migration = fs.readFileSync(
+      path.resolve(import.meta.dir, "../../drizzle/0008_same_shinobi_shaw.sql"),
+      "utf8",
+    );
+    const backfillStatement = migration
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .find((statement) => statement.startsWith("UPDATE `runs`"));
+    expect(backfillStatement).toBeDefined();
+    database.exec(backfillStatement!);
+
+    const row = database
+      .query<{ tokensIn: number }, []>(
+        "SELECT tokens_in AS tokensIn FROM runs WHERE id = 'legacy-run'",
+      )
+      .get();
+    expect(row?.tokensIn).toBe(300);
+  });
+
   it("leaves no column behind that the ORM does not know about", () => {
     // The other direction, checked after the full boot sequence rather than
     // after applySchema alone: `user_id` is deliberately created and then

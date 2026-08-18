@@ -10,6 +10,14 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import type { RunSpan } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
+import {
+  collapseUnchangedToolAvailability,
+  descriptionOf,
+  fieldLabelOf,
+  labelOf,
+  payloadPresentationOf,
+  SPAN_PAYLOAD_KEYS,
+} from './run-span-presentation'
 
 /**
  * A run's spans as a waterfall.
@@ -94,12 +102,6 @@ function kindOf(step: string) {
   return KINDS.find((k) => k.match(step)) ?? FALLBACK
 }
 
-/** The tool's own name when there is one; the step is a poor label for `tool`. */
-function labelOf(span: RunSpan): string {
-  const name = span.fields.name
-  return typeof name === 'string' && name ? name : span.step
-}
-
 function ms(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${Math.round(n)}ms`
 }
@@ -119,7 +121,7 @@ export function RunWaterfall({
   // full strength, rather than an empty selection hiding the whole run.
   const [picked, setPicked] = useState<Set<string>>(new Set())
 
-  const bars = spans.filter((s) => !BRACKETS.has(s.step))
+  const bars = collapseUnchangedToolAvailability(spans.filter((s) => !BRACKETS.has(s.step)))
 
   // Only kinds this run actually contains get a chip. Offering "sandbox" on a
   // run that never touched one is a control that can only disappoint.
@@ -181,7 +183,7 @@ export function RunWaterfall({
                 onClick={() => onSelect?.(s)}
                 aria-pressed={selectedId === s.id}
                 className={cn(
-                  'grid w-full grid-cols-[15rem_1fr_5rem] items-center gap-3 px-5 py-2 text-left',
+                  'grid w-full grid-cols-[minmax(8rem,15rem)_minmax(7rem,1fr)_4.5rem] items-center gap-3 px-5 py-2 text-left',
                   'transition-[background-color,opacity] hover:bg-accent/50',
                   selectedId === s.id && 'bg-accent',
                   muted && 'opacity-30',
@@ -297,22 +299,12 @@ const HEADER_FIELDS = new Set(['name', 'ms', 'ok'])
  * read, and both are too long for a definition-list row. They get their own
  * scrollable blocks, in call order: input first, then output.
  */
-const PAYLOAD_FIELDS: { key: string; label: string }[] = [
-  { key: 'args', label: 'input' },
-  { key: 'result', label: 'output' },
-  { key: 'answer', label: 'answer' },
-  // Long enough to wrap badly as a definition-list row, and the whole reason
-  // the span exists is to be read in full.
-  { key: 'tools', label: 'tools sent' },
-  { key: 'error', label: 'error' },
-]
-
-function Payload({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+function Payload({ label, meta, value, danger }: { label: string; meta: string; value: string; danger?: boolean }) {
   return (
     <div className="px-4 pb-4">
       <p className="mb-1.5 flex items-baseline gap-2 text-xs text-muted-foreground">
         <span>{label}</span>
-        <span className="tabular-nums opacity-60">{value.length.toLocaleString()} chars</span>
+        <span className="tabular-nums opacity-60">{meta}</span>
       </p>
       <pre
         className={cn(
@@ -320,7 +312,7 @@ function Payload({ label, value, danger }: { label: string; value: string; dange
           // growing without bound: input and output are usually read together,
           // and a 40k-character result would push the other one off screen.
           'readout max-h-72 overflow-auto rounded-md border bg-background px-3 py-2.5',
-          'text-xs leading-relaxed whitespace-pre-wrap break-all',
+          'text-xs leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]',
           danger && 'text-destructive',
         )}
       >
@@ -331,39 +323,22 @@ function Payload({ label, value, danger }: { label: string; value: string; dange
 }
 
 /**
- * The panel with nothing selected.
- *
- * Kept as a real state rather than rendering nothing, so the column does not
- * appear and disappear as spans are clicked — a layout that reflows on every
- * selection is much harder to read a timeline in.
- */
-export function SpanDetailEmpty() {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      <p className="max-w-[20rem] text-center text-sm leading-6 text-muted-foreground">
-        Pick a span on the left to see what it sent, what came back, and where it ran.
-      </p>
-    </div>
-  )
-}
-
-/**
  * One span, in full.
  *
- * Sized to fill its container and scroll inside it, so it can sit as a column
- * beside the waterfall. It used to render underneath: on a run with sixty
- * spans that meant clicking a row near the top and having its detail appear
- * below the fold, then scrolling back up to click the next one.
+ * The inspector docks beneath the waterfall. This preserves the selected
+ * run's reading width while keeping a long payload visible during span-to-span
+ * comparison.
  */
 export function SpanDetail({ span, onClose }: { span: RunSpan; onClose: () => void }) {
   const kind = kindOf(span.step)
   const where = contextOf(span)
-  const payloadKeys = new Set(PAYLOAD_FIELDS.map((p) => p.key))
+  const description = descriptionOf(span)
+  const payloadKeys = new Set(SPAN_PAYLOAD_KEYS)
   const rest = Object.entries(span.fields).filter(
     ([k, v]) => !HEADER_FIELDS.has(k) && !payloadKeys.has(k) && v !== '' && v != null,
   )
-  const payloads = PAYLOAD_FIELDS.filter(
-    (p) => typeof span.fields[p.key] === 'string' && span.fields[p.key] !== '',
+  const payloads = SPAN_PAYLOAD_KEYS.filter(
+    (key) => typeof span.fields[key] === 'string' && span.fields[key] !== '',
   )
 
   return (
@@ -371,7 +346,9 @@ export function SpanDetail({ span, onClose }: { span: RunSpan; onClose: () => vo
       {/* Outside the scrolling region below, so the span you are reading stays
           named while you scroll a long payload. No `sticky` needed — only the
           sibling scrolls. */}
-      <div className="flex shrink-0 items-center gap-2.5 border-b px-4 py-3">
+      <div className="flex shrink-0 items-center gap-2.5 border-b px-5 py-3.5">
+        <span className="readout text-[0.65rem] font-medium uppercase tracking-[0.14em] text-muted-foreground">Trace inspector</span>
+        <span className="h-3 w-px bg-border" aria-hidden />
         <kind.Icon className={cn('size-4 shrink-0', kind.text)} aria-hidden />
         <span className="min-w-0 flex-1 truncate text-sm font-medium" title={labelOf(span)}>
           {labelOf(span)}
@@ -385,8 +362,14 @@ export function SpanDetail({ span, onClose }: { span: RunSpan; onClose: () => vo
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-1.5 px-4 py-4 text-sm">
+      {description ? (
+        <p className="shrink-0 border-b bg-accent/30 px-5 py-3 text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+      ) : null}
+
+      <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[19rem_minmax(0,1fr)] lg:overflow-hidden">
+        <dl className="grid content-start grid-cols-[6rem_1fr] gap-x-4 gap-y-2 border-b px-5 py-4 text-sm lg:overflow-y-auto lg:border-r lg:border-b-0">
           <Row label="step" value={span.step} />
           <Row label="duration" value={span.durationMs ? ms(span.durationMs) : 'instant'} />
           <Row label="offset" value={`+${ms(span.offsetMs)} into the run`} />
@@ -395,20 +378,27 @@ export function SpanDetail({ span, onClose }: { span: RunSpan; onClose: () => vo
           {rest.map(([key, value]) => (
             <Row
               key={key}
-              label={key}
+              label={fieldLabelOf(span, key)}
               value={typeof value === 'string' ? value : JSON.stringify(value)}
             />
           ))}
         </dl>
 
-        {payloads.map((p) => (
-          <Payload
-            key={p.key}
-            label={p.label}
-            value={String(span.fields[p.key])}
-            danger={p.key === 'error'}
-          />
-        ))}
+        <div className="min-w-0 overflow-y-auto pt-4">
+          {payloads.length ? payloads.map((key) => {
+            const value = String(span.fields[key])
+            const presentation = payloadPresentationOf(span, key, value)
+            return (
+              <Payload
+                key={key}
+                label={presentation.label}
+                meta={presentation.meta}
+                value={value}
+                danger={key === 'error'}
+              />
+            )
+          }) : <p className="px-5 py-4 text-sm text-muted-foreground">This span has no recorded payload.</p>}
+        </div>
       </div>
     </div>
   )

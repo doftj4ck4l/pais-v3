@@ -708,9 +708,9 @@ export async function listRuns(filters: AdminRunFilters = {}, signal?: AbortSign
 }
 
 /** One run and its spans, already positioned relative to the run's start. */
-export async function getRun(id: string): Promise<RunDetail> {
+export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
   return json<RunDetail>(
-    await fetch(`/api/admin/runs/${encodeURIComponent(id)}`),
+    await fetch(`/api/admin/runs/${encodeURIComponent(id)}`, { signal }),
   )
 }
 

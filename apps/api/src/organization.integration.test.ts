@@ -48,7 +48,12 @@ describe("organization administration HTTP API", () => {
 
   it("protects platform analytics, users, and runs with the same super-admin policy", async () => {
     const headers = jsonHeaders("other", "other@example.com");
-    for (const path of ["/api/admin/analytics", "/api/admin/users", "/api/admin/runs"]) {
+    for (const path of [
+      "/api/admin/analytics",
+      "/api/admin/users",
+      "/api/admin/runs",
+      "/api/admin/runs/missing",
+    ]) {
       expect((await createApp().request(path, { headers })).status).toBe(403);
     }
   });
@@ -61,6 +66,56 @@ describe("organization administration HTTP API", () => {
     const users = await createApp().request("/api/admin/users?limit=25", { headers: admin });
     expect(users.status).toBe(200);
     expect(await users.json()).toMatchObject({ users: expect.any(Array), total: expect.any(Number) });
+  });
+
+  it("serves filtered cross-tenant runs and positioned spans to a super-admin", async () => {
+    const startedAt = Date.UTC(2026, 7, 18, 12);
+    await database.run(sql`
+      INSERT INTO users (id, display_name, created_at)
+      VALUES ('http-user', 'HTTP User', ${startedAt - 1_000})
+    `);
+    await database.run(sql`
+      INSERT INTO workspaces (id, user_id, name, created_at)
+      VALUES ('http-workspace', 'http-user', 'HTTP Workspace', ${startedAt - 900})
+    `);
+    await database.run(sql`
+      INSERT INTO conversations
+        (id, workspace_id, title, model_id, harness_id, status, created_at, updated_at)
+      VALUES
+        ('http-conversation', 'http-workspace', 'HTTP contract', 'gw-test', 'pi', 'done',
+          ${startedAt - 800}, ${startedAt + 500})
+    `);
+    await database.run(sql`
+      INSERT INTO runs
+        (id, conversation_id, workspace_id, harness_id, model_id, prompt, started_at,
+          ended_at, status, turns, tokens_in, tokens_out, tool_calls, tool_errors)
+      VALUES
+        ('http-run', 'http-conversation', 'http-workspace', 'pi', 'gw-test',
+          'http-contract needle', ${startedAt}, ${startedAt + 500}, 'done', 2, 300, 40, 1, 0)
+    `);
+    await database.run(sql`
+      INSERT INTO traces (id, conversation_id, run_id, step, fields, ts, duration_ms)
+      VALUES
+        ('http-trace', 'http-conversation', 'http-run', 'tool',
+          ${JSON.stringify({ name: "search_docs", ok: true })}, ${startedAt + 300}, 200)
+    `);
+
+    const list = await createApp().request(
+      "/api/admin/runs?userId=http-user&status=done&q=http-contract",
+      { headers: admin },
+    );
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({
+      total: 1,
+      runs: [{ id: "http-run", userId: "http-user", durationMs: 500 }],
+    });
+
+    const detail = await createApp().request("/api/admin/runs/http-run", { headers: admin });
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      run: { id: "http-run", userId: "http-user", durationMs: 500 },
+      spans: [{ id: "http-trace", offsetMs: 100, durationMs: 200 }],
+    });
   });
 
   it("creates, renames, invites, accepts once, and removes without workspaces", async () => {

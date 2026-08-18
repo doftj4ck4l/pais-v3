@@ -5,7 +5,7 @@ import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Spinner } from '@/shared/ui/spinner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
-import { RunBreakdown, RunWaterfall, SpanDetail, SpanDetailEmpty } from '@/pages/admin/components/run-waterfall'
+import { RunBreakdown, RunWaterfall, SpanDetail } from '@/pages/admin/components/run-waterfall'
 import { getRun, listRuns } from '@/shared/api/api'
 import type { RunDetail, RunRow, RunSpan } from '@/shared/lib/types'
 import type { RunStatus } from '@/shared/lib/types'
@@ -79,6 +79,7 @@ export function AdminRunsPage() {
 
   useEffect(() => {
     let live = true
+    const controller = new AbortController()
     setSpan(null)
     setDetailError(null)
     if (!selectedId) {
@@ -87,15 +88,18 @@ export function AdminRunsPage() {
       return
     }
     setDetailLoading(true)
-    getRun(selectedId)
-      .then((next) => live && setDetail(next))
-      .catch((cause) => {
-        if (!live) return
+    getRun(selectedId, controller.signal)
+      .then((next) => live && !controller.signal.aborted && setDetail(next))
+      .catch((cause: unknown) => {
+        if (!live || controller.signal.aborted || isAbortError(cause)) return
         setDetail(null)
-        setDetailError((cause as Error).message)
+        setDetailError(cause instanceof Error ? cause.message : 'Could not load run details')
       })
-      .finally(() => live && setDetailLoading(false))
-    return () => { live = false }
+      .finally(() => live && !controller.signal.aborted && setDetailLoading(false))
+    return () => {
+      live = false
+      controller.abort()
+    }
   }, [selectedId])
 
   const visibleDetail = detail?.run.id === selectedId ? detail : null
@@ -112,7 +116,15 @@ export function AdminRunsPage() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative min-w-0 sm:w-80">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prompt, user, model…" className="h-10 pl-9" />
+              <Input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  if (search.run) void navigate({ search: { ...search, run: undefined } })
+                }}
+                placeholder="Search prompt, user, model…"
+                className="h-10 pl-9"
+              />
             </div>
             <Select value={search.status ?? 'all'} onValueChange={(value) => void navigate({ search: { ...search, run: undefined, status: selectedStatus(value) } })}>
               <SelectTrigger className="h-10 min-w-36"><SelectValue placeholder="All statuses" /></SelectTrigger>
@@ -132,7 +144,7 @@ export function AdminRunsPage() {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside className="max-h-[42vh] w-full shrink-0 overflow-y-auto border-b lg:max-h-none lg:w-[29rem] lg:border-r lg:border-b-0 xl:w-[34rem]">
+        <aside className="max-h-[42vh] w-full shrink-0 overflow-y-auto border-b lg:max-h-none lg:w-[28rem] lg:border-r lg:border-b-0 2xl:w-[31rem]">
           {!loading && runs.length === 0 ? <p className="p-6 text-sm leading-6 text-muted-foreground">No runs match these filters.</p> : null}
           <ol>
             {runs.map((run) => <RunListItem key={run.id} run={run} selected={selectedId === run.id} onSelect={() => void navigate({ search: { ...search, run: run.id } })} />)}
@@ -140,7 +152,7 @@ export function AdminRunsPage() {
           {runs.length < total ? <p className="border-t p-4 text-center text-xs text-muted-foreground">Showing the newest {runs.length} of {formatMetric(total)} runs</p> : null}
         </aside>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col xl:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <section className="min-h-0 min-w-0 flex-1 overflow-y-auto">
             {!selectedId ? (
               <div className="grid min-h-72 place-items-center p-8 text-center"><div><p className="text-lg font-semibold">Select a run</p><p className="mt-2 text-sm text-muted-foreground">Its timing waterfall, token load, and tool activity will appear here.</p></div></div>
@@ -157,9 +169,9 @@ export function AdminRunsPage() {
             ) : null}
           </section>
 
-          {visibleDetail ? (
-            <aside className="flex h-80 min-h-0 shrink-0 flex-col border-t bg-sidebar/50 xl:h-auto xl:w-[30rem] xl:border-t-0 xl:border-l">
-              {span ? <SpanDetail span={span} onClose={() => setSpan(null)} /> : <SpanDetailEmpty />}
+          {visibleDetail && span ? (
+            <aside className="flex h-[22rem] min-h-0 shrink-0 flex-col border-t bg-sidebar/65 shadow-[0_-18px_40px_-32px_rgba(15,23,42,0.45)] sm:h-[25rem]">
+              <SpanDetail span={span} onClose={() => setSpan(null)} />
             </aside>
           ) : null}
         </div>
@@ -190,10 +202,11 @@ function RunDetailHeader({ detail }: { detail: RunDetail }) {
   const run = detail.run
   const identity = run.displayName || run.email || run.userId || 'Unknown user'
   return (
-    <div className="border-b px-6 py-5">
-      <p className="text-base font-medium leading-6">{run.prompt || '(no prompt)'}</p>
+    <div className="border-b px-6 py-6 lg:px-8">
+      <p className="readout text-[0.68rem] font-medium uppercase tracking-[0.16em] text-muted-foreground">Selected run</p>
+      <p className="mt-2 max-w-5xl text-lg font-medium leading-7">{run.prompt || '(no prompt)'}</p>
       <OrganizationBadges organizations={run.organizations} className="mt-3 gap-2" />
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><DetailStat label="User" value={identity} /><DetailStat label="Workspace" value={run.workspaceName || 'Unknown'} /><DetailStat label="Tokens" value={formatTokens(run.tokensIn, run.tokensOut)} /><DetailStat label="Duration" value={ms(run.durationMs)} /></div>
+      <div className="mt-5 grid gap-x-6 gap-y-4 border-y py-4 sm:grid-cols-2 xl:grid-cols-4"><DetailStat label="User" value={identity} /><DetailStat label="Workspace" value={run.workspaceName || 'Unknown'} /><DetailStat label="Tokens" value={formatTokens(run.tokensIn, run.tokensOut)} /><DetailStat label="Duration" value={ms(run.durationMs)} /></div>
       <p className="readout mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground"><span>{run.modelId.replace(/^gw-/, '')}</span><span>{run.turns} turns</span><span>{run.toolCalls} tool calls</span><span className={run.toolErrors ? 'text-destructive' : ''}>{run.toolErrors} failed</span><span>{run.status}</span></p>
       {run.error ? <p role="alert" className="mt-3 text-sm text-destructive">{run.error}</p> : null}
     </div>

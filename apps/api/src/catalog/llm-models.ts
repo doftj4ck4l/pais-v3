@@ -59,6 +59,13 @@ export function effectiveApiKey(model: ModelConfig): string | undefined {
 }
 
 const CUSTOM_BASE = process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1";
+const QWEN38_UNCENSORED_BASE =
+  process.env.QWEN38_UNCENSORED_BASE_URL?.trim() || "http://10.0.151.4:9504/v1";
+// llama.cpp accepts an Authorization header but this LAN deployment does not
+// require one. pi's OpenAI adapter still expects a non-empty key, so use an
+// inert value unless the endpoint is secured later.
+const QWEN38_UNCENSORED_KEY =
+  process.env.QWEN38_UNCENSORED_API_KEY?.trim() || "local-no-auth";
 
 /**
  * Which logo a gateway model wears, by id prefix.
@@ -93,6 +100,19 @@ function gw(id: string, hint: string, contextWindow = DEFAULT_CONTEXT_WINDOW): M
   };
 }
 
+const qwenThinking = (levels: string[], defaultLevel: string): ThinkingConfig => ({
+  levels,
+  default: defaultLevel,
+  sampling: {
+    temperature: 1,
+    top_p: 0.95,
+    top_k: 20,
+    min_p: 0,
+    presence_penalty: 0,
+    repetition_penalty: 1,
+  },
+});
+
 // Only qwen3.5-397b-instruct is measured: it accepted a 200,012-token prompt,
 // so 262144 is the nearest plausible window and 131072 would have understated
 // it by a third. The rest are the default until someone measures them, except
@@ -110,18 +130,20 @@ export const MODELS: ModelConfig[] = [
   // always in thinking mode and the user only adjusts how hard it thinks.
   {
     ...gw("qwen3.8-27b", "Qwen · 27B (thinking)"),
-    thinking: {
-      levels: ["medium", "high", "xhigh"],
-      default: "high",
-      sampling: {
-        temperature: 1,
-        top_p: 0.95,
-        top_k: 20,
-        min_p: 0,
-        presence_penalty: 0,
-        repetition_penalty: 1,
-      },
-    },
+    thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
+  },
+  {
+    id: "local-qwen3.8-27b-uncensored",
+    label: "qwen3.8-27b-uncensored",
+    provider: "custom",
+    model: "qwen3.8-27b-uncensored",
+    thinking: qwenThinking(["low", "medium", "xhigh"], "xhigh"),
+    apiKeyEnv: "QWEN38_UNCENSORED_API_KEY",
+    apiKey: QWEN38_UNCENSORED_KEY,
+    baseUrl: QWEN38_UNCENSORED_BASE,
+    hint: "Qwen · 27B uncensored · local GPU",
+    brand: "qwen",
+    contextWindow: 8_192,
   },
   gw("qwen3.5-397b-instruct", "Qwen · 397B chat (instruct)", 262_144),
   gw("qwen3.6-35b-instruct", "Qwen · 35B chat (instruct)"),

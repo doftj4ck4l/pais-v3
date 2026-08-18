@@ -15,10 +15,17 @@ describe("runMetrics", () => {
       step: "context.usage",
       fields: { used: 180, output: 25 },
     });
+    recorder.record({
+      type: "trace",
+      step: "run.tools",
+      fields: { toolCalls: 7, toolErrors: 2 },
+    });
 
-    expect(runMetrics(recorder.toTraceRows())).toMatchObject({
+    expect(runMetrics(recorder.toTraceRows())).toEqual({
       tokensIn: 300,
       tokensOut: 40,
+      toolCalls: 7,
+      toolErrors: 2,
     });
   });
 });
