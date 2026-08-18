@@ -8,16 +8,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RunBreakdown, RunWaterfall, SpanDetail, SpanDetailEmpty } from '@/pages/admin/components/run-waterfall'
 import { getRun, listRuns } from '@/shared/api/api'
 import type { RunDetail, RunRow, RunSpan } from '@/shared/lib/types'
+import type { RunStatus } from '@/shared/lib/types'
 import { formatMetric, formatTokens, relativeTime } from '@/features/admin/lib/admin-format'
+import { OrganizationBadges } from '@/features/admin/components/organization-badges'
 import { cn } from '@/shared/lib/utils'
 
 const route = getRouteApi('/admin/runs')
 
-const STATUS_STYLE: Record<string, string> = {
+const STATUS_STYLE: Record<RunStatus, string> = {
   done: 'bg-emerald-500',
   running: 'bg-sky-500',
   error: 'bg-destructive',
   stopped: 'bg-muted-foreground',
+}
+
+function selectedStatus(value: string): RunStatus | undefined {
+  return value in STATUS_STYLE ? value as RunStatus : undefined
 }
 
 function ms(value: number | null): string {
@@ -96,7 +102,7 @@ export function AdminRunsPage() {
               <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search prompt, user, model…" className="h-10 pl-9" />
             </div>
-            <Select value={search.status ?? 'all'} onValueChange={(value) => void navigate({ search: { ...search, run: undefined, status: value === 'all' ? undefined : value } })}>
+            <Select value={search.status ?? 'all'} onValueChange={(value) => void navigate({ search: { ...search, run: undefined, status: selectedStatus(value) } })}>
               <SelectTrigger className="h-10 min-w-36"><SelectValue placeholder="All statuses" /></SelectTrigger>
               <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="running">Running</SelectItem><SelectItem value="done">Done</SelectItem><SelectItem value="error">Error</SelectItem><SelectItem value="stopped">Stopped</SelectItem></SelectContent>
             </Select>
@@ -174,7 +180,7 @@ function RunDetailHeader({ detail }: { detail: RunDetail }) {
   return (
     <div className="border-b px-6 py-5">
       <p className="text-base font-medium leading-6">{run.prompt || '(no prompt)'}</p>
-      <div className="mt-3 flex flex-wrap gap-2">{run.organizations.length ? run.organizations.map((organization) => <span key={organization.id} className="rounded-md bg-muted px-2 py-1 text-xs">{organization.name}</span>) : <span className="rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground">Independent</span>}</div>
+      <OrganizationBadges organizations={run.organizations} className="mt-3 gap-2" />
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><DetailStat label="User" value={identity} /><DetailStat label="Workspace" value={run.workspaceName || 'Unknown'} /><DetailStat label="Tokens" value={formatTokens(run.tokensIn, run.tokensOut)} /><DetailStat label="Duration" value={ms(run.durationMs)} /></div>
       <p className="readout mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground"><span>{run.modelId.replace(/^gw-/, '')}</span><span>{run.turns} turns</span><span>{run.toolCalls} tool calls</span><span className={run.toolErrors ? 'text-destructive' : ''}>{run.toolErrors} failed</span><span>{run.status}</span></p>
       {run.error ? <p role="alert" className="mt-3 text-sm text-destructive">{run.error}</p> : null}

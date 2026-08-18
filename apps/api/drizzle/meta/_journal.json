@@ -57,6 +57,13 @@
       "when": 1786953545492,
       "tag": "0007_fearless_multiple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787027522469,
+      "tag": "0008_same_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }

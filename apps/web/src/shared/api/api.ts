@@ -22,6 +22,7 @@ import type {
   InvitationAcceptance,
   AdminAnalytics,
   AdminUser,
+  RunStatus,
 } from '@/shared/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -679,19 +680,19 @@ export type AdminRunFilters = {
   query?: string
   userId?: string
   organizationId?: string
-  status?: string
+  status?: RunStatus
 }
 
 export async function getAdminAnalytics(days = 30): Promise<AdminAnalytics> {
   return json<AdminAnalytics>(await fetch(`/api/admin/analytics?days=${days}`))
 }
 
-export async function listAdminUsers(input: { limit?: number; offset?: number; query?: string } = {}): Promise<{ users: AdminUser[]; total: number }> {
+export async function listAdminUsers(input: { limit?: number; offset?: number; query?: string; signal?: AbortSignal } = {}): Promise<{ users: AdminUser[]; total: number }> {
   const query = new URLSearchParams()
   query.set('limit', String(input.limit ?? 50))
   query.set('offset', String(input.offset ?? 0))
   if (input.query) query.set('q', input.query)
-  return json<{ users: AdminUser[]; total: number }>(await fetch(`/api/admin/users?${query}`))
+  return json<{ users: AdminUser[]; total: number }>(await fetch(`/api/admin/users?${query}`, { signal: input.signal }))
 }
 
 /** Recent runs across every user and workspace. */

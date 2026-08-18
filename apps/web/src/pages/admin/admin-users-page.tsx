@@ -7,6 +7,7 @@ import { formatMetric, formatTokens, relativeTime } from '@/features/admin/lib/a
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Spinner } from '@/shared/ui/spinner'
+import { OrganizationBadges } from '@/features/admin/components/organization-badges'
 
 const PAGE_SIZE = 50
 
@@ -20,19 +21,20 @@ export function AdminUsersPage() {
 
   useEffect(() => {
     let live = true
+    const controller = new AbortController()
     const timer = window.setTimeout(() => {
       setLoading(true)
       setError(null)
-      listAdminUsers({ limit: PAGE_SIZE, offset, query })
+      listAdminUsers({ limit: PAGE_SIZE, offset, query, signal: controller.signal })
         .then((result) => {
           if (!live) return
           setUsers(result.users)
           setTotal(result.total)
         })
-        .catch((cause) => live && setError((cause as Error).message))
+        .catch((cause) => live && (cause as Error).name !== 'AbortError' && setError((cause as Error).message))
         .finally(() => live && setLoading(false))
-    }, 200)
-    return () => { live = false; window.clearTimeout(timer) }
+    }, 350)
+    return () => { live = false; controller.abort(); window.clearTimeout(timer) }
   }, [offset, query])
 
   const page = Math.floor(offset / PAGE_SIZE) + 1
@@ -92,7 +94,7 @@ function UserTableRow({ user }: { user: AdminUser }) {
   return (
     <tr className="transition-colors hover:bg-muted/30">
       <td className="px-5 py-4"><p className="max-w-72 truncate text-sm font-semibold">{name}</p><p className="readout mt-1 max-w-72 truncate text-xs text-muted-foreground">{user.email || user.userId}</p></td>
-      <td className="px-4 py-4"><div className="flex max-w-64 flex-wrap gap-1.5">{user.organizations.length ? user.organizations.map((organization) => <span key={organization.id} className="rounded-md bg-muted px-2 py-1 text-xs">{organization.name}</span>) : <span className="rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground">Independent</span>}</div></td>
+      <td className="px-4 py-4"><OrganizationBadges organizations={user.organizations} className="max-w-64" /></td>
       <NumberCell value={formatMetric(user.workspaceCount)} />
       <NumberCell value={formatMetric(user.conversationCount)} />
       <NumberCell value={formatMetric(user.runCount)} />

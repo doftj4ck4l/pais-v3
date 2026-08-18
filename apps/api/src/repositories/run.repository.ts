@@ -78,27 +78,8 @@ export type PlatformRunFilters = {
 const PROMPT_PREVIEW = 300;
 
 type PlatformRunDatabaseRow = Omit<PlatformRunRow, "organizations"> & {
-  organizations: string | null;
   totalRows: number;
 };
-
-function parseOrganizations(raw: string | null): Array<{ id: string; name: string }> {
-  if (!raw) return [];
-  try {
-    const value = JSON.parse(raw) as unknown;
-    return Array.isArray(value)
-      ? value.filter(
-          (item): item is { id: string; name: string } =>
-            !!item &&
-            typeof item === "object" &&
-            typeof (item as { id?: unknown }).id === "string" &&
-            typeof (item as { name?: unknown }).name === "string",
-        )
-      : [];
-  } catch {
-    return [];
-  }
-}
 
 async function platformRows(
   where: ReturnType<typeof sql>,
@@ -107,14 +88,6 @@ async function platformRows(
   dbImpl: typeof db,
 ): Promise<PlatformRunDatabaseRow[]> {
   return dbImpl.all<PlatformRunDatabaseRow>(sql`
-    WITH organization_stats AS (
-      SELECT ${organizationMemberships.userId} AS user_id,
-        min(${organizationMemberships.email}) AS email,
-        json_group_array(json_object('id', ${organizations.id}, 'name', ${organizations.name})) AS organizations
-      FROM ${organizationMemberships}
-      INNER JOIN ${organizations} ON ${organizations.id} = ${organizationMemberships.organizationId}
-      GROUP BY ${organizationMemberships.userId}
-    )
     SELECT
       ${runs.id} AS id,
       ${runs.conversationId} AS conversationId,
@@ -133,14 +106,14 @@ async function platformRows(
       ${runs.error} AS error,
       ${workspaces.userId} AS userId,
       ${users.displayName} AS displayName,
-      organization_stats.email AS email,
+      (SELECT min(${organizationMemberships.email})
+        FROM ${organizationMemberships}
+        WHERE ${organizationMemberships.userId} = ${workspaces.userId}) AS email,
       ${workspaces.name} AS workspaceName,
-      organization_stats.organizations AS organizations,
       count(*) OVER() AS totalRows
     FROM ${runs}
     LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
     LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
-    LEFT JOIN organization_stats ON organization_stats.user_id = ${workspaces.userId}
     WHERE ${where}
     ORDER BY ${runs.startedAt} DESC, ${runs.id}
     LIMIT ${limit} OFFSET ${offset}
@@ -168,7 +141,7 @@ function platformRun(row: PlatformRunDatabaseRow): PlatformRunRow {
     displayName: row.displayName,
     email: row.email,
     workspaceName: row.workspaceName,
-    organizations: parseOrganizations(row.organizations),
+    organizations: [],
   };
 }
 
@@ -248,7 +221,11 @@ export const runRepository = {
       conditions.push(sql`lower(
         coalesce(${runs.prompt}, '') || ' ' || ${runs.modelId} || ' ' ||
         coalesce(${workspaces.name}, '') || ' ' || coalesce(${workspaces.userId}, '') || ' ' ||
-        coalesce(${users.displayName}, '') || ' ' || coalesce(organization_stats.email, '')
+        coalesce(${users.displayName}, '') || ' ' || coalesce((
+          SELECT min(${organizationMemberships.email})
+          FROM ${organizationMemberships}
+          WHERE ${organizationMemberships.userId} = ${workspaces.userId}
+        ), '')
       ) LIKE ${like}`);
     }
 
@@ -264,7 +241,15 @@ export const runRepository = {
   /** One unscoped run. Callers must enforce the super-admin policy first. */
   async getPlatform(runId: string, dbImpl: typeof db = db): Promise<PlatformRunRow | null> {
     const rows = await platformRows(sql`${runs.id} = ${runId}`, 1, 0, dbImpl);
-    return rows[0] ? platformRun(rows[0]) : null;
+    if (!rows[0]) return null;
+    const run = platformRun(rows[0]);
+    if (!run.userId) return run;
+    const memberships = await dbImpl
+      .select({ id: organizations.id, name: organizations.name })
+      .from(organizationMemberships)
+      .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
+      .where(eq(organizationMemberships.userId, run.userId));
+    return { ...run, organizations: memberships };
   },
 
   /**

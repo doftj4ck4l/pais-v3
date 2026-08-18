@@ -155,6 +155,17 @@ describe("runRepository platform views", () => {
   });
 
   it("reads any run by id for a super-admin controller", async () => {
-    expect(await runRepository.getPlatform("r2", db)).toMatchObject({ id: "r2", userId: "u2", workspaceName: "Two" });
+    sqlite.query("insert into organizations (id, name, created_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?)")
+      .run("org1", "Acme", "u1", Date.now(), Date.now());
+    sqlite.query("insert into organization_memberships (id, organization_id, user_id, email, joined_at) values (?, ?, ?, ?, ?)")
+      .run("mem1", "org1", "u2", "u2@example.com", Date.now());
+
+    expect(await runRepository.getPlatform("r2", db)).toMatchObject({
+      id: "r2",
+      userId: "u2",
+      workspaceName: "Two",
+      email: "u2@example.com",
+      organizations: [{ id: "org1", name: "Acme" }],
+    });
   });
 });

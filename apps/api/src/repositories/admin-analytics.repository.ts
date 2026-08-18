@@ -113,16 +113,25 @@ export const adminAnalyticsRepository = {
     const [totalsRows, periodRows, previousRows, runDays, conversationDays, statuses, models] =
       await Promise.all([
         dbImpl.all<TotalsRow>(sql`
+          WITH run_totals AS (
+            SELECT count(*) AS runs,
+              coalesce(sum(tokens_in), 0) AS tokensIn,
+              coalesce(sum(tokens_out), 0) AS tokensOut,
+              coalesce(sum(tool_calls), 0) AS toolCalls,
+              coalesce(sum(tool_errors), 0) AS toolErrors
+            FROM ${runs}
+          )
           SELECT
             (SELECT count(*) FROM ${users}) AS users,
             (SELECT count(*) FROM ${workspaces}) AS workspaces,
             (SELECT count(*) FROM ${organizations}) AS organizations,
             (SELECT count(*) FROM ${conversations}) AS conversations,
-            (SELECT count(*) FROM ${runs}) AS runs,
-            coalesce((SELECT sum(tokens_in) FROM ${runs}), 0) AS tokensIn,
-            coalesce((SELECT sum(tokens_out) FROM ${runs}), 0) AS tokensOut,
-            coalesce((SELECT sum(tool_calls) FROM ${runs}), 0) AS toolCalls,
-            coalesce((SELECT sum(tool_errors) FROM ${runs}), 0) AS toolErrors
+            run_totals.runs AS runs,
+            run_totals.tokensIn AS tokensIn,
+            run_totals.tokensOut AS tokensOut,
+            run_totals.toolCalls AS toolCalls,
+            run_totals.toolErrors AS toolErrors
+          FROM run_totals
         `),
         dbImpl.all<PeriodRow>(sql`
           SELECT

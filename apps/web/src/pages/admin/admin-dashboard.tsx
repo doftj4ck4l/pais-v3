@@ -17,6 +17,7 @@ import type { AdminActivityDay, AdminAnalytics, AdminUser } from '@/shared/lib/t
 import { Button } from '@/shared/ui/button'
 import { Spinner } from '@/shared/ui/spinner'
 import { changeFrom, formatMetric, formatTokens, relativeTime } from '@/features/admin/lib/admin-format'
+import { OrganizationBadges } from '@/features/admin/components/organization-badges'
 import { cn } from '@/shared/lib/utils'
 
 const PERIODS = [7, 30, 90] as const
@@ -210,9 +211,7 @@ function ActiveUserRow({ user }: { user: AdminUser }) {
       <div className="min-w-0">
         <p className="truncate text-base font-semibold">{name}</p>
         <p className="readout mt-1 truncate text-xs text-muted-foreground">{user.email || user.userId}</p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {user.organizations.length ? user.organizations.map((organization) => <span key={organization.id} className="rounded-md bg-muted px-2 py-0.5 text-xs">{organization.name}</span>) : <span className="rounded-md border border-dashed px-2 py-0.5 text-xs text-muted-foreground">Independent</span>}
-        </div>
+        <OrganizationBadges organizations={user.organizations} className="mt-2" compact />
       </div>
       <MiniStat label="Runs" value={formatMetric(user.runCount)} />
       <MiniStat label="Conversations" value={formatMetric(user.conversationCount)} />
