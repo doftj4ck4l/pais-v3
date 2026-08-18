@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 import { currentUser, currentUserId, type UserProfile } from "../middleware/auth";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
+import { env } from "../config/env";
+import { isSuperAdmin } from "../services/organizations/policy";
 
 /** Longer than this is not a name, it is a paragraph in a name field. */
 const MAX_NAME = 80;
@@ -14,6 +16,7 @@ type Profile = UserProfile & {
    * once an override exists it *is* the override.
    */
   providerName: string | null;
+  canAdministerOrganizations: boolean;
 };
 
 async function profileFor(c: Context): Promise<Profile> {
@@ -27,6 +30,7 @@ async function profileFor(c: Context): Promise<Profile> {
     name: displayName ?? proxy.name,
     displayName,
     providerName: proxy.name ?? null,
+    canAdministerOrganizations: isSuperAdmin(proxy.email, env.superAdminEmails),
   };
 }
 

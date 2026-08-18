@@ -300,4 +300,58 @@ export type UserProfile = {
   displayName?: string | null
   /** The name your sign-in provides, before any override. */
   providerName?: string | null
+  /** Derived by the API from the trusted email allowlist; presentation only. */
+  canAdministerOrganizations: boolean
 }
+
+export type Organization = {
+  id: string
+  name: string
+  createdByUserId: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type OrganizationSummary = Organization & {
+  memberCount: number
+  pendingInvitationCount: number
+}
+
+export type OrganizationMember = {
+  id: string
+  organizationId: string
+  userId: string
+  email: string
+  joinedAt: number
+}
+
+export type OrganizationInvitationState = 'actionable' | 'expired' | 'revoked' | 'used'
+
+export type OrganizationInvitation = {
+  id: string
+  organizationId: string
+  email: string
+  expiresAt: number
+  acceptedAt: number | null
+  revokedAt: number | null
+  createdAt: number
+  state: OrganizationInvitationState
+}
+
+export type OrganizationDetail = {
+  organization: Organization
+  members: OrganizationMember[]
+  invitations: OrganizationInvitation[]
+}
+
+export type InvitationInspection =
+  | {
+      state: 'actionable'
+      organization: { id: string; name: string }
+      expiresAt: number
+    }
+  | { state: 'expired' | 'revoked' | 'used' | 'unavailable' }
+
+export type InvitationAcceptance =
+  | { state: 'joined'; organization: { id: string; name: string } }
+  | InvitationInspection

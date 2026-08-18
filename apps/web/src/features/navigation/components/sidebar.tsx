@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import { MessageSquareIcon, PanelLeftIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { MessageSquareIcon, PanelLeftIcon, PlusIcon, SettingsIcon, ShieldCheckIcon } from 'lucide-react'
 import { AgentList } from '@/features/agents/components/agent-list'
 import { BrandMark } from '@/shared/components/brand'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
@@ -11,6 +11,7 @@ import { useBoard } from '@/features/agents/hooks/use-agent-board'
 import { useCloseAside } from '@/features/navigation/lib/aside-context'
 import { useOnChats } from '@/features/navigation/lib/rail'
 import { cn } from '@/shared/lib/utils'
+import { useMe } from '@/features/workspace/hooks/use-me'
 
 /**
  * Two columns: where you can go, and what is in the place you are.
@@ -37,6 +38,7 @@ export function Sidebar({
   const board = useBoard()
   const closeAside = useCloseAside()
   const navigate = useNavigate()
+  const me = useMe()
 
   /**
    * Opening a run is also a navigation: the sessions list is reachable from
@@ -81,6 +83,14 @@ export function Sidebar({
         {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
           <RailLink key={item.to} to={item.to} label={item.label} icon={item.icon} />
         ))}
+
+        {me?.canAdministerOrganizations ? (
+          <RailLink
+            to="/admin"
+            label="Admin panel"
+            icon={ShieldCheckIcon}
+          />
+        ) : null}
 
         <div className="mt-auto flex flex-col items-center gap-1">
           <RailButton label="Settings" icon={SettingsIcon} onClick={onOpenSettings} />

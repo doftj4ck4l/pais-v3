@@ -12,7 +12,15 @@ import type {
   UploadedImage,
   RunRow,
   WorkspaceFile,
-  WorkspaceRow, UserProfile } from '@/shared/lib/types'
+  WorkspaceRow,
+  UserProfile,
+  Organization,
+  OrganizationSummary,
+  OrganizationDetail,
+  OrganizationInvitation,
+  InvitationInspection,
+  InvitationAcceptance,
+} from '@/shared/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -93,6 +101,98 @@ export async function updateMe(displayName: string): Promise<UserProfile> {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName }),
+    }),
+  )
+}
+
+export async function listOrganizations(): Promise<OrganizationSummary[]> {
+  const result = await json<{ organizations: OrganizationSummary[] }>(
+    await fetch('/api/admin/organizations'),
+  )
+  return result.organizations
+}
+
+export async function createOrganization(name: string): Promise<OrganizationSummary> {
+  const result = await json<{ organization: Organization }>(
+    await fetch('/api/admin/organizations', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  )
+  return { ...result.organization, memberCount: 0, pendingInvitationCount: 0 }
+}
+
+export async function renameOrganization(id: string, name: string): Promise<Organization> {
+  const result = await json<{ organization: Organization }>(
+    await fetch(`/api/admin/organizations/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+  )
+  return result.organization
+}
+
+export async function getOrganization(id: string): Promise<OrganizationDetail> {
+  return json<OrganizationDetail>(
+    await fetch(`/api/admin/organizations/${encodeURIComponent(id)}`),
+  )
+}
+
+export async function createOrganizationInvitation(
+  organizationId: string,
+  email: string,
+): Promise<{ invitation: OrganizationInvitation; url: string }> {
+  return json<{ invitation: OrganizationInvitation; url: string }>(
+    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }),
+  )
+}
+
+export async function revokeOrganizationInvitation(
+  organizationId: string,
+  invitationId: string,
+): Promise<void> {
+  await json<{ ok: true }>(
+    await fetch(
+      `/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations/${encodeURIComponent(invitationId)}/revoke`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    ),
+  )
+}
+
+export async function removeOrganizationMember(
+  organizationId: string,
+  membershipId: string,
+): Promise<void> {
+  await json<{ ok: true }>(
+    await fetch(
+      `/api/admin/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
+      { method: 'DELETE' },
+    ),
+  )
+}
+
+export async function inspectInvitation(token: string): Promise<InvitationInspection> {
+  return json<InvitationInspection>(
+    await fetch('/api/invitations/inspect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }),
+  )
+}
+
+export async function acceptInvitation(token: string): Promise<InvitationAcceptance> {
+  return json<InvitationAcceptance>(
+    await fetch('/api/invitations/accept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
     }),
   )
 }

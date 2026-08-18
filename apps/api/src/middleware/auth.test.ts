@@ -80,6 +80,36 @@ describe("dev mode", () => {
 
     expect(await res.json()).toEqual({ userId: "local" });
   });
+
+  it("gives only the fallback dev identity its configured profile email", async () => {
+    const app = new Hono();
+    app.use(
+      "*",
+      createAuth({
+        mode: "dev",
+        header: "x-authentik-uid",
+        defaultUserId: "local",
+        defaultUserEmail: "admin@example.com",
+      }),
+    );
+    app.get("/me", (c) => c.json(currentUser(c)));
+
+    expect(await (await app.request("/me")).json()).toMatchObject({
+      id: "local",
+      email: "admin@example.com",
+    });
+
+    const claimed = await app.request("/me", {
+      headers: { "x-authentik-uid": "alice" },
+    });
+    expect(await claimed.json()).toEqual({
+      id: "alice",
+      username: undefined,
+      email: undefined,
+      name: undefined,
+      groups: [],
+    });
+  });
 });
 
 describe("profile", () => {

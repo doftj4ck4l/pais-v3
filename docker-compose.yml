@@ -41,6 +41,10 @@ services:
         required: false
     environment:
       PORT: "4000"
+      # Resolve this from the deployment-facing root .env. An apps/api/.env
+      # copied for Vite development must not replace the browser's public
+      # Docker origin merely because it is the later env_file.
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8080}"
       SANDBOX_BACKEND: docker
       SANDBOX_IMAGE: "${SANDBOX_IMAGE:-pixelspace-sandbox:1}"
       # Both must be host paths, mounted below at the same path inside.

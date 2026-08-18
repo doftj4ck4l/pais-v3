@@ -12,6 +12,8 @@ import { connectorRoutes } from "./connector.routes";
 import { playbookRoutes } from "./playbook.routes";
 import { imageRoutes } from "./image.routes";
 import { adminRoutes } from "./admin.routes";
+import { organizationRoutes } from "./organization.routes";
+import { invitationRoutes } from "./invitation.routes";
 
 /** Every HTTP surface the API exposes, mounted under /api. */
 export const apiRoutes = new Hono();
@@ -37,3 +39,8 @@ apiRoutes.route("/playbook", playbookRoutes);
 apiRoutes.route("/images", imageRoutes);
 // Read-only views over recorded runs. "admin" is the audience, not a permission.
 apiRoutes.route("/admin", adminRoutes);
+// Elevated platform administration. The existing /admin/runs remains scoped to
+// the caller's workspace and deliberately does not share this permission.
+apiRoutes.route("/admin/organizations", organizationRoutes);
+// Authenticated invitees inspect/accept a token sent only in a JSON body.
+apiRoutes.route("/invitations", invitationRoutes);

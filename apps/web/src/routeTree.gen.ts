@@ -15,8 +15,12 @@ import { Route as ConnectorsRouteImport } from './routes/connectors'
 import { Route as DataRouteImport } from './routes/data'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as FilesRouteImport } from './routes/files'
+import { Route as InviteRouteImport } from './routes/invite'
 import { Route as LearnedRouteImport } from './routes/learned'
 import { Route as SourcesRouteImport } from './routes/sources'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AdminOrganizationsRouteImport } from './routes/admin.organizations'
+import { Route as AdminRunsRouteImport } from './routes/admin.runs'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -48,6 +52,11 @@ const FilesRoute = FilesRouteImport.update({
   path: '/files',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InviteRoute = InviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LearnedRoute = LearnedRouteImport.update({
   id: '/learned',
   path: '/learned',
@@ -58,37 +67,63 @@ const SourcesRoute = SourcesRouteImport.update({
   path: '/sources',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminOrganizationsRoute = AdminOrganizationsRouteImport.update({
+  id: '/organizations',
+  path: '/organizations',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminRunsRoute = AdminRunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => AdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/admin': typeof AdminRoute
+  '/admin': typeof AdminRouteWithChildren
   '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
+  '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/admin/organizations': typeof AdminOrganizationsRoute
+  '/admin/runs': typeof AdminRunsRoute
+  '/admin/': typeof AdminIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/admin': typeof AdminRoute
   '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
+  '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/admin/organizations': typeof AdminOrganizationsRoute
+  '/admin/runs': typeof AdminRunsRoute
+  '/admin': typeof AdminIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/admin': typeof AdminRoute
+  '/admin': typeof AdminRouteWithChildren
   '/connectors': typeof ConnectorsRoute
   '/data': typeof DataRoute
   '/docs': typeof DocsRoute
   '/files': typeof FilesRoute
+  '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/admin/organizations': typeof AdminOrganizationsRoute
+  '/admin/runs': typeof AdminRunsRoute
+  '/admin/': typeof AdminIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -99,18 +134,25 @@ export interface FileRouteTypes {
     | '/data'
     | '/docs'
     | '/files'
+    | '/invite'
     | '/learned'
     | '/sources'
+    | '/admin/organizations'
+    | '/admin/runs'
+    | '/admin/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/admin'
     | '/connectors'
     | '/data'
     | '/docs'
     | '/files'
+    | '/invite'
     | '/learned'
     | '/sources'
+    | '/admin/organizations'
+    | '/admin/runs'
+    | '/admin'
   id:
     | '__root__'
     | '/'
@@ -119,17 +161,22 @@ export interface FileRouteTypes {
     | '/data'
     | '/docs'
     | '/files'
+    | '/invite'
     | '/learned'
     | '/sources'
+    | '/admin/organizations'
+    | '/admin/runs'
+    | '/admin/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AdminRoute: typeof AdminRoute
+  AdminRoute: typeof AdminRouteWithChildren
   ConnectorsRoute: typeof ConnectorsRoute
   DataRoute: typeof DataRoute
   DocsRoute: typeof DocsRoute
   FilesRoute: typeof FilesRoute
+  InviteRoute: typeof InviteRoute
   LearnedRoute: typeof LearnedRoute
   SourcesRoute: typeof SourcesRoute
 }
@@ -178,6 +225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FilesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invite': {
+      id: '/invite'
+      path: '/invite'
+      fullPath: '/invite'
+      preLoaderRoute: typeof InviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/learned': {
       id: '/learned'
       path: '/learned'
@@ -192,16 +246,52 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/organizations': {
+      id: '/admin/organizations'
+      path: '/organizations'
+      fullPath: '/admin/organizations'
+      preLoaderRoute: typeof AdminOrganizationsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/runs': {
+      id: '/admin/runs'
+      path: '/runs'
+      fullPath: '/admin/runs'
+      preLoaderRoute: typeof AdminRunsRouteImport
+      parentRoute: typeof AdminRoute
+    }
   }
 }
 
+interface AdminRouteChildren {
+  AdminOrganizationsRoute: typeof AdminOrganizationsRoute
+  AdminRunsRoute: typeof AdminRunsRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminOrganizationsRoute: AdminOrganizationsRoute,
+  AdminRunsRoute: AdminRunsRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AdminRoute: AdminRoute,
+  AdminRoute: AdminRouteWithChildren,
   ConnectorsRoute: ConnectorsRoute,
   DataRoute: DataRoute,
   DocsRoute: DocsRoute,
   FilesRoute: FilesRoute,
+  InviteRoute: InviteRoute,
   LearnedRoute: LearnedRoute,
   SourcesRoute: SourcesRoute,
 }
