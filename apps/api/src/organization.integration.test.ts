@@ -46,6 +46,23 @@ describe("organization administration HTTP API", () => {
     expect(res.status).toBe(403);
   });
 
+  it("protects platform analytics, users, and runs with the same super-admin policy", async () => {
+    const headers = jsonHeaders("other", "other@example.com");
+    for (const path of ["/api/admin/analytics", "/api/admin/users", "/api/admin/runs"]) {
+      expect((await createApp().request(path, { headers })).status).toBe(403);
+    }
+  });
+
+  it("serves platform analytics and users to a super-admin", async () => {
+    const analytics = await createApp().request("/api/admin/analytics?days=14", { headers: admin });
+    expect(analytics.status).toBe(200);
+    expect(await analytics.json()).toMatchObject({ periodDays: 14, totals: { users: expect.any(Number) } });
+
+    const users = await createApp().request("/api/admin/users?limit=25", { headers: admin });
+    expect(users.status).toBe(200);
+    expect(await users.json()).toMatchObject({ users: expect.any(Array), total: expect.any(Number) });
+  });
+
   it("creates, renames, invites, accepts once, and removes without workspaces", async () => {
     const created = await requestJson("/api/admin/organizations", "POST", admin, { name: " Claims " });
     expect(created.status).toBe(201);

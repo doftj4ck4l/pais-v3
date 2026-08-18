@@ -37,10 +37,9 @@ apiRoutes.route("/playbook", playbookRoutes);
 // Generated media. `GET /:id` is what the markdown image links in a transcript
 // resolve to, so this path is effectively public within the console.
 apiRoutes.route("/images", imageRoutes);
-// Read-only views over recorded runs. "admin" is the audience, not a permission.
+// Super-admin-only platform activity, users, and recorded runs.
 apiRoutes.route("/admin", adminRoutes);
-// Elevated platform administration. The existing /admin/runs remains scoped to
-// the caller's workspace and deliberately does not share this permission.
+// Elevated organization administration shares the same email allowlist.
 apiRoutes.route("/admin/organizations", organizationRoutes);
 // Authenticated invitees inspect/accept a token sent only in a JSON body.
 apiRoutes.route("/invitations", invitationRoutes);

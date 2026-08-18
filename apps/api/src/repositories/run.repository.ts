@@ -1,5 +1,13 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db, runs, traces } from "../db/client";
+import {
+  db,
+  organizationMemberships,
+  organizations,
+  runs,
+  traces,
+  users,
+  workspaces,
+} from "../db/client";
 import type { RunRow, RunStatus, TraceRow } from "../models/schema";
 
 /**
@@ -49,8 +57,120 @@ export type RunSpan = {
 /** One tool this workspace has actually called, and how often. */
 export type ToolUsage = { name: string; calls: number };
 
+export type PlatformRunRow = RunRow & {
+  userId: string | null;
+  displayName: string | null;
+  email: string | null;
+  workspaceName: string | null;
+  organizations: Array<{ id: string; name: string }>;
+};
+
+export type PlatformRunFilters = {
+  limit?: number;
+  offset?: number;
+  userId?: string;
+  organizationId?: string;
+  status?: RunStatus;
+  query?: string;
+};
+
 /** How long the prompt preview stored on the row may be. */
 const PROMPT_PREVIEW = 300;
+
+type PlatformRunDatabaseRow = Omit<PlatformRunRow, "organizations"> & {
+  organizations: string | null;
+  totalRows: number;
+};
+
+function parseOrganizations(raw: string | null): Array<{ id: string; name: string }> {
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value)
+      ? value.filter(
+          (item): item is { id: string; name: string } =>
+            !!item &&
+            typeof item === "object" &&
+            typeof (item as { id?: unknown }).id === "string" &&
+            typeof (item as { name?: unknown }).name === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function platformRows(
+  where: ReturnType<typeof sql>,
+  limit: number,
+  offset: number,
+  dbImpl: typeof db,
+): Promise<PlatformRunDatabaseRow[]> {
+  return dbImpl.all<PlatformRunDatabaseRow>(sql`
+    WITH organization_stats AS (
+      SELECT ${organizationMemberships.userId} AS user_id,
+        min(${organizationMemberships.email}) AS email,
+        json_group_array(json_object('id', ${organizations.id}, 'name', ${organizations.name})) AS organizations
+      FROM ${organizationMemberships}
+      INNER JOIN ${organizations} ON ${organizations.id} = ${organizationMemberships.organizationId}
+      GROUP BY ${organizationMemberships.userId}
+    )
+    SELECT
+      ${runs.id} AS id,
+      ${runs.conversationId} AS conversationId,
+      ${runs.workspaceId} AS workspaceId,
+      ${runs.harnessId} AS harnessId,
+      ${runs.modelId} AS modelId,
+      ${runs.prompt} AS prompt,
+      ${runs.startedAt} AS startedAt,
+      ${runs.endedAt} AS endedAt,
+      ${runs.status} AS status,
+      ${runs.turns} AS turns,
+      ${runs.tokensIn} AS tokensIn,
+      ${runs.tokensOut} AS tokensOut,
+      ${runs.toolCalls} AS toolCalls,
+      ${runs.toolErrors} AS toolErrors,
+      ${runs.error} AS error,
+      ${workspaces.userId} AS userId,
+      ${users.displayName} AS displayName,
+      organization_stats.email AS email,
+      ${workspaces.name} AS workspaceName,
+      organization_stats.organizations AS organizations,
+      count(*) OVER() AS totalRows
+    FROM ${runs}
+    LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+    LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
+    LEFT JOIN organization_stats ON organization_stats.user_id = ${workspaces.userId}
+    WHERE ${where}
+    ORDER BY ${runs.startedAt} DESC, ${runs.id}
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+}
+
+function platformRun(row: PlatformRunDatabaseRow): PlatformRunRow {
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    workspaceId: row.workspaceId,
+    harnessId: row.harnessId,
+    modelId: row.modelId,
+    prompt: row.prompt,
+    startedAt: Number(row.startedAt),
+    endedAt: row.endedAt == null ? null : Number(row.endedAt),
+    status: row.status,
+    turns: Number(row.turns),
+    tokensIn: Number(row.tokensIn),
+    tokensOut: Number(row.tokensOut),
+    toolCalls: Number(row.toolCalls),
+    toolErrors: Number(row.toolErrors),
+    error: row.error,
+    userId: row.userId,
+    displayName: row.displayName,
+    email: row.email,
+    workspaceName: row.workspaceName,
+    organizations: parseOrganizations(row.organizations),
+  };
+}
 
 export const runRepository = {
   /** Record a run as started. Returns nothing; the caller already has the id. */
@@ -105,6 +225,46 @@ export const runRepository = {
       .from(runs)
       .where(and(eq(runs.workspaceId, workspaceId), eq(runs.id, runId)));
     return (rows[0] as RunRow) ?? null;
+  },
+
+  /** Every tenant's runs, with enough owner context for the super-admin ledger. */
+  async listPlatform(
+    filters: PlatformRunFilters = {},
+    dbImpl: typeof db = db,
+  ): Promise<{ runs: PlatformRunRow[]; total: number }> {
+    const conditions = [sql`1 = 1`];
+    if (filters.userId) conditions.push(sql`${workspaces.userId} = ${filters.userId}`);
+    if (filters.status) conditions.push(sql`${runs.status} = ${filters.status}`);
+    if (filters.organizationId) {
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM ${organizationMemberships}
+        WHERE ${organizationMemberships.userId} = ${workspaces.userId}
+          AND ${organizationMemberships.organizationId} = ${filters.organizationId}
+      )`);
+    }
+    const query = filters.query?.trim().toLocaleLowerCase();
+    if (query) {
+      const like = `%${query}%`;
+      conditions.push(sql`lower(
+        coalesce(${runs.prompt}, '') || ' ' || ${runs.modelId} || ' ' ||
+        coalesce(${workspaces.name}, '') || ' ' || coalesce(${workspaces.userId}, '') || ' ' ||
+        coalesce(${users.displayName}, '') || ' ' || coalesce(organization_stats.email, '')
+      ) LIKE ${like}`);
+    }
+
+    const limit = Math.max(1, Math.min(200, Math.floor(filters.limit ?? 50)));
+    const offset = Math.max(0, Math.floor(filters.offset ?? 0));
+    const rows = await platformRows(sql.join(conditions, sql` AND `), limit, offset, dbImpl);
+    return {
+      total: Number(rows[0]?.totalRows ?? 0),
+      runs: rows.map(platformRun),
+    };
+  },
+
+  /** One unscoped run. Callers must enforce the super-admin policy first. */
+  async getPlatform(runId: string, dbImpl: typeof db = db): Promise<PlatformRunRow | null> {
+    const rows = await platformRows(sql`${runs.id} = ${runId}`, 1, 0, dbImpl);
+    return rows[0] ? platformRun(rows[0]) : null;
   },
 
   /**

@@ -122,3 +122,39 @@ describe("runRepository.toolUsage", () => {
     expect(await runRepository.toolUsage("ws-new", 50, db)).toEqual([]);
   });
 });
+
+describe("runRepository platform views", () => {
+  beforeEach(() => {
+    sqlite.query("insert into users (id, created_at, display_name) values (?, ?, ?)").run("u1", Date.now(), "User One");
+    sqlite.query("insert into users (id, created_at, display_name) values (?, ?, ?)").run("u2", Date.now(), null);
+    sqlite.query("insert into workspaces (id, user_id, name, created_at) values (?, ?, ?, ?)").run("ws1", "u1", "One", Date.now());
+    sqlite.query("insert into workspaces (id, user_id, name, created_at) values (?, ?, ?, ?)").run("ws2", "u2", "Two", Date.now());
+    conversation("c1", "ws1");
+    conversation("c2", "ws2");
+    run("r1", "c1", "ws1");
+    run("r2", "c2", "ws2");
+  });
+
+  it("lists runs across workspaces with owner attribution", async () => {
+    const result = await runRepository.listPlatform({ limit: 20, offset: 0 }, db);
+
+    expect(result.total).toBe(2);
+    expect(result.runs.map((item) => item.userId).sort()).toEqual(["u1", "u2"]);
+    expect(result.runs.find((item) => item.id === "r1")).toMatchObject({
+      workspaceName: "One",
+      displayName: "User One",
+    });
+  });
+
+  it("filters the platform run ledger by user and status", async () => {
+    sqlite.query("update runs set status = 'error' where id = 'r2'").run();
+
+    const result = await runRepository.listPlatform({ limit: 20, offset: 0, userId: "u2", status: "error" }, db);
+    expect(result.total).toBe(1);
+    expect(result.runs[0]?.id).toBe("r2");
+  });
+
+  it("reads any run by id for a super-admin controller", async () => {
+    expect(await runRepository.getPlatform("r2", db)).toMatchObject({ id: "r2", userId: "u2", workspaceName: "Two" });
+  });
+});
