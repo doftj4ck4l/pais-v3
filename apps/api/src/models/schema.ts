@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Drizzle schema: pure ORM definitions, no runtime connection.
@@ -44,6 +45,96 @@ export type WorkspaceRow = {
   id: string;
   userId: string;
   name: string;
+  createdAt: number;
+};
+
+// ---- organizations: platform membership, never a workspace ownership key ----
+
+export const organizations = sqliteTable(
+  "organizations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("idx_organizations_created").on(t.createdAt)],
+);
+
+export type OrganizationRow = {
+  id: string;
+  name: string;
+  createdByUserId: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export const organizationMemberships = sqliteTable(
+  "organization_memberships",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** Historical display snapshot. Authorization always uses userId. */
+    email: text("email").notNull(),
+    joinedAt: integer("joined_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_organization_memberships_org_user").on(t.organizationId, t.userId),
+    index("idx_organization_memberships_user").on(t.userId, t.joinedAt),
+  ],
+);
+
+export type OrganizationMembershipRow = {
+  id: string;
+  organizationId: string;
+  userId: string;
+  email: string;
+  joinedAt: number;
+};
+
+export const organizationInvitations = sqliteTable(
+  "organization_invitations",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    tokenDigest: text("token_digest").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    acceptedAt: integer("accepted_at"),
+    acceptedByUserId: text("accepted_by_user_id").references(() => users.id),
+    revokedAt: integer("revoked_at"),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_organization_invitations_digest").on(t.tokenDigest),
+    index("idx_organization_invitations_org").on(t.organizationId, t.createdAt),
+    index("idx_organization_invitations_recipient").on(t.organizationId, t.email),
+  ],
+);
+
+export type OrganizationInvitationRow = {
+  id: string;
+  organizationId: string;
+  email: string;
+  tokenDigest: string;
+  expiresAt: number;
+  acceptedAt: number | null;
+  acceptedByUserId: string | null;
+  revokedAt: number | null;
+  createdByUserId: string;
   createdAt: number;
 };
 
@@ -373,7 +464,10 @@ export const dbConnections = sqliteTable(
     database: text("display_database").notNull(),
     username: text("username").notNull().default(""),
     sslMode: text("ssl_mode").notNull().default("disable"),
-    hasCustomCa: integer("has_custom_ca", { mode: "boolean" }).notNull().default(false),
+    // Keep the numeric SQLite default represented the same way as migration
+    // metadata. `false` is stored as 0; spelling it as 0 here prevents
+    // drizzle-kit from rebuilding this unrelated table on every generation.
+    hasCustomCa: integer("has_custom_ca", { mode: "boolean" }).notNull().default(sql`0`),
     status: text("status").$type<DbConnectionStatus>().notNull().default("connected"),
     error: text("error"),
     tableCount: integer("table_count").notNull().default(0),

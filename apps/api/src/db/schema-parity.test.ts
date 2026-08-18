@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import fs from "node:fs";
+import path from "node:path";
 import { is } from "drizzle-orm";
 import { SQLiteTable, getTableConfig } from "drizzle-orm/sqlite-core";
 import { applySchema, RESCOPED_TABLES } from "./client";
@@ -66,6 +68,16 @@ function booted(): Database {
 }
 
 describe("schema parity", () => {
+  it("keeps the deployed organization migration identity stable", () => {
+    const journal = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dir, "../../drizzle/meta/_journal.json"), "utf8"),
+    ) as { entries: Array<{ tag: string; when: number }> };
+
+    expect(journal.entries.find(({ tag }) => tag === "0007_fearless_multiple_man")?.when).toBe(
+      1_786_953_545_492,
+    );
+  });
+
   it("creates every table the ORM declares", () => {
     const sql = sqlTables(fresh());
     const missing = [...drizzleTables().keys()].filter((t) => !sql.has(t));

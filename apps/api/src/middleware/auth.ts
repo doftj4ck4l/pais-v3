@@ -7,6 +7,7 @@ export interface AuthOptions {
   mode?: AuthMode;
   header?: string;
   defaultUserId?: string;
+  defaultUserEmail?: string;
   profileHeaders?: Partial<typeof PROFILE_HEADERS>;
 }
 
@@ -65,6 +66,9 @@ export function createAuth(opts: AuthOptions = {}): MiddlewareHandler {
   const mode = opts.mode ?? env.authMode;
   const header = opts.header ?? env.authUserHeader;
   const fallbackUserId = opts.defaultUserId ?? env.defaultUserId;
+  // The first configured super-admin is the local operator when dev mode is
+  // using its fallback identity. A real claimed identity never inherits it.
+  const fallbackUserEmail = opts.defaultUserEmail ?? env.superAdminEmails[0];
 
   const profileHeaders = { ...PROFILE_HEADERS, ...opts.profileHeaders };
 
@@ -77,12 +81,13 @@ export function createAuth(opts: AuthOptions = {}): MiddlewareHandler {
 
     const id = claimed || fallbackUserId;
     const groups = c.req.header(profileHeaders.groups)?.trim();
+    const email = c.req.header(profileHeaders.email)?.trim();
 
     c.set("userId", id);
     c.set("userProfile", {
       id,
       username: c.req.header(profileHeaders.username)?.trim() || undefined,
-      email: c.req.header(profileHeaders.email)?.trim() || undefined,
+      email: email || (!claimed && mode === "dev" ? fallbackUserEmail : undefined),
       name: c.req.header(profileHeaders.name)?.trim() || undefined,
       groups: groups ? groups.split(GROUP_SEPARATOR).filter(Boolean) : [],
     });

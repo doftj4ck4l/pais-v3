@@ -1,6 +1,32 @@
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_DATABASE_ALLOWED_CIDRS } from "../services/db/network-policy";
+import { parseSuperAdminEmails } from "../services/organizations/policy";
+
+export function parsePublicUrl(raw: string | undefined): string {
+  const value = raw?.trim() || "http://localhost:8080";
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("PUBLIC_URL must be an absolute http(s) origin.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error("PUBLIC_URL must be an absolute http(s) origin without credentials.");
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("PUBLIC_URL must contain only an origin, without a path, query, or fragment.");
+  }
+  return parsed.origin;
+}
+
+export function parseOrganizationInviteTtlMs(raw: string | undefined): number {
+  const hours = raw === undefined || raw.trim() === "" ? 168 : Number(raw);
+  if (!Number.isInteger(hours) || hours < 1 || hours > 8_760) {
+    throw new Error("ORGANIZATION_INVITE_TTL_HOURS must be an integer from 1 to 8760.");
+  }
+  return hours * 60 * 60 * 1000;
+}
 
 /**
  * Every environment variable the API reads, resolved once. Import this instead
@@ -9,6 +35,14 @@ import { DEFAULT_DATABASE_ALLOWED_CIDRS } from "../services/db/network-policy";
 export const env = {
   port: Number(process.env.PORT || 4000),
   logLevel: process.env.LOG_LEVEL || "info",
+
+  /** Trusted-email allowlist for the deliberately narrow v1 platform admin. */
+  superAdminEmails: parseSuperAdminEmails(process.env.SUPER_ADMIN_EMAILS),
+
+  /** One-time organization invitations expire after this duration. */
+  organizationInviteTtlMs: parseOrganizationInviteTtlMs(
+    process.env.ORGANIZATION_INVITE_TTL_HOURS,
+  ),
 
   /** OpenAI-compatible gateway that serves the model catalog. */
   gatewayBaseUrl: process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1",
@@ -99,7 +133,7 @@ export const env = {
    * Google compares the string, not the host it resolves to. Configurable
    * because the API is reached through the web proxy's port, not its own.
    */
-  publicUrl: (process.env.PUBLIC_URL ?? "http://localhost:8080").replace(/\/+$/, ""),
+  publicUrl: parsePublicUrl(process.env.PUBLIC_URL),
 
   /** Files one Drive sync will pull. Small by default; a demo, not a crawl. */
   connectorSyncLimit: Number(process.env.CONNECTOR_SYNC_LIMIT ?? 50),

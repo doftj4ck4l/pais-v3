@@ -30,6 +30,9 @@ import {
   runs,
   connectors,
   generatedImages,
+  organizations,
+  organizationMemberships,
+  organizationInvitations,
 } from "../models/schema";
 
 /**
@@ -80,6 +83,9 @@ export {
   runs,
   connectors,
   generatedImages,
+  organizations,
+  organizationMemberships,
+  organizationInvitations,
 };
 export type {
   WorkspaceRow,
@@ -105,6 +111,9 @@ export type {
   ConnectorRow,
   ConnectorKind,
   ConnectorStatus,
+  OrganizationRow,
+  OrganizationMembershipRow,
+  OrganizationInvitationRow,
 } from "../models/schema";
 
 const sqlite = new Database(DB_PATH, { create: true });
