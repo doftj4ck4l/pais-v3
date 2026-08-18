@@ -3,6 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { runAgent } from "../services/agent/agent.service";
 import { resolveRun } from "../services/agent/model.service";
 import { TranscriptRecorder } from "../services/agent/transcript.service";
+import { runMetrics } from "../services/agent/run-metrics";
 import { conversationRepository } from "../repositories/conversation.repository";
 import { runRepository } from "../repositories/run.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
@@ -323,22 +324,7 @@ async function closeRun(
   recorder: TranscriptRecorder,
 ): Promise<void> {
   try {
-    let tokensIn = 0;
-    let tokensOut = 0;
-    let toolCalls = 0;
-    let toolErrors = 0;
-    for (const trace of recorder.toTraceRows()) {
-      if (trace.step === "run.tools") {
-        toolCalls = Number(trace.fields.toolCalls ?? 0) || 0;
-        toolErrors = Number(trace.fields.toolErrors ?? 0) || 0;
-        continue;
-      }
-      if (trace.step !== "context.usage") continue;
-      // `used` is the whole prompt for that turn, so the largest is the run's
-      // peak occupancy. Summing would double-count the history each turn resends.
-      tokensIn = Math.max(tokensIn, Number(trace.fields.used ?? 0) || 0);
-      tokensOut += Number(trace.fields.output ?? 0) || 0;
-    }
+    const { tokensIn, tokensOut, toolCalls, toolErrors } = runMetrics(recorder.toTraceRows());
     await runRepository.finish(runId, {
       status,
       turns,

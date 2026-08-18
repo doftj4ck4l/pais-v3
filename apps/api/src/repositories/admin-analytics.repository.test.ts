@@ -91,8 +91,17 @@ describe("adminAnalyticsRepository", () => {
   it("searches users by identity and organization", async () => {
     const byEmail = await adminAnalyticsRepository.listUsers({ limit: 20, offset: 0, query: "alice@example" }, database);
     expect(byEmail.users.map((user) => user.userId)).toEqual(["alice"]);
+    expect(byEmail.total).toBe(1);
 
     const byOrg = await adminAnalyticsRepository.listUsers({ limit: 20, offset: 0, query: "acme" }, database);
     expect(byOrg.users.map((user) => user.userId)).toEqual(["alice"]);
+    expect(byOrg.total).toBe(1);
+  });
+
+  it("returns the exact filtered total when the requested page is empty", async () => {
+    const result = await adminAnalyticsRepository.listUsers({ limit: 1, offset: 1, query: "acme" }, database);
+
+    expect(result.users).toEqual([]);
+    expect(result.total).toBe(1);
   });
 });

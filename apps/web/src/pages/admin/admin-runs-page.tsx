@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { CircleAlertIcon, RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
@@ -26,6 +26,10 @@ function selectedStatus(value: string): RunStatus | undefined {
   return value in STATUS_STYLE ? value as RunStatus : undefined
 }
 
+function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === 'AbortError'
+}
+
 function ms(value: number | null): string {
   if (value == null) return '—'
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`
@@ -44,26 +48,34 @@ export function AdminRunsPage() {
   const [error, setError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [span, setSpan] = useState<RunSpan | null>(null)
-
-  const refresh = useCallback(() => {
-    let live = true
-    setLoading(true)
-    setError(null)
-    listRuns({ limit: 100, query, userId: search.user, status: search.status })
-      .then((result) => {
-        if (!live) return
-        setRuns(result.runs)
-        setTotal(result.total)
-      })
-      .catch((cause) => live && setError((cause as Error).message))
-      .finally(() => live && setLoading(false))
-    return () => { live = false }
-  }, [query, search.status, search.user])
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
-    const timer = window.setTimeout(() => refresh(), 180)
-    return () => { window.clearTimeout(timer) }
-  }, [refresh])
+    let live = true
+    const controller = new AbortController()
+    setLoading(true)
+    setError(null)
+    const timer = window.setTimeout(() => {
+      listRuns({ limit: 100, query, userId: search.user, status: search.status }, controller.signal)
+        .then((result) => {
+          if (!live || controller.signal.aborted) return
+          setRuns(result.runs)
+          setTotal(result.total)
+        })
+        .catch((cause: unknown) => {
+          if (!live || controller.signal.aborted || isAbortError(cause)) return
+          setError(cause instanceof Error ? cause.message : 'Could not load runs')
+        })
+        .finally(() => {
+          if (live && !controller.signal.aborted) setLoading(false)
+        })
+    }, 180)
+    return () => {
+      live = false
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [query, refreshKey, search.status, search.user])
 
   useEffect(() => {
     let live = true
@@ -106,7 +118,7 @@ export function AdminRunsPage() {
               <SelectTrigger className="h-10 min-w-36"><SelectValue placeholder="All statuses" /></SelectTrigger>
               <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="running">Running</SelectItem><SelectItem value="done">Done</SelectItem><SelectItem value="error">Error</SelectItem><SelectItem value="stopped">Stopped</SelectItem></SelectContent>
             </Select>
-            <Button variant="outline" size="lg" onClick={refresh} disabled={loading}>{loading ? <Spinner /> : <RefreshCwIcon />} Refresh</Button>
+            <Button variant="outline" size="lg" onClick={() => setRefreshKey((value) => value + 1)} disabled={loading}>{loading ? <Spinner /> : <RefreshCwIcon />} Refresh</Button>
           </div>
         </div>
         {search.user ? (

@@ -263,7 +263,23 @@ export const adminAnalyticsRepository = {
     const query = input.query?.trim().toLocaleLowerCase() ?? "";
     const like = `%${query}%`;
 
-    const rows = await dbImpl.all<{
+    const matchesSearch = query === "" ? sql`1 = 1` : sql`
+      lower(
+        ${users.id} || ' ' || coalesce(${users.displayName}, '') || ' ' ||
+        coalesce((
+          SELECT min(${organizationMemberships.email})
+          FROM ${organizationMemberships}
+          WHERE ${organizationMemberships.userId} = ${users.id}
+        ), '') || ' ' || coalesce((
+          SELECT group_concat(${organizations.name}, ' ')
+          FROM ${organizationMemberships}
+          INNER JOIN ${organizations} ON ${organizations.id} = ${organizationMemberships.organizationId}
+          WHERE ${organizationMemberships.userId} = ${users.id}
+        ), '')
+      ) LIKE ${like}
+    `;
+
+    type UserRow = {
       userId: string;
       displayName: string | null;
       email: string | null;
@@ -277,16 +293,35 @@ export const adminAnalyticsRepository = {
       toolErrors: number;
       lastActiveAt: number | null;
       organizations: string | null;
-      totalRows: number;
-    }>(sql`
-      WITH workspace_stats AS (
-        SELECT user_id, count(*) AS workspace_count
+    };
+
+    const [rows, countRows] = await Promise.all([
+      dbImpl.all<UserRow>(sql`
+      WITH selected_users AS (
+        SELECT
+          ${users.id} AS user_id,
+          ${users.displayName} AS display_name,
+          ${users.createdAt} AS created_at,
+          (
+            SELECT max(${runs.startedAt})
+            FROM ${runs}
+            INNER JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+            WHERE ${workspaces.userId} = ${users.id}
+          ) AS last_active_at
+        FROM ${users}
+        WHERE ${matchesSearch}
+        ORDER BY (last_active_at IS NULL), last_active_at DESC, ${users.createdAt} ASC, ${users.id}
+        LIMIT ${limit} OFFSET ${offset}
+      ), workspace_stats AS (
+        SELECT ${workspaces.userId} AS user_id, count(*) AS workspace_count
         FROM ${workspaces}
-        GROUP BY user_id
+        INNER JOIN selected_users ON selected_users.user_id = ${workspaces.userId}
+        GROUP BY ${workspaces.userId}
       ), conversation_stats AS (
         SELECT ${workspaces.userId} AS user_id, count(*) AS conversation_count
         FROM ${conversations}
         INNER JOIN ${workspaces} ON ${workspaces.id} = ${conversations.workspaceId}
+        INNER JOIN selected_users ON selected_users.user_id = ${workspaces.userId}
         GROUP BY ${workspaces.userId}
       ), run_stats AS (
         SELECT ${workspaces.userId} AS user_id,
@@ -298,21 +333,22 @@ export const adminAnalyticsRepository = {
           max(started_at) AS last_active_at
         FROM ${runs}
         INNER JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+        INNER JOIN selected_users ON selected_users.user_id = ${workspaces.userId}
         GROUP BY ${workspaces.userId}
       ), organization_stats AS (
         SELECT ${organizationMemberships.userId} AS user_id,
           min(${organizationMemberships.email}) AS email,
-          json_group_array(json_object('id', ${organizations.id}, 'name', ${organizations.name})) AS organizations,
-          lower(group_concat(${organizations.name}, ' ')) AS searchable_organizations
+          json_group_array(json_object('id', ${organizations.id}, 'name', ${organizations.name})) AS organizations
         FROM ${organizationMemberships}
         INNER JOIN ${organizations} ON ${organizations.id} = ${organizationMemberships.organizationId}
+        INNER JOIN selected_users ON selected_users.user_id = ${organizationMemberships.userId}
         GROUP BY ${organizationMemberships.userId}
       )
       SELECT
-        ${users.id} AS userId,
-        ${users.displayName} AS displayName,
+        selected_users.user_id AS userId,
+        selected_users.display_name AS displayName,
         organization_stats.email AS email,
-        ${users.createdAt} AS createdAt,
+        selected_users.created_at AS createdAt,
         coalesce(workspace_stats.workspace_count, 0) AS workspaceCount,
         coalesce(conversation_stats.conversation_count, 0) AS conversationCount,
         coalesce(run_stats.run_count, 0) AS runCount,
@@ -321,23 +357,24 @@ export const adminAnalyticsRepository = {
         coalesce(run_stats.tool_calls, 0) AS toolCalls,
         coalesce(run_stats.tool_errors, 0) AS toolErrors,
         run_stats.last_active_at AS lastActiveAt,
-        organization_stats.organizations AS organizations,
-        count(*) OVER() AS totalRows
-      FROM ${users}
-      LEFT JOIN workspace_stats ON workspace_stats.user_id = ${users.id}
-      LEFT JOIN conversation_stats ON conversation_stats.user_id = ${users.id}
-      LEFT JOIN run_stats ON run_stats.user_id = ${users.id}
-      LEFT JOIN organization_stats ON organization_stats.user_id = ${users.id}
-      WHERE ${query === ""} OR lower(
-        ${users.id} || ' ' || coalesce(${users.displayName}, '') || ' ' ||
-        coalesce(organization_stats.email, '') || ' ' || coalesce(organization_stats.searchable_organizations, '')
-      ) LIKE ${like}
-      ORDER BY (run_stats.last_active_at IS NULL), run_stats.last_active_at DESC, ${users.createdAt} ASC, ${users.id}
-      LIMIT ${limit} OFFSET ${offset}
-    `);
+        organization_stats.organizations AS organizations
+      FROM selected_users
+      LEFT JOIN workspace_stats ON workspace_stats.user_id = selected_users.user_id
+      LEFT JOIN conversation_stats ON conversation_stats.user_id = selected_users.user_id
+      LEFT JOIN run_stats ON run_stats.user_id = selected_users.user_id
+      LEFT JOIN organization_stats ON organization_stats.user_id = selected_users.user_id
+      ORDER BY (selected_users.last_active_at IS NULL), selected_users.last_active_at DESC,
+        selected_users.created_at ASC, selected_users.user_id
+      `),
+      dbImpl.all<CountRow>(sql`
+        SELECT count(*) AS value
+        FROM ${users}
+        WHERE ${matchesSearch}
+      `),
+    ]);
 
     return {
-      total: number(rows[0]?.totalRows),
+      total: number(countRows[0]?.value),
       users: rows.map((row) => ({
         userId: row.userId,
         displayName: row.displayName,

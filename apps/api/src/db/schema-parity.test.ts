@@ -100,6 +100,19 @@ describe("schema parity", () => {
     expect(missing).toEqual([]);
   });
 
+  it("creates the global activity range indexes", () => {
+    const indexes = fresh()
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master " +
+          "WHERE type = 'index' AND name IN ('idx_conversations_created', 'idx_runs_started') " +
+          "ORDER BY name",
+      )
+      .all()
+      .map(({ name }) => name);
+
+    expect(indexes).toEqual(["idx_conversations_created", "idx_runs_started"]);
+  });
+
   it("leaves no column behind that the ORM does not know about", () => {
     // The other direction, checked after the full boot sequence rather than
     // after applySchema alone: `user_id` is deliberately created and then

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
@@ -22,29 +22,50 @@ import { cn } from '@/shared/lib/utils'
 
 const PERIODS = [7, 30, 90] as const
 
+function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === 'AbortError'
+}
+
 export function AdminDashboard() {
   const [days, setDays] = useState<number>(30)
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null)
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const requestRef = useRef<AbortController | null>(null)
 
   const load = useCallback(() => {
-    let live = true
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
     setLoading(true)
     setError(null)
-    Promise.all([getAdminAnalytics(days), listAdminUsers({ limit: 6 })])
+    Promise.all([
+      getAdminAnalytics(days, controller.signal),
+      listAdminUsers({ limit: 6, signal: controller.signal }),
+    ])
       .then(([nextAnalytics, nextUsers]) => {
-        if (!live) return
+        if (requestRef.current !== controller || controller.signal.aborted) return
         setAnalytics(nextAnalytics)
         setUsers(nextUsers.users)
       })
-      .catch((cause) => live && setError((cause as Error).message))
-      .finally(() => live && setLoading(false))
-    return () => { live = false }
+      .catch((cause: unknown) => {
+        if (requestRef.current !== controller || controller.signal.aborted || isAbortError(cause)) return
+        setError(cause instanceof Error ? cause.message : 'Could not load platform activity')
+      })
+      .finally(() => {
+        if (requestRef.current !== controller) return
+        requestRef.current = null
+        if (!controller.signal.aborted) setLoading(false)
+      })
   }, [days])
 
-  useEffect(() => load(), [load])
+  useEffect(() => {
+    load()
+    return () => requestRef.current?.abort()
+  }, [load])
+
+  const periodAnalytics = analytics?.periodDays === days ? analytics : null
 
   return (
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
@@ -99,13 +120,13 @@ export function AdminDashboard() {
 
         <section className="overflow-hidden rounded-xl border bg-card">
           <SectionHeader
-            eyebrow={`${days}-day signal`}
+            eyebrow={periodAnalytics ? `${periodAnalytics.periodDays}-day signal` : 'Activity signal'}
             title="Activity pulse"
             detail="Runs and provider token load, day by day"
             action={<Link to="/admin/runs" className="inline-flex items-center gap-1.5 text-sm font-medium hover:underline">Open run monitor <ArrowRightIcon className="size-4" /></Link>}
           />
-          {analytics ? <ActivityPulse days={analytics.daily} /> : <LoadingBlock />}
-          {analytics ? <PeriodStrip analytics={analytics} /> : null}
+          {periodAnalytics ? <ActivityPulse days={periodAnalytics.daily} /> : <LoadingBlock />}
+          {periodAnalytics ? <PeriodStrip analytics={periodAnalytics} /> : null}
         </section>
 
         <div className="grid gap-7 xl:grid-cols-[minmax(0,1.25fr)_minmax(24rem,0.75fr)]">
@@ -121,8 +142,8 @@ export function AdminDashboard() {
           </section>
 
           <section className="overflow-hidden rounded-xl border bg-card">
-            <SectionHeader eyebrow="Provider mix" title="Models in use" detail={`${days}-day totals`} />
-            {analytics ? <ModelLedger analytics={analytics} /> : <LoadingBlock />}
+            <SectionHeader eyebrow="Provider mix" title="Models in use" detail={periodAnalytics ? `${periodAnalytics.periodDays}-day totals` : 'Loading selected period'} />
+            {periodAnalytics ? <ModelLedger analytics={periodAnalytics} /> : <LoadingBlock />}
           </section>
         </div>
       </div>

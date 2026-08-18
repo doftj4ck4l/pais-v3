@@ -10,12 +10,10 @@ function integerQuery(c: Context, name: string, fallback: number): number {
   return Number.isFinite(value) ? Math.floor(value) : fallback;
 }
 
-/** GET /api/admin/analytics — all-tenant totals and the requested activity window. */
 export async function analytics(c: Context) {
   return c.json(await adminAnalyticsRepository.overview(integerQuery(c, "days", 30)));
 }
 
-/** GET /api/admin/users — every persisted app user, including independent users. */
 export async function listUsers(c: Context) {
   return c.json(
     await adminAnalyticsRepository.listUsers({
@@ -26,7 +24,6 @@ export async function listUsers(c: Context) {
   );
 }
 
-/** GET /api/admin/runs — recent runs across the entire platform, newest first. */
 export async function listRuns(c: Context) {
   const requestedStatus = c.req.query("status") as RunStatus | undefined;
   const result = await runRepository.listPlatform({
@@ -47,7 +44,6 @@ export async function listRuns(c: Context) {
   });
 }
 
-/** GET /api/admin/runs/:id — one platform run and its recorded spans. */
 export async function getRun(c: Context) {
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing run id" }, 400);

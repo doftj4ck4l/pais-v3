@@ -245,6 +245,13 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "idx_conversations_created": {
+          "name": "idx_conversations_created",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},

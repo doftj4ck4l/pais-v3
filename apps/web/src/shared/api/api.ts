@@ -683,8 +683,8 @@ export type AdminRunFilters = {
   status?: RunStatus
 }
 
-export async function getAdminAnalytics(days = 30): Promise<AdminAnalytics> {
-  return json<AdminAnalytics>(await fetch(`/api/admin/analytics?days=${days}`))
+export async function getAdminAnalytics(days = 30, signal?: AbortSignal): Promise<AdminAnalytics> {
+  return json<AdminAnalytics>(await fetch(`/api/admin/analytics?days=${days}`, { signal }))
 }
 
 export async function listAdminUsers(input: { limit?: number; offset?: number; query?: string; signal?: AbortSignal } = {}): Promise<{ users: AdminUser[]; total: number }> {
@@ -696,7 +696,7 @@ export async function listAdminUsers(input: { limit?: number; offset?: number; q
 }
 
 /** Recent runs across every user and workspace. */
-export async function listRuns(filters: AdminRunFilters = {}): Promise<{ runs: RunRow[]; total: number }> {
+export async function listRuns(filters: AdminRunFilters = {}, signal?: AbortSignal): Promise<{ runs: RunRow[]; total: number }> {
   const query = new URLSearchParams()
   query.set('limit', String(filters.limit ?? 50))
   query.set('offset', String(filters.offset ?? 0))
@@ -704,7 +704,7 @@ export async function listRuns(filters: AdminRunFilters = {}): Promise<{ runs: R
   if (filters.userId) query.set('userId', filters.userId)
   if (filters.organizationId) query.set('organizationId', filters.organizationId)
   if (filters.status) query.set('status', filters.status)
-  return json<{ runs: RunRow[]; total: number }>(await fetch(`/api/admin/runs?${query}`))
+  return json<{ runs: RunRow[]; total: number }>(await fetch(`/api/admin/runs?${query}`, { signal }))
 }
 
 /** One run and its spans, already positioned relative to the run's start. */

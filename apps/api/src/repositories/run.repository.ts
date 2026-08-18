@@ -77,9 +77,7 @@ export type PlatformRunFilters = {
 /** How long the prompt preview stored on the row may be. */
 const PROMPT_PREVIEW = 300;
 
-type PlatformRunDatabaseRow = Omit<PlatformRunRow, "organizations"> & {
-  totalRows: number;
-};
+type PlatformRunDatabaseRow = Omit<PlatformRunRow, "organizations">;
 
 async function platformRows(
   where: ReturnType<typeof sql>,
@@ -109,8 +107,7 @@ async function platformRows(
       (SELECT min(${organizationMemberships.email})
         FROM ${organizationMemberships}
         WHERE ${organizationMemberships.userId} = ${workspaces.userId}) AS email,
-      ${workspaces.name} AS workspaceName,
-      count(*) OVER() AS totalRows
+      ${workspaces.name} AS workspaceName
     FROM ${runs}
     LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
     LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
@@ -118,6 +115,20 @@ async function platformRows(
     ORDER BY ${runs.startedAt} DESC, ${runs.id}
     LIMIT ${limit} OFFSET ${offset}
   `);
+}
+
+async function platformTotal(
+  where: ReturnType<typeof sql>,
+  dbImpl: typeof db,
+): Promise<number> {
+  const rows = await dbImpl.all<{ value: number }>(sql`
+    SELECT count(*) AS value
+    FROM ${runs}
+    LEFT JOIN ${workspaces} ON ${workspaces.id} = ${runs.workspaceId}
+    LEFT JOIN ${users} ON ${users.id} = ${workspaces.userId}
+    WHERE ${where}
+  `);
+  return Number(rows[0]?.value ?? 0);
 }
 
 function platformRun(row: PlatformRunDatabaseRow): PlatformRunRow {
@@ -231,9 +242,13 @@ export const runRepository = {
 
     const limit = Math.max(1, Math.min(200, Math.floor(filters.limit ?? 50)));
     const offset = Math.max(0, Math.floor(filters.offset ?? 0));
-    const rows = await platformRows(sql.join(conditions, sql` AND `), limit, offset, dbImpl);
+    const where = sql.join(conditions, sql` AND `);
+    const [rows, total] = await Promise.all([
+      platformRows(where, limit, offset, dbImpl),
+      platformTotal(where, dbImpl),
+    ]);
     return {
-      total: Number(rows[0]?.totalRows ?? 0),
+      total,
       runs: rows.map(platformRun),
     };
   },

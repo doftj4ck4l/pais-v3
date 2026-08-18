@@ -154,6 +154,14 @@ describe("runRepository platform views", () => {
     expect(result.runs[0]?.id).toBe("r2");
   });
 
+  it("returns the exact filtered total when the requested page is empty", async () => {
+    sqlite.query("update runs set status = 'error' where id = 'r2'").run();
+    const result = await runRepository.listPlatform({ limit: 1, offset: 1, userId: "u2", status: "error" }, db);
+
+    expect(result.runs).toEqual([]);
+    expect(result.total).toBe(1);
+  });
+
   it("reads any run by id for a super-admin controller", async () => {
     sqlite.query("insert into organizations (id, name, created_by_user_id, created_at, updated_at) values (?, ?, ?, ?, ?)")
       .run("org1", "Acme", "u1", Date.now(), Date.now());
