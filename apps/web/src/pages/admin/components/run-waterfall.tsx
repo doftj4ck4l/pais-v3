@@ -150,7 +150,7 @@ export function RunWaterfall({
 
   if (!bars.length) {
     return (
-      <p className="p-4 text-xs text-muted-foreground">
+      <p className="p-5 text-sm text-muted-foreground">
         No spans were recorded for this run. Runs from before the timeline existed have none.
       </p>
     )
@@ -181,20 +181,20 @@ export function RunWaterfall({
                 onClick={() => onSelect?.(s)}
                 aria-pressed={selectedId === s.id}
                 className={cn(
-                  'grid w-full grid-cols-[13rem_1fr_4.5rem] items-center gap-2 px-3 py-1 text-left',
+                  'grid w-full grid-cols-[15rem_1fr_5rem] items-center gap-3 px-5 py-2 text-left',
                   'transition-[background-color,opacity] hover:bg-accent/50',
                   selectedId === s.id && 'bg-accent',
                   muted && 'opacity-30',
                 )}
               >
               <span className="flex min-w-0 items-center gap-1.5">
-                <kind.Icon className={cn('size-3 shrink-0', kind.text)} aria-hidden />
-                <span className="truncate text-[0.6875rem]" title={labelOf(s)}>
+                <kind.Icon className={cn('size-4 shrink-0', kind.text)} aria-hidden />
+                <span className="truncate text-sm" title={labelOf(s)}>
                   {labelOf(s)}
                 </span>
               </span>
 
-              <span className="relative h-3.5">
+              <span className="relative h-4">
                 <span
                   className={cn(
                     'absolute inset-y-0 rounded-sm',
@@ -207,7 +207,7 @@ export function RunWaterfall({
 
               <span
                 className={cn(
-                  'readout text-right text-[0.625rem] tabular-nums',
+                  'readout text-right text-xs tabular-nums',
                   s.fields.ok === false ? 'text-destructive' : 'text-muted-foreground',
                 )}
               >
@@ -221,7 +221,7 @@ export function RunWaterfall({
 
       {/* The legend is the filter. Two rows — one to read, one to click —
           would be the same information twice. */}
-      <div className="flex flex-wrap items-center gap-1.5 border-t px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-t px-5 py-3">
         {present.map(({ kind, count }) => {
           const on = active.has(kind.label)
           return (
@@ -231,13 +231,13 @@ export function RunWaterfall({
               onClick={() => toggle(kind.label)}
               aria-pressed={on}
               className={cn(
-                'flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[0.625rem]',
+                'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs',
                 'transition-colors hover:bg-accent',
                 'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
                 on ? 'border-transparent bg-accent' : 'border-transparent text-muted-foreground',
               )}
             >
-              <kind.Icon className={cn('size-3 shrink-0', on ? kind.text : undefined)} aria-hidden />
+              <kind.Icon className={cn('size-3.5 shrink-0', on ? kind.text : undefined)} aria-hidden />
               <span className={on ? kind.text : undefined}>{kind.label}</span>
               <span className="readout tabular-nums opacity-60">{count}</span>
             </button>
@@ -249,13 +249,13 @@ export function RunWaterfall({
           <button
             type="button"
             onClick={() => setPicked(new Set())}
-            className="rounded-full px-2 py-0.5 text-[0.625rem] text-muted-foreground hover:text-foreground"
+            className="rounded-full px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
             show all
           </button>
         ) : null}
 
-        <span className="readout ml-auto text-[0.625rem] text-muted-foreground">
+        <span className="readout ml-auto text-xs text-muted-foreground">
           total {ms(totalMs)}
         </span>
       </div>
@@ -309,8 +309,8 @@ const PAYLOAD_FIELDS: { key: string; label: string }[] = [
 
 function Payload({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
   return (
-    <div className="px-3 pb-3">
-      <p className="mb-1 flex items-baseline gap-2 text-[0.625rem] text-muted-foreground">
+    <div className="px-4 pb-4">
+      <p className="mb-1.5 flex items-baseline gap-2 text-xs text-muted-foreground">
         <span>{label}</span>
         <span className="tabular-nums opacity-60">{value.length.toLocaleString()} chars</span>
       </p>
@@ -319,8 +319,8 @@ function Payload({ label, value, danger }: { label: string; value: string; dange
           // Each payload scrolls inside its own box rather than the panel
           // growing without bound: input and output are usually read together,
           // and a 40k-character result would push the other one off screen.
-          'readout max-h-72 overflow-auto rounded-md border bg-background px-2 py-1.5',
-          'text-[0.625rem] leading-relaxed whitespace-pre-wrap break-all',
+          'readout max-h-72 overflow-auto rounded-md border bg-background px-3 py-2.5',
+          'text-xs leading-relaxed whitespace-pre-wrap break-all',
           danger && 'text-destructive',
         )}
       >
@@ -340,7 +340,7 @@ function Payload({ label, value, danger }: { label: string; value: string; dange
 export function SpanDetailEmpty() {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      <p className="max-w-[16rem] text-center text-xs text-muted-foreground">
+      <p className="max-w-[20rem] text-center text-sm leading-6 text-muted-foreground">
         Pick a span on the left to see what it sent, what came back, and where it ran.
       </p>
     </div>
@@ -371,22 +371,22 @@ export function SpanDetail({ span, onClose }: { span: RunSpan; onClose: () => vo
       {/* Outside the scrolling region below, so the span you are reading stays
           named while you scroll a long payload. No `sticky` needed — only the
           sibling scrolls. */}
-      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
-        <kind.Icon className={cn('size-3.5 shrink-0', kind.text)} aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={labelOf(span)}>
+      <div className="flex shrink-0 items-center gap-2.5 border-b px-4 py-3">
+        <kind.Icon className={cn('size-4 shrink-0', kind.text)} aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium" title={labelOf(span)}>
           {labelOf(span)}
         </span>
         <button
           type="button"
           onClick={onClose}
-          className="shrink-0 text-[0.625rem] text-muted-foreground hover:text-foreground"
+          className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
         >
           close
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 px-3 py-3 text-[0.6875rem]">
+        <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-1.5 px-4 py-4 text-sm">
           <Row label="step" value={span.step} />
           <Row label="duration" value={span.durationMs ? ms(span.durationMs) : 'instant'} />
           <Row label="offset" value={`+${ms(span.offsetMs)} into the run`} />
@@ -449,12 +449,12 @@ export function RunBreakdown({ spans, totalMs }: { spans: RunSpan[]; totalMs: nu
   if (!rows.length) return null
 
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2">
+    <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-5 py-3">
       {rows.map(([label, total]) => {
         const kind = KINDS.find((k) => k.label === label) ?? FALLBACK
         return (
-          <span key={label} className="readout flex items-center gap-1.5 text-[0.625rem]">
-            <kind.Icon className={cn('size-3 shrink-0', kind.text)} aria-hidden />
+          <span key={label} className="readout flex items-center gap-1.5 text-xs">
+            <kind.Icon className={cn('size-3.5 shrink-0', kind.text)} aria-hidden />
             <span className={kind.text}>{label}</span>
             <span className="tabular-nums text-muted-foreground">
               {ms(total)} · {Math.round((total / Math.max(1, totalMs)) * 100)}%

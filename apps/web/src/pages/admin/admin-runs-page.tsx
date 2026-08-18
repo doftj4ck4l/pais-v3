@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, getRouteApi, useNavigate } from '@tanstack/react-router'
-import { ArrowLeftIcon, RefreshCwIcon } from 'lucide-react'
+import { getRouteApi, useNavigate } from '@tanstack/react-router'
+import { RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { Spinner } from '@/shared/ui/spinner'
 import {
@@ -15,14 +15,14 @@ import type { RunDetail, RunRow, RunSpan } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * Runs, and where their time went.
+ * Agent runs, and where their time went.
  *
  * The selected run lives in the URL rather than in state, so a slow run is a
  * link you can send someone — which is most of the value of having the page at
  * all.
  */
 
-const route = getRouteApi('/admin')
+const route = getRouteApi('/admin/runs')
 
 const STATUS_STYLE: Record<string, string> = {
   done: 'bg-emerald-500',
@@ -40,9 +40,9 @@ function when(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export function Admin() {
+export function AdminRunsPage() {
   const scope = useScope()
-  const navigate = useNavigate({ from: '/admin' })
+  const navigate = useNavigate({ from: '/admin/runs' })
   const { run: selectedId } = route.useSearch()
 
   const [runs, setRuns] = useState<RunRow[]>([])
@@ -86,17 +86,10 @@ export function Admin() {
   }, [scope, selectedId])
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      <header className="flex items-center gap-3 border-b px-4 py-2.5">
-        <Link
-          to="/"
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Console
-        </Link>
-        <span className="text-sm font-extrabold tracking-[-0.02em]">Runs</span>
-        <span className="readout text-[0.625rem] text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <header className="flex items-center gap-3 border-b px-5 py-3.5">
+        <span className="text-lg font-extrabold tracking-[-0.02em]">Runs</span>
+        <span className="readout text-xs text-muted-foreground">
           {runs.length} recorded
         </span>
         <Button
@@ -111,9 +104,9 @@ export function Admin() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-80 shrink-0 overflow-y-auto border-r">
+        <aside className="w-96 shrink-0 overflow-y-auto border-r">
           {runs.length === 0 && !loading ? (
-            <p className="p-4 text-xs text-muted-foreground">
+            <p className="p-5 text-sm leading-6 text-muted-foreground">
               No runs recorded yet. Send a message in the console and it will appear here.
             </p>
           ) : null}
@@ -125,7 +118,7 @@ export function Admin() {
                   type="button"
                   onClick={() => void navigate({ search: { run: r.id } })}
                   className={cn(
-                    'flex w-full flex-col gap-1 border-b px-3 py-2 text-left transition-colors',
+                    'flex w-full flex-col gap-1.5 border-b px-4 py-3 text-left transition-colors',
                     'hover:bg-accent',
                     selectedId === r.id && 'bg-accent',
                   )}
@@ -137,14 +130,14 @@ export function Admin() {
                         STATUS_STYLE[r.status] ?? 'bg-muted-foreground',
                       )}
                     />
-                    <span className="min-w-0 flex-1 truncate text-xs">
+                    <span className="min-w-0 flex-1 truncate text-sm">
                       {r.prompt || '(no prompt)'}
                     </span>
-                    <span className="readout shrink-0 text-[0.625rem] text-muted-foreground">
+                    <span className="readout shrink-0 text-xs text-muted-foreground">
                       {ms(r.durationMs)}
                     </span>
                   </span>
-                  <span className="readout flex gap-2 text-[0.625rem] text-muted-foreground">
+                  <span className="readout flex gap-2.5 text-xs text-muted-foreground">
                     <span>{when(r.startedAt)}</span>
                     <span>{r.modelId.replace(/^gw-/, '')}</span>
                     <span>{r.turns} turns</span>
@@ -167,16 +160,16 @@ export function Admin() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
           <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {!selectedId ? (
-            <p className="p-4 text-xs text-muted-foreground">
+            <p className="p-5 text-sm text-muted-foreground">
               Pick a run to see where its time went.
             </p>
           ) : !detail ? (
-            <p className="p-4 text-xs text-muted-foreground">Loading…</p>
+            <p className="p-5 text-sm text-muted-foreground">Loading…</p>
           ) : (
             <>
-              <div className="border-b px-3 py-2">
-                <p className="text-xs">{detail.run.prompt || '(no prompt)'}</p>
-                <p className="readout mt-1 flex flex-wrap gap-3 text-[0.625rem] text-muted-foreground">
+              <div className="border-b px-5 py-4">
+                <p className="text-sm">{detail.run.prompt || '(no prompt)'}</p>
+                <p className="readout mt-1.5 flex flex-wrap gap-3 text-xs text-muted-foreground">
                   <span>{ms(detail.run.durationMs)}</span>
                   <span>{detail.run.turns} turns</span>
                   <span>{detail.run.tokensIn.toLocaleString()} in</span>
@@ -189,7 +182,7 @@ export function Admin() {
                   </span>
                 </p>
                 {detail.run.error ? (
-                  <p className="mt-1 text-[0.625rem] text-destructive">{detail.run.error}</p>
+                  <p className="mt-1.5 text-xs text-destructive">{detail.run.error}</p>
                 ) : null}
               </div>
 
@@ -210,7 +203,7 @@ export function Admin() {
             <aside
               className={cn(
                 'flex min-h-0 shrink-0 flex-col bg-sidebar/50',
-                'h-80 border-t lg:h-auto lg:w-[26rem] lg:border-t-0 lg:border-l',
+                'h-80 border-t lg:h-auto lg:w-[30rem] lg:border-t-0 lg:border-l',
               )}
             >
               {span ? (

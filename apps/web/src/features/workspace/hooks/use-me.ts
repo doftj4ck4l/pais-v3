@@ -4,6 +4,7 @@ import type { UserProfile } from '@/shared/lib/types'
 
 export type MeState = {
   me: UserProfile | null
+  loading: boolean
   /** Re-read the profile, after settings has changed the display name. */
   refresh: () => void
 }
@@ -25,20 +26,23 @@ export type MeState = {
  */
 export function useMeState(): MeState {
   const [me, setMe] = useState<UserProfile | null>(null)
+  const [loading, setLoading] = useState(true)
   const [nonce, setNonce] = useState(0)
 
   useEffect(() => {
     let live = true
+    setLoading(true)
     fetchMe()
       .then((profile) => live && setMe(profile))
       .catch(() => live && setMe(null))
+      .finally(() => live && setLoading(false))
     return () => {
       live = false
     }
   }, [nonce])
 
   const refresh = useCallback(() => setNonce((n) => n + 1), [])
-  return { me, refresh }
+  return { me, loading, refresh }
 }
 
 /**

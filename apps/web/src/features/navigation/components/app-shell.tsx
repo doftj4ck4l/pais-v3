@@ -26,7 +26,16 @@ import type { ReactNode } from 'react'
  * chat, which names the open agent in its own header) only gets it when there
  * is a sidebar to bring back.
  */
-export function AppShell({ topbar, children }: { topbar?: ReactNode; children: ReactNode }) {
+export function AppShell({
+  topbar,
+  allowWithoutWorkspace = false,
+  children,
+}: {
+  topbar?: ReactNode
+  /** Global administration pages do not require or create a private workspace. */
+  allowWithoutWorkspace?: boolean
+  children: ReactNode
+}) {
   const workspace = useWorkspace()
   const board = useBoard()
   const { theme, toggle } = useTheme()
@@ -39,7 +48,7 @@ export function AppShell({ topbar, children }: { topbar?: ReactNode; children: R
   // Before any workspace exists there is nothing to show and nothing for an
   // agent to act on, so onboarding replaces the whole screen rather than
   // appearing inside a shell full of disabled controls.
-  if (workspace.needsOnboarding) {
+  if (workspace.needsOnboarding && !allowWithoutWorkspace) {
     return <WorkspaceOnboarding onCreate={workspace.create} />
   }
 
