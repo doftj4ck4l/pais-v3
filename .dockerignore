@@ -21,6 +21,7 @@ dist
 # unreadable file. See `stdioCwd` in services/mcp/client.ts.
 **/.env
 **/.env.*
+**/app.env
 !**/.env.example
 
 # Local state, not application code.

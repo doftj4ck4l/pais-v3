@@ -51,20 +51,9 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 FROM node:${NODE_VERSION}-slim AS node
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-# ---------------------------------------------------------------------------
-# docker-cli — fetch the static binary somewhere disposable.
-#
-# Downloading it in the runtime stage meant installing curl there and then
-# purging it, which does not shrink the layer it was written into. Here the
-# whole toolchain is thrown away and only the binary is copied forward.
-# ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS docker-cli
-ARG DOCKER_CLI_VERSION
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
-      | tar -xz -C /usr/local/bin --strip-components=1 docker/docker \
- && docker --version
+# The official CLI image publishes both amd64 and arm64 variants. BuildKit
+# selects the native binary, so there is no architecture-name mapping to drift.
+FROM docker:${DOCKER_CLI_VERSION}-cli AS docker-cli
 
 # ---------------------------------------------------------------------------
 # runtime

@@ -131,7 +131,7 @@ missing directory.
 
 ## Environment files
 
-Two, and they are not interchangeable:
+The source deployment uses two files, and they are not interchangeable:
 
 - **`.env` (root)** — deployment config: `REPO_ROOT`, `SANDBOX_ROOT`, `HOST_UID`,
   `DOCKER_GID`, `WEB_PORT`. Read by docker-compose.
@@ -140,6 +140,14 @@ Two, and they are not interchangeable:
 
 Put an API key in the wrong one and it works in dev and is silently absent in
 the deployment.
+
+The on-prem operator is different. `scripts/pixelspace install` makes its
+private deployment env the runtime source of truth and points
+`PIXELSPACE_APP_ENV_FILE` at an empty private file so a checkout's
+`apps/api/.env` cannot override it. When adopting an older deployment, the
+operator preserves an existing application env path and includes that file in
+backups. Never put either generated env inside an image; `.dockerignore` must
+exclude both `.env` patterns and `app.env` at every depth.
 
 ## Who the caller is
 
@@ -510,7 +518,7 @@ change what an invisible page was showing and look like nothing happened.
 
 ## Deploying
 
-Two targets, and they are not the same machine.
+Three targets, and they are not the same machine.
 
 **This host.** Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs
 tests, builds, starts, and verifies `/api/meta` through the proxy. `docker
@@ -523,6 +531,21 @@ Merging is a release, so treat a merge to `main` as one. The rsync runs
 `--delete` but excludes `.env`, `apps/api/.env` and `apps/api/data` from transfer
 *and* from deletion — that is the only thing standing between a deploy and the
 live SQLite database.
+
+**On-prem hosts and DGX Spark.** `scripts/pixelspace` is the first-party
+single-host operator; `ON_PREM.md` is its user contract. It supports Linux
+`amd64` and `arm64`, defaults to loopback plus `AUTH_MODE=dev`, and rejects LAN
+exposure until `AUTH_MODE=proxy` is configured behind a trusted TLS proxy and
+firewall. Persistent data and workspaces live outside the checkout. Build mode
+builds API, web, and sandbox images locally; image mode accepts only immutable
+multi-architecture digest references and reuses images already loaded for an
+offline install. Pixelspace never installs, restarts, or reconfigures the host's
+model service; `CUSTOM_BASE_URL` points at a separately managed
+OpenAI-compatible gateway. Lifecycle operations are locked: backup captures
+SQLite, quiesced workspace sandboxes, RustFS, MCP cache, and decryption secrets;
+restore uses safe archive extraction, creates a safety backup, and attempts
+automatic rollback after a failed cutover; upgrade re-runs doctor and backs up
+before refresh; uninstall preserves data unless both `--purge --yes` are present.
 
 **CI pins bun, and the pin is in the workflow, not in a manifest.** `BUN_VERSION`
 in `deploy.yml` decides what CI runs; nothing checks it against what you have.

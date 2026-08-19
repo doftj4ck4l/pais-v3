@@ -21,6 +21,7 @@ name: salurai
 
 services:
   api:
+    image: "${PIXELSPACE_API_IMAGE:-pixelspace-api:local}"
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -36,8 +37,8 @@ services:
     # absent from the deployment. Later file wins, and it is optional — a fresh
     # checkout that has only the root `.env` still boots.
     env_file:
-      - path: .env
-      - path: apps/api/.env
+      - path: "${PIXELSPACE_DEPLOY_ENV_FILE:-.env}"
+      - path: "${PIXELSPACE_APP_ENV_FILE:-apps/api/.env}"
         required: false
     environment:
       PORT: "4000"
@@ -49,7 +50,7 @@ services:
       SANDBOX_IMAGE: "${SANDBOX_IMAGE:-pixelspace-sandbox:1}"
       # Both must be host paths, mounted below at the same path inside.
       SANDBOX_ROOT: "${SANDBOX_ROOT:?set SANDBOX_ROOT in .env}"
-      SKILLS_ROOT: "${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills"
+      SKILLS_ROOT: "${SKILLS_ROOT:-${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills}"
       # Generated media. `rustfs` is the compose service name, so this only
       # resolves on the compose network — the bucket is not reachable from the
       # host, by design. `bun dev` needs S3_ENDPOINT=http://localhost:9000 in
@@ -58,6 +59,11 @@ services:
       S3_BUCKET: "${S3_BUCKET:-salur-media}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-rustfsadmin}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}"
+    extra_hosts:
+      # Linux has no host.docker.internal alias unless Compose adds it. This
+      # gives an on-prem install an explicit route to a host-side model gateway;
+      # the gateway must still listen beyond 127.0.0.1 for the bridge to reach it.
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Workspaces: written by this container, bind-mounted by sandbox siblings.
@@ -65,10 +71,10 @@ services:
       # Skills: read by this container to build the prompt, mounted read-only
       # into every sandbox. Read-only here too — the agent cannot rewrite the
       # code it is about to run.
-      - "${REPO_ROOT}/apps/api/skills:${REPO_ROOT}/apps/api/skills:ro"
+      - "${SKILLS_ROOT:-${REPO_ROOT}/apps/api/skills}:${SKILLS_ROOT:-${REPO_ROOT}/apps/api/skills}:ro"
       # SQLite lives on the host so a rebuild does not discard conversations,
       # workspaces, documents, or MCP servers.
-      - "${REPO_ROOT}/apps/api/data:/app/apps/api/data"
+      - "${PIXELSPACE_DATA_ROOT:-${REPO_ROOT}/apps/api/data}:/app/apps/api/data"
       # uvx / npx package cache. Without it every deploy re-downloads every
       # stdio MCP server on its first call, which reads as a hang.
       - mcp-cache:/cache
@@ -88,7 +94,9 @@ services:
   # /api/images/:id so a link in a transcript never expires and the bucket
   # credentials never leave the compose network.
   rustfs:
-    image: rustfs/rustfs:latest
+    # A multi-architecture index pinned after amd64 + arm64 verification. The
+    # override is the release escape hatch; a floating latest tag is not one.
+    image: "${RUSTFS_IMAGE:-rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21}"
     # Deliberately NOT pinned to HOST_UID the way `api` is. `api` needs it
     # because it writes into bind mounts the host user must own; rustfs owns a
     # named volume that nothing outside the container ever opens by path. The
@@ -104,11 +112,12 @@ services:
     restart: unless-stopped
 
   web:
+    image: "${PIXELSPACE_WEB_IMAGE:-pixelspace-web:local}"
     build:
       context: .
       dockerfile: apps/web/Dockerfile
     ports:
-      - "${WEB_PORT:-8080}:8080"
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:8080"
     depends_on:
       api:
         condition: service_started

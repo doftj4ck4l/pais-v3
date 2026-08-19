@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "setup": "bun run scripts/setup.ts",
+    "on-prem": "scripts/pixelspace",
+    "on-prem:test": "bun test scripts/pixelspace.test.ts",
     "sandbox:build": "bun run --filter ./apps/api sandbox:build",
     "dev": "bun run --filter ./apps/api dev & bun run --filter ./apps/web dev",
     "dev:api": "bun run --filter ./apps/api dev",
