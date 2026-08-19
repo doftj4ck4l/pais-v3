@@ -82,7 +82,7 @@ export type ConversationStatus = 'running' | 'done' | 'stopped' | 'error'
 
 export type ConversationRow = {
   id: string
-  userId: string
+  workspaceId: string | null
   title: string
   modelId: string
   harnessId: string
@@ -261,6 +261,8 @@ export type RunDetail = {
   run: RunRow & { endedAt: number; durationMs: number }
   spans: RunSpan[]
 }
+
+export type RunSessionDetail = Pick<ConversationDetail, 'conversation' | 'messages'>
 
 export type AdminActivityDay = {
   date: string

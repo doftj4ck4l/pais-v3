@@ -8,6 +8,7 @@ import type {
   Meta,
   PlaybookBullet,
   RunDetail,
+  RunSessionDetail,
   SessionImage,
   UploadedImage,
   RunRow,
@@ -788,6 +789,12 @@ export async function listRuns(filters: AdminRunFilters = {}, signal?: AbortSign
 export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
   return json<RunDetail>(
     await fetch(`/api/admin/runs/${encodeURIComponent(id)}`, { signal }),
+  )
+}
+
+export async function getRunSession(id: string, signal?: AbortSignal): Promise<RunSessionDetail> {
+  return json<RunSessionDetail>(
+    await fetch(`/api/admin/runs/${encodeURIComponent(id)}/session`, { signal }),
   )
 }
 
