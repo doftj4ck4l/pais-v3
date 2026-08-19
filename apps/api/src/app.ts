@@ -11,7 +11,7 @@ import { apiRoutes } from "./routes";
  * what the container healthcheck calls — gating it would report the API as
  * unhealthy the moment auth was switched on.
  */
-const OPEN_PATHS = new Set(["/api/meta"]);
+const OPEN_PATHS = new Set(["/api/meta", "/api/agents/invoke"]);
 
 /** The wired-up Hono app: middleware, then routes. No side effects on import. */
 export function createApp() {

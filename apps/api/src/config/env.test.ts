@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { parseOrganizationInviteTtlMs, parsePublicUrl } from "./env";
+import {
+  parseAgentInvocationTimeoutMs,
+  parseOrganizationInviteTtlMs,
+  parsePublicUrl,
+} from "./env";
 
 describe("organization environment configuration", () => {
   it("accepts only a clean http(s) public origin", () => {
@@ -14,5 +18,13 @@ describe("organization environment configuration", () => {
     expect(parseOrganizationInviteTtlMs("24")).toBe(24 * 60 * 60 * 1000);
     expect(() => parseOrganizationInviteTtlMs("0")).toThrow();
     expect(() => parseOrganizationInviteTtlMs("1.5")).toThrow();
+  });
+
+  it("bounds the public agent provider timeout", () => {
+    expect(parseAgentInvocationTimeoutMs(undefined)).toBe(180_000);
+    expect(parseAgentInvocationTimeoutMs("30000")).toBe(30_000);
+    expect(() => parseAgentInvocationTimeoutMs("999")).toThrow();
+    expect(() => parseAgentInvocationTimeoutMs("300001")).toThrow();
+    expect(() => parseAgentInvocationTimeoutMs("1.5")).toThrow();
   });
 });

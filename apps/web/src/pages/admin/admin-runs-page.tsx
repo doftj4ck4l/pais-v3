@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { CircleAlertIcon, RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
+import { CircleAlertIcon, MessageSquareTextIcon, RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Spinner } from '@/shared/ui/spinner'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet'
 import { RunBreakdown, RunWaterfall, SpanDetail } from '@/pages/admin/components/run-waterfall'
-import { getRun, listRuns } from '@/shared/api/api'
-import type { RunDetail, RunRow, RunSpan } from '@/shared/lib/types'
+import { Transcript } from '@/features/agents/components/transcript'
+import { itemsFromRows } from '@/features/agents/lib/transcript'
+import { getRun, getRunSession, listRuns } from '@/shared/api/api'
+import type { RunDetail, RunRow, RunSessionDetail, RunSpan } from '@/shared/lib/types'
 import type { RunStatus } from '@/shared/lib/types'
 import { formatMetric, formatTokens, relativeTime } from '@/features/admin/lib/admin-format'
 import { OrganizationBadges } from '@/features/admin/components/organization-badges'
@@ -48,6 +51,11 @@ export function AdminRunsPage() {
   const [error, setError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [span, setSpan] = useState<RunSpan | null>(null)
+  const [sessionRunId, setSessionRunId] = useState<string | null>(null)
+  const [session, setSession] = useState<{ runId: string; detail: RunSessionDetail } | null>(null)
+  const [sessionLoading, setSessionLoading] = useState(false)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [sessionRefreshKey, setSessionRefreshKey] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -102,7 +110,39 @@ export function AdminRunsPage() {
     }
   }, [selectedId])
 
+  useEffect(() => {
+    setSessionRunId(null)
+  }, [selectedId])
+
+  useEffect(() => {
+    if (!sessionRunId) {
+      setSessionLoading(false)
+      setSessionError(null)
+      return
+    }
+    const controller = new AbortController()
+    setSessionLoading(true)
+    setSessionError(null)
+    getRunSession(sessionRunId, controller.signal)
+      .then((next) => {
+        if (!controller.signal.aborted) setSession({ runId: sessionRunId, detail: next })
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted || isAbortError(cause)) return
+        setSessionError(cause instanceof Error ? cause.message : 'Could not load the session')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSessionLoading(false)
+      })
+    return () => {
+      controller.abort()
+    }
+  }, [sessionRefreshKey, sessionRunId])
+
   const visibleDetail = detail?.run.id === selectedId ? detail : null
+  const visibleSession = sessionRunId === null
+    ? session?.detail ?? null
+    : session?.runId === sessionRunId ? session.detail : null
 
   return (
     <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -162,7 +202,7 @@ export function AdminRunsPage() {
               <div role="alert" className="p-8 text-sm text-destructive">{detailError}</div>
             ) : visibleDetail ? (
               <>
-                <RunDetailHeader detail={visibleDetail} />
+                <RunDetailHeader detail={visibleDetail} onOpenSession={() => setSessionRunId(visibleDetail.run.id)} />
                 <RunBreakdown spans={visibleDetail.spans} totalMs={visibleDetail.run.durationMs} />
                 <RunWaterfall spans={visibleDetail.spans} totalMs={visibleDetail.run.durationMs} selectedId={span?.id ?? null} onSelect={(next) => setSpan((previous) => previous?.id === next.id ? null : next)} />
               </>
@@ -176,6 +216,17 @@ export function AdminRunsPage() {
           ) : null}
         </div>
       </div>
+
+      <RunSessionSheet
+        open={sessionRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSessionRunId(null)
+        }}
+        detail={visibleSession}
+        loading={sessionLoading}
+        error={sessionError}
+        onRetry={() => setSessionRefreshKey((value) => value + 1)}
+      />
     </main>
   )
 }
@@ -198,18 +249,91 @@ function RunListItem({ run, selected, onSelect }: { run: RunRow; selected: boole
   )
 }
 
-function RunDetailHeader({ detail }: { detail: RunDetail }) {
+function RunDetailHeader({ detail, onOpenSession }: { detail: RunDetail; onOpenSession: () => void }) {
   const run = detail.run
   const identity = run.displayName || run.email || run.userId || 'Unknown user'
   return (
     <div className="border-b px-6 py-6 lg:px-8">
-      <p className="readout text-[0.68rem] font-medium uppercase tracking-[0.16em] text-muted-foreground">Selected run</p>
-      <p className="mt-2 max-w-5xl text-lg font-medium leading-7">{run.prompt || '(no prompt)'}</p>
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:gap-5">
+        <div className="min-w-0">
+          <p className="readout text-[0.68rem] font-medium uppercase tracking-[0.16em] text-muted-foreground">Selected run</p>
+          <p className="mt-2 max-w-5xl text-lg font-medium leading-7">{run.prompt || '(no prompt)'}</p>
+        </div>
+        <Button variant="outline" size="sm" className="shrink-0" onClick={onOpenSession}>
+          <MessageSquareTextIcon /> Open session
+        </Button>
+      </div>
       <OrganizationBadges organizations={run.organizations} className="mt-3 gap-2" />
       <div className="mt-5 grid gap-x-6 gap-y-4 border-y py-4 sm:grid-cols-2 xl:grid-cols-4"><DetailStat label="User" value={identity} /><DetailStat label="Workspace" value={run.workspaceName || 'Unknown'} /><DetailStat label="Tokens" value={formatTokens(run.tokensIn, run.tokensOut)} /><DetailStat label="Duration" value={ms(run.durationMs)} /></div>
       <p className="readout mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground"><span>{run.modelId.replace(/^gw-/, '')}</span><span>{run.turns} turns</span><span>{run.toolCalls} tool calls</span><span className={run.toolErrors ? 'text-destructive' : ''}>{run.toolErrors} failed</span><span>{run.status}</span></p>
       {run.error ? <p role="alert" className="mt-3 text-sm text-destructive">{run.error}</p> : null}
     </div>
+  )
+}
+
+function RunSessionSheet({
+  open,
+  onOpenChange,
+  detail,
+  loading,
+  error,
+  onRetry,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  detail: RunSessionDetail | null
+  loading: boolean
+  error: string | null
+  onRetry: () => void
+}) {
+  const items = useMemo(() => detail ? itemsFromRows(detail.messages) : [], [detail])
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:w-[min(52rem,72vw)] data-[side=right]:sm:max-w-[52rem]"
+      >
+        <SheetHeader className="shrink-0 border-b px-6 py-5 pr-14">
+          <p className="readout text-[0.68rem] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            Session transcript
+          </p>
+          <SheetTitle className="mt-1 text-xl leading-7">
+            {detail?.conversation.title || 'Loading session…'}
+          </SheetTitle>
+          <SheetDescription>
+            The complete conversation containing this run.
+          </SheetDescription>
+          {detail ? (
+            <p className="readout mt-2 truncate text-[0.68rem] text-muted-foreground">
+              {detail.conversation.id} · {detail.conversation.status}
+            </p>
+          ) : null}
+        </SheetHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background">
+          {loading && !detail ? (
+            <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Spinner /> Loading session…
+            </div>
+          ) : error ? (
+            <div role="alert" className="grid min-h-64 place-items-center p-8 text-center">
+              <div>
+                <CircleAlertIcon className="mx-auto size-5 text-destructive" />
+                <p className="mt-3 text-sm text-destructive">{error}</p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>Retry</Button>
+              </div>
+            </div>
+          ) : detail && items.length ? (
+            <Transcript items={items} running={false} runSummary={null} />
+          ) : detail ? (
+            <div className="grid min-h-64 place-items-center p-8 text-center text-sm text-muted-foreground">
+              This session has no stored messages.
+            </div>
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 

@@ -8,4 +8,5 @@ adminRoutes.use("*", requireSuperAdmin);
 adminRoutes.get("/analytics", adminController.analytics);
 adminRoutes.get("/users", adminController.listUsers);
 adminRoutes.get("/runs", adminController.listRuns);
+adminRoutes.get("/runs/:id/session", adminController.getRunSession);
 adminRoutes.get("/runs/:id", adminController.getRun);

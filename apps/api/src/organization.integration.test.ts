@@ -53,6 +53,7 @@ describe("organization administration HTTP API", () => {
       "/api/admin/users",
       "/api/admin/runs",
       "/api/admin/runs/missing",
+      "/api/admin/runs/missing/session",
     ]) {
       expect((await createApp().request(path, { headers })).status).toBe(403);
     }
@@ -91,13 +92,27 @@ describe("organization administration HTTP API", () => {
           ended_at, status, turns, tokens_in, tokens_out, tool_calls, tool_errors)
       VALUES
         ('http-run', 'http-conversation', 'http-workspace', 'pi', 'gw-test',
-          'http-contract needle', ${startedAt}, ${startedAt + 500}, 'done', 2, 300, 40, 1, 0)
+          'http-contract needle', ${startedAt}, ${startedAt + 500}, 'done', 2, 300, 40, 1, 0),
+        ('http-follow-up-run', 'http-conversation', 'http-workspace', 'pi', 'gw-test',
+          'follow-up session', ${startedAt + 600}, ${startedAt + 900}, 'done', 2, 120, 20, 0, 0)
     `);
     await database.run(sql`
       INSERT INTO traces (id, conversation_id, run_id, step, fields, ts, duration_ms)
       VALUES
         ('http-trace', 'http-conversation', 'http-run', 'tool',
           ${JSON.stringify({ name: "search_docs", ok: true })}, ${startedAt + 300}, 200)
+    `);
+    await database.run(sql`
+      INSERT INTO messages (id, conversation_id, kind, seq, text, ts)
+      VALUES
+        ('http-user-message', 'http-conversation', 'user', 0, 'Inspect this session',
+          ${startedAt}),
+        ('http-assistant-message', 'http-conversation', 'assistant', 1, 'Session inspected',
+          ${startedAt + 500}),
+        ('http-follow-up-user-message', 'http-conversation', 'user', 2, 'Inspect it again',
+          ${startedAt + 600}),
+        ('http-follow-up-assistant-message', 'http-conversation', 'assistant', 3, 'Still inspected',
+          ${startedAt + 900})
     `);
 
     const list = await createApp().request(
@@ -116,6 +131,34 @@ describe("organization administration HTTP API", () => {
       run: { id: "http-run", userId: "http-user", durationMs: 500 },
       spans: [{ id: "http-trace", offsetMs: 100, durationMs: 200 }],
     });
+
+    const session = await createApp().request("/api/admin/runs/http-follow-up-run/session", {
+      headers: admin,
+    });
+    expect(session.status).toBe(200);
+    expect(await session.json()).toEqual({
+      conversation: {
+        id: "http-conversation",
+        workspaceId: "http-workspace",
+        title: "HTTP contract",
+        modelId: "gw-test",
+        harnessId: "pi",
+        status: "done",
+        createdAt: startedAt - 800,
+        updatedAt: startedAt + 500,
+      },
+      messages: [
+        { id: "http-user-message", conversationId: "http-conversation", kind: "user", seq: 0, text: "Inspect this session", ts: startedAt },
+        { id: "http-assistant-message", conversationId: "http-conversation", kind: "assistant", seq: 1, text: "Session inspected", ts: startedAt + 500 },
+        { id: "http-follow-up-user-message", conversationId: "http-conversation", kind: "user", seq: 2, text: "Inspect it again", ts: startedAt + 600 },
+        { id: "http-follow-up-assistant-message", conversationId: "http-conversation", kind: "assistant", seq: 3, text: "Still inspected", ts: startedAt + 900 },
+      ],
+    });
+
+    const missingSession = await createApp().request("/api/admin/runs/missing/session", {
+      headers: admin,
+    });
+    expect(missingSession.status).toBe(404);
   });
 
   it("creates, renames, invites, accepts once, and removes without workspaces", async () => {

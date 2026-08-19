@@ -1,5 +1,6 @@
 import {
   BrainIcon,
+  BotIcon,
   DatabaseIcon,
   FileIcon,
   FileTextIcon,
@@ -29,6 +30,7 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Chat', hint: 'Agents and transcripts', icon: MessageSquareIcon },
+  { to: '/agents', label: 'Agents', hint: 'Build reusable prompt agents', icon: BotIcon },
   { to: '/docs', label: 'Docs', hint: 'Uploaded documents', icon: FileTextIcon },
   // Sources is deliberately absent, not deleted: connectors are unfinished, and
   // a destination that half works is worse than one that is not offered yet.

@@ -28,6 +28,14 @@ export function parseOrganizationInviteTtlMs(raw: string | undefined): number {
   return hours * 60 * 60 * 1000;
 }
 
+export function parseAgentInvocationTimeoutMs(raw: string | undefined): number {
+  const milliseconds = raw === undefined || raw.trim() === "" ? 180_000 : Number(raw);
+  if (!Number.isInteger(milliseconds) || milliseconds < 1_000 || milliseconds > 300_000) {
+    throw new Error("AGENT_INVOCATION_TIMEOUT_MS must be an integer from 1000 to 300000.");
+  }
+  return milliseconds;
+}
+
 /**
  * Every environment variable the API reads, resolved once. Import this instead
  * of touching process.env, so the full configuration surface is one file.
@@ -42,6 +50,11 @@ export const env = {
   /** One-time organization invitations expire after this duration. */
   organizationInviteTtlMs: parseOrganizationInviteTtlMs(
     process.env.ORGANIZATION_INVITE_TTL_HOURS,
+  ),
+
+  /** Maximum time a public prompt-agent request may occupy a provider connection. */
+  agentInvocationTimeoutMs: parseAgentInvocationTimeoutMs(
+    process.env.AGENT_INVOCATION_TIMEOUT_MS,
   ),
 
   /** OpenAI-compatible gateway that serves the model catalog. */

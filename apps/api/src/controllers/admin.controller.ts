@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { adminAnalyticsRepository } from "../repositories/admin-analytics.repository";
+import { conversationRepository } from "../repositories/conversation.repository";
 import { runRepository } from "../repositories/run.repository";
 import type { RunStatus } from "../models/schema";
 
@@ -62,4 +63,20 @@ export async function getRun(c: Context) {
       offsetMs: Math.max(0, span.startedAt - run.startedAt),
     })),
   });
+}
+
+export async function getRunSession(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing run id" }, 400);
+
+  const run = await runRepository.getPlatform(id);
+  if (!run) return c.json({ error: "Run not found" }, 404);
+
+  const [conversation, messages] = await Promise.all([
+    conversationRepository.get(run.conversationId),
+    conversationRepository.listMessages(run.conversationId),
+  ]);
+  if (!conversation) return c.json({ error: "Session not found" }, 404);
+
+  return c.json({ conversation, messages });
 }

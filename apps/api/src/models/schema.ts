@@ -48,6 +48,43 @@ export type WorkspaceRow = {
   createdAt: number;
 };
 
+export const agentDefinitions = sqliteTable(
+  "agent_definitions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    systemPrompt: text("system_prompt").notNull(),
+    modelId: text("model_id").notNull(),
+    /** SHA-256 of the bearer key. The plaintext is returned only when minted. */
+    tokenDigest: text("token_digest").notNull(),
+    /** Last four characters, so the UI can identify which key is active. */
+    tokenHint: text("token_hint").notNull(),
+    lastUsedAt: integer("last_used_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("idx_agent_definitions_token").on(t.tokenDigest),
+    index("idx_agent_definitions_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type AgentDefinitionRow = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  systemPrompt: string;
+  modelId: string;
+  tokenDigest: string;
+  tokenHint: string;
+  lastUsedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 // ---- organizations: platform membership, never a workspace ownership key ----
 
 export const organizations = sqliteTable(

@@ -170,6 +170,115 @@ describe("schema parity", () => {
     expect(row?.tokensIn).toBe(300);
   });
 
+  it("preserves populated database inventories while upgrading through the agent migration", () => {
+    const database = fresh();
+
+    // Recreate the schema boundary before 0009, then apply its real SQL in the
+    // same transaction shape used by Drizzle. Inside a transaction SQLite
+    // ignores attempts to turn foreign-key enforcement off.
+    database.exec("PRAGMA foreign_keys = ON");
+    database.exec("DROP TABLE agent_definitions");
+
+    database
+      .query("INSERT INTO workspaces (id, user_id, name, created_at) VALUES (?, ?, ?, ?)")
+      .run("workspace-before-agent", "owner", "Existing workspace", 1);
+    database
+      .query(
+        "INSERT INTO db_connections " +
+          "(id, workspace_id, name, secret, display_host, display_database, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "connection-before-agent",
+        "workspace-before-agent",
+        "Existing database",
+        "encrypted",
+        "db.internal",
+        "production",
+        2,
+      );
+    database
+      .query(
+        "INSERT INTO db_tables " +
+          "(id, connection_id, workspace_id, schema_name, name) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        "table-before-agent",
+        "connection-before-agent",
+        "workspace-before-agent",
+        "public",
+        "customers",
+      );
+    database
+      .query(
+        "INSERT INTO db_columns " +
+          "(id, table_id, connection_id, workspace_id, seq, name, data_type, nullable, is_primary_key) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "column-before-agent",
+        "table-before-agent",
+        "connection-before-agent",
+        "workspace-before-agent",
+        0,
+        "id",
+        "uuid",
+        0,
+        1,
+      );
+
+    const migration = fs.readFileSync(
+      path.resolve(import.meta.dir, "../../drizzle/0009_clammy_jackpot.sql"),
+      "utf8",
+    );
+    database.transaction(() => {
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) database.exec(statement);
+      }
+    })();
+
+    expect(
+      database
+        .query<{ id: string }, []>("SELECT id FROM db_connections")
+        .all()
+        .map(({ id }) => id),
+    ).toEqual(["connection-before-agent"]);
+    expect(
+      database
+        .query<{ id: string }, []>("SELECT id FROM db_tables")
+        .all()
+        .map(({ id }) => id),
+    ).toEqual(["table-before-agent"]);
+    expect(
+      database
+        .query<{ id: string }, []>("SELECT id FROM db_columns")
+        .all()
+        .map(({ id }) => id),
+    ).toEqual(["column-before-agent"]);
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_definitions'",
+        )
+        .get()?.name,
+    ).toBe("agent_definitions");
+  });
+
+  it("keeps the custom-CA default stable across the agent migration metadata", () => {
+    const snapshot = (name: string) =>
+      JSON.parse(
+        fs.readFileSync(path.resolve(import.meta.dir, `../../drizzle/meta/${name}`), "utf8"),
+      ) as {
+        tables: {
+          db_connections: { columns: { has_custom_ca: { default: unknown } } };
+        };
+      };
+
+    expect(snapshot("0009_snapshot.json").tables.db_connections.columns.has_custom_ca.default).toBe(
+      snapshot("0008_snapshot.json").tables.db_connections.columns.has_custom_ca.default,
+    );
+  });
+
   it("leaves no column behind that the ORM does not know about", () => {
     // The other direction, checked after the full boot sequence rather than
     // after applySchema alone: `user_id` is deliberately created and then

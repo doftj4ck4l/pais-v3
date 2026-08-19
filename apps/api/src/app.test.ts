@@ -31,6 +31,161 @@ describe("api auth wiring", () => {
 
     expect(res.status).toBe(200);
   });
+
+  it("leaves agent invocation open for bearer-key callers", async () => {
+    const res = await createApp().request("/api/agents/invoke", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer psa_not-real",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ message: "Hello" }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Agent not found or API key is invalid" });
+  });
+
+  it("keeps agent management behind the signed-in identity", async () => {
+    const res = await createApp().request("/api/agents");
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /api/agents/invoke", () => {
+  it("requires a bearer key", async () => {
+    const res = await createApp().request("/api/agents/invoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "Hello" }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "A Bearer agent API key is required" });
+  });
+
+  it("requires JSON so a browser cannot submit a secret-bearing simple request", async () => {
+    const res = await createApp().request("/api/agents/invoke", {
+      method: "POST",
+      headers: { authorization: "Bearer psa_not-real" },
+      body: "message=Hello",
+    });
+
+    expect(res.status).toBe(415);
+  });
+
+  it("authenticates the key before reading the request and caps authenticated bodies", async () => {
+    const oversizedBody = JSON.stringify({ message: "x".repeat(100_000) });
+    const invalid = await createApp().request("/api/agents/invoke", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer psa_not-real",
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    });
+    expect(invalid.status).toBe(401);
+
+    const managementHeaders = {
+      "content-type": "application/json",
+      "x-authentik-uid": "agent-body-limit-user",
+    };
+    const meta = (await (await createApp().request("/api/meta")).json()) as {
+      models: { id: string }[];
+    };
+    const created = await createApp().request("/api/agents", {
+      method: "POST",
+      headers: managementHeaders,
+      body: JSON.stringify({
+        name: "Body limit helper",
+        systemPrompt: "Answer clearly.",
+        modelId: meta.models[0]!.id,
+      }),
+    });
+    const { token } = (await created.json()) as { token: string };
+    const oversized = await createApp().request("/api/agents/invoke", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    });
+
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toEqual({ error: "Request body is too large" });
+  });
+});
+
+describe("agent management", () => {
+  it("creates and lists an agent without returning the stored token digest", async () => {
+    const headers = {
+      "content-type": "application/json",
+      "x-authentik-uid": "agent-builder-user",
+    };
+    const meta = (await (await createApp().request("/api/meta")).json()) as {
+      models: { id: string }[];
+    };
+    const modelId = meta.models[0]!.id;
+    const created = await createApp().request("/api/agents", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "Mobile helper",
+        systemPrompt: "Answer clearly.",
+        modelId,
+      }),
+    });
+
+    expect(created.status).toBe(201);
+    const payload = (await created.json()) as {
+      agent: Record<string, unknown>;
+      token: string;
+    };
+    expect(payload.token).toStartWith("psa_");
+    expect(payload.agent.endpoint).toBe("/api/agents/invoke");
+    expect(payload.agent.tokenDigest).toBeUndefined();
+
+    const listed = await createApp().request("/api/agents", { headers });
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as { agents: Record<string, unknown>[] };
+    expect(body.agents).toHaveLength(1);
+    expect(body.agents[0]?.tokenDigest).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain(payload.token);
+  });
+
+  it("returns not found when previewing an agent outside the selected workspace", async () => {
+    const ownerHeaders = {
+      "content-type": "application/json",
+      "x-authentik-uid": "agent-preview-owner",
+    };
+    const meta = (await (await createApp().request("/api/meta")).json()) as {
+      models: { id: string }[];
+    };
+    const created = await createApp().request("/api/agents", {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        name: "Private preview",
+        systemPrompt: "Answer clearly.",
+        modelId: meta.models[0]!.id,
+      }),
+    });
+    const { agent } = (await created.json()) as { agent: { id: string } };
+
+    const preview = await createApp().request(`/api/agents/${agent.id}/preview`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-authentik-uid": "agent-preview-outsider",
+      },
+      body: JSON.stringify({ message: "Hello" }),
+    });
+
+    expect(preview.status).toBe(404);
+    expect(await preview.json()).toEqual({ error: "Agent not found" });
+  });
 });
 
 describe("GET /api/me", () => {
