@@ -21,7 +21,9 @@ export async function chatOnce(
   model: ModelConfig,
   messages: ProviderMessage[],
   tools: ToolSchema[],
+  signal?: AbortSignal,
 ): Promise<AssistantChunk> {
+  signal?.throwIfAborted();
   if (model.provider === "mock") return mockOnce(messages);
 
   const key = effectiveApiKey(model);
@@ -45,6 +47,7 @@ export async function chatOnce(
       Authorization: `Bearer ${key}`,
     },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok || !res.body) {
@@ -52,11 +55,16 @@ export async function chatOnce(
     throw new Error(`provider error ${res.status}: ${text}`);
   }
 
-  return parseStream(res.body);
+  return parseStream(res.body, signal);
 }
 
-async function parseStream(body: ReadableStream<Uint8Array>): Promise<AssistantChunk> {
+async function parseStream(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<AssistantChunk> {
   const reader = body.getReader();
+  const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
+  signal?.addEventListener("abort", cancel, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -64,37 +72,43 @@ async function parseStream(body: ReadableStream<Uint8Array>): Promise<AssistantC
   let reasoningContent = "";
   const toolCalls: { id: string; name: string; args: string }[] = [];
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (data === "[DONE]") continue;
-      let json: any;
-      try {
-        json = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      const delta = json?.choices?.[0]?.delta;
-      if (!delta) continue;
-      if (typeof delta.content === "string") text += delta.content;
-      if (typeof delta.reasoning_content === "string") reasoningContent += delta.reasoning_content;
-      for (const tc of delta.tool_calls ?? []) {
-        const index = tc.index ?? 0;
-        toolCalls[index] ??= { id: "", name: "", args: "" };
-        if (tc.id) toolCalls[index].id = tc.id;
-        if (tc.function?.name) toolCalls[index].name += tc.function.name;
-        if (tc.function?.arguments) toolCalls[index].args += tc.function.arguments;
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+        let json: any;
+        try {
+          json = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        const delta = json?.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === "string") text += delta.content;
+        if (typeof delta.reasoning_content === "string") reasoningContent += delta.reasoning_content;
+        for (const tc of delta.tool_calls ?? []) {
+          const index = tc.index ?? 0;
+          toolCalls[index] ??= { id: "", name: "", args: "" };
+          if (tc.id) toolCalls[index].id = tc.id;
+          if (tc.function?.name) toolCalls[index].name += tc.function.name;
+          if (tc.function?.arguments) toolCalls[index].args += tc.function.arguments;
+        }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", cancel);
   }
 
   return {

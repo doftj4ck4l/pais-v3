@@ -14,6 +14,7 @@ import { imageRoutes } from "./image.routes";
 import { adminRoutes } from "./admin.routes";
 import { organizationRoutes } from "./organization.routes";
 import { invitationRoutes } from "./invitation.routes";
+import { agentRoutes } from "./agent.routes";
 
 /** Every HTTP surface the API exposes, mounted under /api. */
 export const apiRoutes = new Hono();
@@ -43,3 +44,6 @@ apiRoutes.route("/admin", adminRoutes);
 apiRoutes.route("/admin/organizations", organizationRoutes);
 // Authenticated invitees inspect/accept a token sent only in a JSON body.
 apiRoutes.route("/invitations", invitationRoutes);
+// User-managed prompt agents. Only POST /invoke bypasses proxy identity; its
+// bearer key is the credential external callers such as Telegram relays use.
+apiRoutes.route("/agents", agentRoutes);

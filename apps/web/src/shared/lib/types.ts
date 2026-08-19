@@ -28,6 +28,28 @@ export type Meta = {
   models: Model[]
 }
 
+/** A reusable prompt-only agent configured inside one workspace. */
+export type AgentDefinition = {
+  id: string
+  workspaceId: string
+  name: string
+  systemPrompt: string
+  modelId: string
+  /** Last four characters only. The full key is revealed when minted. */
+  tokenHint: string
+  endpoint: string
+  lastUsedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type AgentReply = {
+  agentId: string
+  agentName: string
+  modelId: string
+  reply: string
+}
+
 /** One entry in the transcript. Order is the order the agent produced it. */
 export type Item =
   /** `images` are /api/images/<id> URLs the user attached to this turn. */

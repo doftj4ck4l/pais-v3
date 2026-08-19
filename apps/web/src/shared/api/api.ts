@@ -23,6 +23,8 @@ import type {
   AdminAnalytics,
   AdminUser,
   RunStatus,
+  AgentDefinition,
+  AgentReply,
 } from '@/shared/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -202,6 +204,81 @@ export async function acceptInvitation(token: string): Promise<InvitationAccepta
 
 export async function fetchMeta(): Promise<Meta> {
   return json<Meta>(await fetch('/api/meta'))
+}
+
+export type AgentDefinitionInput = {
+  name: string
+  systemPrompt: string
+  modelId: string
+}
+
+export async function listAgentDefinitions(scope: Scope): Promise<AgentDefinition[]> {
+  const result = await json<{ agents: AgentDefinition[] }>(
+    await fetch(`/api/agents?${scoped(scope)}`),
+  )
+  return result.agents
+}
+
+export async function createAgentDefinition(
+  scope: Scope,
+  input: AgentDefinitionInput,
+): Promise<{ agent: AgentDefinition; token: string }> {
+  return json<{ agent: AgentDefinition; token: string }>(
+    await fetch(`/api/agents?${scoped(scope)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+  )
+}
+
+export async function updateAgentDefinition(
+  scope: Scope,
+  id: string,
+  input: AgentDefinitionInput,
+): Promise<AgentDefinition> {
+  const result = await json<{ agent: AgentDefinition }>(
+    await fetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+  )
+  return result.agent
+}
+
+export async function rotateAgentToken(
+  scope: Scope,
+  id: string,
+): Promise<{ agent: AgentDefinition; token: string }> {
+  return json<{ agent: AgentDefinition; token: string }>(
+    await fetch(`/api/agents/${encodeURIComponent(id)}/token?${scoped(scope)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
+  )
+}
+
+export async function previewAgent(
+  scope: Scope,
+  id: string,
+  message: string,
+): Promise<AgentReply> {
+  return json<AgentReply>(
+    await fetch(`/api/agents/${encodeURIComponent(id)}/preview?${scoped(scope)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message }),
+    }),
+  )
+}
+
+export async function deleteAgentDefinition(scope: Scope, id: string): Promise<void> {
+  const response = await fetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) await json(response)
 }
 
 /** Stored runs for this browser, oldest first so new agents append at the end. */

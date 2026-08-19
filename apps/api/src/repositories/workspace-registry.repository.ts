@@ -7,6 +7,7 @@ const genId = () =>
 
 /** Scoped tables, in an order that clears children before their parents. */
 const SCOPED_TABLES = [
+  "agent_definitions",
   "documents",
   "chunks",
   "db_columns",
