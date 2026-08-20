@@ -15,11 +15,13 @@ PROFILE_EXPLICIT=0
 DATA_ROOT_OVERRIDE=""
 BIND_OVERRIDE=""
 PORT_OVERRIDE=""
-AUTH_OVERRIDE=""
+AUTH_OVERRIDE="${PIXELSPACE_AUTH_MODE:-}"
 PUBLIC_URL_OVERRIDE=""
 MODEL_URL_OVERRIDE=""
 MODEL_ID_OVERRIDE=""
 DEPLOY_MODE_OVERRIDE=""
+ADMIN_EMAIL_OVERRIDE="${PIXELSPACE_ADMIN_EMAIL:-}"
+ADMIN_PASSWORD_FILE="${PIXELSPACE_ADMIN_PASSWORD_FILE:-}"
 PURGE=0
 POSITIONAL=()
 
@@ -45,6 +47,7 @@ Commands:
   restore     Restore an archive (requires --yes)
   upgrade     Back up, refresh images/builds, recreate, and verify
   uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
+  reset-admin-password  Reset a local admin password and revoke its sessions
   help        Show this help
 
 Install options:
@@ -52,7 +55,9 @@ Install options:
   --data-root PATH
   --bind-address ADDRESS       default: 127.0.0.1
   --port PORT                  default: 8080
-  --auth-mode dev|proxy        dev is accepted only on loopback
+  --auth-mode local|proxy|dev  default: local; dev is loopback-only
+  --admin-email EMAIL          required for the first local administrator
+  --admin-password-file PATH   mode 600/400 file for unattended setup
   --public-url URL
   --model-url URL              OpenAI-compatible /v1 endpoint
   --model-id ID
@@ -71,6 +76,8 @@ while [[ $# -gt 0 ]]; do
     --bind-address) BIND_OVERRIDE="${2:?missing bind address}"; shift 2 ;;
     --port) PORT_OVERRIDE="${2:?missing port}"; shift 2 ;;
     --auth-mode) AUTH_OVERRIDE="${2:?missing auth mode}"; shift 2 ;;
+    --admin-email) ADMIN_EMAIL_OVERRIDE="${2:?missing admin email}"; shift 2 ;;
+    --admin-password-file) ADMIN_PASSWORD_FILE="${2:?missing admin password file}"; shift 2 ;;
     --public-url) PUBLIC_URL_OVERRIDE="${2:?missing public URL}"; shift 2 ;;
     --model-url) MODEL_URL_OVERRIDE="${2:?missing model URL}"; shift 2 ;;
     --model-id) MODEL_ID_OVERRIDE="${2:?missing model id}"; shift 2 ;;
@@ -149,6 +156,16 @@ ensure_env() {
   env_has_key "$key" || set_env "$key" "$value"
 }
 
+set_runtime_env() {
+  local key="$1" value="$2" app_env
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
+  if [[ -n "$app_env" ]] && env_value_from_allow_empty "$app_env" "$key" >/dev/null 2>&1; then
+    set_env_in "$app_env" "$key" "$value"
+  else
+    set_env "$key" "$value"
+  fi
+}
+
 runtime_env_value() {
   local key="$1" app_env
   app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
@@ -200,6 +217,61 @@ is_loopback_url() {
   host="${host#[}"
   host="${host%]}"
   [[ "$host" == "localhost" || "$host" == 127.* ]] || is_ipv6_loopback_literal "$host"
+}
+
+is_loopback_bind() {
+  [[ "$1" == "127.0.0.1" || "$1" == "::1" || "$1" == "localhost" ]]
+}
+
+normalize_admin_email() {
+  local email="${1,,}"
+  email="${email#"${email%%[![:space:]]*}"}"
+  email="${email%"${email##*[![:space:]]}"}"
+  is_valid_admin_email "$email" || die "enter a valid --admin-email address"
+  printf '%s' "$email"
+}
+
+is_valid_admin_email() {
+  [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+all_admin_emails_valid() {
+  local configured entry trimmed
+  local -a entries
+  configured="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+  IFS=, read -r -a entries <<< "$configured"
+  for entry in "${entries[@]}"; do
+    trimmed="${entry#"${entry%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -z "$trimmed" ]] || is_valid_admin_email "${trimmed,,}" || return 1
+  done
+}
+
+first_admin_email() {
+  local configured
+  configured="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+  configured="${configured%%,*}"
+  [[ -z "$configured" ]] || normalize_admin_email "$configured"
+}
+
+read_admin_password() {
+  local password confirm mode
+  if [[ -n "$ADMIN_PASSWORD_FILE" ]]; then
+    [[ -f "$ADMIN_PASSWORD_FILE" && ! -L "$ADMIN_PASSWORD_FILE" ]] || die "admin password file must be a regular non-symlink file"
+    mode="$(stat -c '%a' "$ADMIN_PASSWORD_FILE" 2>/dev/null || printf unknown)"
+    [[ "$mode" == "600" || "$mode" == "400" ]] || die "admin password file must be mode 600 or 400 (currently $mode)"
+    password="$(<"$ADMIN_PASSWORD_FILE")"
+    [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || die "admin password file must contain one line"
+  else
+    [[ -t 0 && -t 1 ]] || die "local auth needs an interactive password or --admin-password-file"
+    IFS= read -r -s -p "Local admin password: " password < /dev/tty
+    printf '\n' > /dev/tty
+    IFS= read -r -s -p "Confirm password: " confirm < /dev/tty
+    printf '\n' > /dev/tty
+    [[ "$password" == "$confirm" ]] || die "passwords do not match"
+  fi
+  [[ "${#password}" -ge 12 && "${#password}" -le 256 ]] || die "admin password must be 12 to 256 characters"
+  printf '%s' "$password"
 }
 
 http_host_for_bind() {
@@ -264,12 +336,17 @@ generate_env() {
   fi
   [[ "$PROFILE" == "core" || "$PROFILE" == "dgx-spark" ]] || die "profile must be core or dgx-spark"
 
-  local home data_root bind port auth public_url uid gid docker_gid
+  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins
+  local existing_bind existing_port existing_public_url existing_derived_url
   home="${HOME:?HOME is required}"
   data_root="${DATA_ROOT_OVERRIDE:-${XDG_DATA_HOME:-$home/.local/share}/pixelspace}"
-  bind="${BIND_OVERRIDE:-$(env_value WEB_BIND_ADDRESS 2>/dev/null || printf '127.0.0.1')}"
-  port="${PORT_OVERRIDE:-$(env_value WEB_PORT 2>/dev/null || printf '8080')}"
-  auth="${AUTH_OVERRIDE:-$(env_value AUTH_MODE 2>/dev/null || printf 'dev')}"
+  existing_bind="$(env_value WEB_BIND_ADDRESS 2>/dev/null || printf '127.0.0.1')"
+  existing_port="$(env_value WEB_PORT 2>/dev/null || printf '8080')"
+  existing_public_url="$(env_value PUBLIC_URL 2>/dev/null || true)"
+  existing_derived_url="http://$(http_host_for_bind "$existing_bind"):$existing_port"
+  bind="${BIND_OVERRIDE:-$existing_bind}"
+  port="${PORT_OVERRIDE:-$existing_port}"
+  auth="${AUTH_OVERRIDE:-$(env_value AUTH_MODE 2>/dev/null || printf 'local')}"
   public_url="${PUBLIC_URL_OVERRIDE:-http://$(http_host_for_bind "$bind"):$port}"
   uid="${PIXELSPACE_UID_OVERRIDE:-$(id -u)}"
   gid="${PIXELSPACE_GID_OVERRIDE:-$(id -g)}"
@@ -317,6 +394,7 @@ generate_env() {
   ensure_env RUSTFS_IMAGE "rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21"
   ensure_env DATABASE_ALLOWED_CIDRS "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
   ensure_env SUPER_ADMIN_EMAILS ""
+  ensure_env LOCAL_SESSION_TTL_HOURS "168"
   ensure_env PIXELSPACE_PROFILE "$PROFILE"
 
   [[ -z "$DATA_ROOT_OVERRIDE" ]] || {
@@ -327,11 +405,30 @@ generate_env() {
   [[ -z "$BIND_OVERRIDE" ]] || set_env WEB_BIND_ADDRESS "$BIND_OVERRIDE"
   [[ -z "$PORT_OVERRIDE" ]] || set_env WEB_PORT "$PORT_OVERRIDE"
   [[ -z "$AUTH_OVERRIDE" ]] || set_env AUTH_MODE "$AUTH_OVERRIDE"
-  [[ -z "$PUBLIC_URL_OVERRIDE" ]] || set_env PUBLIC_URL "$PUBLIC_URL_OVERRIDE"
+  if [[ -n "$PUBLIC_URL_OVERRIDE" ]]; then
+    set_env PUBLIC_URL "$PUBLIC_URL_OVERRIDE"
+  elif [[ -n "$BIND_OVERRIDE$PORT_OVERRIDE" && "$existing_public_url" == "$existing_derived_url" ]]; then
+    set_env PUBLIC_URL "http://$(http_host_for_bind "$bind"):$port"
+  fi
   [[ -z "$MODEL_URL_OVERRIDE" ]] || set_env CUSTOM_BASE_URL "$MODEL_URL_OVERRIDE"
   [[ -z "$MODEL_ID_OVERRIDE" ]] || set_env CUSTOM_MODEL "$MODEL_ID_OVERRIDE"
   [[ -z "$DEPLOY_MODE_OVERRIDE" ]] || set_env PIXELSPACE_DEPLOY_MODE "$DEPLOY_MODE_OVERRIDE"
   [[ "$PROFILE_EXPLICIT" -eq 0 ]] || set_env PIXELSPACE_PROFILE "$PROFILE"
+
+  admin_email="$ADMIN_EMAIL_OVERRIDE"
+  if [[ "$auth" == "local" ]]; then
+    if [[ -z "$admin_email" && -t 0 && -t 1 ]]; then
+      IFS= read -r -p "Local admin email: " admin_email < /dev/tty
+    fi
+    [[ -n "$admin_email" ]] || die "local auth requires --admin-email (or PIXELSPACE_ADMIN_EMAIL)"
+  fi
+  if [[ -n "$admin_email" ]]; then
+    admin_email="$(normalize_admin_email "$admin_email")"
+    configured_admins="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+    if [[ ",${configured_admins,,}," != *",$admin_email,"* ]]; then
+      set_runtime_env SUPER_ADMIN_EMAILS "${configured_admins:+$configured_admins,}$admin_email"
+    fi
+  fi
 }
 
 doctor() {
@@ -369,13 +466,21 @@ doctor() {
     sandbox_root="$(env_value SANDBOX_ROOT || true)"
     skills_root="$(env_value SKILLS_ROOT || true)"
     app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
-    [[ "$auth" == "proxy" || "$auth" == "dev" ]] || { warn "AUTH_MODE must be proxy or dev"; failures=$((failures + 1)); }
+    [[ "$auth" == "proxy" || "$auth" == "local" || "$auth" == "dev" ]] || { warn "AUTH_MODE must be proxy, local, or dev"; failures=$((failures + 1)); }
     connection_secret="$(runtime_env_value CONNECTION_SECRET 2>/dev/null || true)"
     [[ -n "$connection_secret" ]] || { warn "CONNECTION_SECRET must not be empty"; failures=$((failures + 1)); }
     env_value S3_SECRET_KEY >/dev/null 2>&1 || { warn "S3_SECRET_KEY must not be empty"; failures=$((failures + 1)); }
-    if [[ "$auth" == "dev" && "$bind" != "127.0.0.1" && "$bind" != "::1" && "$bind" != "localhost" ]]; then
+    all_admin_emails_valid || { warn "SUPER_ADMIN_EMAILS contains an invalid email address"; failures=$((failures + 1)); }
+    if [[ "$auth" == "dev" ]] && ! is_loopback_bind "$bind"; then
       warn "AUTH_MODE=dev may bind only to loopback; configure a trusted proxy before LAN exposure"
       failures=$((failures + 1))
+    fi
+    if [[ "$auth" == "local" ]]; then
+      first_admin_email >/dev/null 2>&1 || { warn "AUTH_MODE=local requires at least one valid SUPER_ADMIN_EMAILS entry"; failures=$((failures + 1)); }
+      if ! is_loopback_bind "$bind" && [[ "$(env_value PUBLIC_URL || true)" != https://* ]]; then
+        warn "AUTH_MODE=local requires an https PUBLIC_URL before LAN exposure"
+        failures=$((failures + 1))
+      fi
     fi
     [[ "$deploy_mode" == "build" || "$deploy_mode" == "images" ]] || { warn "PIXELSPACE_DEPLOY_MODE must be build or images"; failures=$((failures + 1)); }
     if [[ "$deploy_mode" == "images" ]]; then
@@ -450,6 +555,37 @@ refresh_stack() {
   fi
 }
 
+bootstrap_local_admin() {
+  [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || return 0
+  local email status_output status password
+  email="$(first_admin_email)"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    note "local administrator $email will be created after the stack starts"
+    return
+  fi
+  if status_output="$(compose run --rm --no-deps -T api bun src/cli/local-admin.ts status --email "$email" 2>&1)"; then
+    say "Local administrator $email already exists; password unchanged."
+    return
+  else
+    status=$?
+  fi
+  [[ "$status" -eq 3 ]] || die "could not inspect the local administrator: $status_output"
+  password="$(read_admin_password)"
+  printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts create --email "$email"
+  password=""
+}
+
+reset_admin_password() {
+  doctor
+  [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || die "reset-admin-password requires AUTH_MODE=local"
+  local email password
+  email="${ADMIN_EMAIL_OVERRIDE:-$(first_admin_email)}"
+  email="$(normalize_admin_email "$email")"
+  password="$(read_admin_password)"
+  printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts reset --email "$email"
+  password=""
+}
+
 prepare_backup_helper() {
   local mode sandbox_image
   mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
@@ -497,6 +633,7 @@ install_stack() {
   prepare_paths
   refresh_stack
   wait_for_health
+  bootstrap_local_admin
   local bind port
   bind="$(env_value WEB_BIND_ADDRESS || printf '127.0.0.1')"
   port="$(env_value WEB_PORT || printf '8080')"
@@ -609,10 +746,12 @@ backup_stack() {
 
   cp "$ENV_FILE" "$BACKUP_STAGE/pixelspace.env"
   chmod 600 "$BACKUP_STAGE/pixelspace.env"
+  printf '%s\n' pixelspace.env data.tar workspaces.tar > "$BACKUP_STAGE/payloads"
   app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
   if [[ -n "$app_env" && "$app_env" != "$ENV_FILE" && -f "$app_env" ]]; then
     cp "$app_env" "$BACKUP_STAGE/application.env"
     chmod 600 "$BACKUP_STAGE/application.env"
+    printf '%s\n' application.env >> "$BACKUP_STAGE/payloads"
   fi
   printf 'created_at=%s\nsource_commit=%s\narchitecture=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unknown)" "$(host_arch)" \
@@ -620,10 +759,13 @@ backup_stack() {
   local data_root sandbox_root
   data_root="$(env_value PIXELSPACE_DATA_ROOT)"
   sandbox_root="$(env_value SANDBOX_ROOT)"
-  [[ ! -d "$data_root" ]] || tar -C "$data_root" -cf "$BACKUP_STAGE/data.tar" .
-  [[ ! -d "$sandbox_root" ]] || tar -C "$sandbox_root" -cf "$BACKUP_STAGE/workspaces.tar" .
+  mkdir -p "$data_root" "$sandbox_root"
+  tar -C "$data_root" -cf "$BACKUP_STAGE/data.tar" .
+  tar -C "$sandbox_root" -cf "$BACKUP_STAGE/workspaces.tar" .
   backup_volume salurai_rustfs-data rustfs-data.tar "$volume_stage" "$helper_image"
   backup_volume salurai_mcp-cache mcp-cache.tar "$volume_stage" "$helper_image"
+  [[ ! -f "$volume_stage/rustfs-data.tar" ]] || printf '%s\n' volumes/rustfs-data.tar >> "$BACKUP_STAGE/payloads"
+  [[ ! -f "$volume_stage/mcp-cache.tar" ]] || printf '%s\n' volumes/mcp-cache.tar >> "$BACKUP_STAGE/payloads"
 
   restart_backup_services
   BACKUP_NEEDS_RESTART=0
@@ -657,10 +799,14 @@ clear_directory() {
 
 restore_volume() {
   local volume="$1" input="$2" stage="$3" helper_image="$4"
-  [[ -f "$stage/$input" ]] || return 0
   docker volume create "$volume" >/dev/null || return
-  run docker run --rm --network none -v "$volume:/target" -v "$stage:/backup:ro" "$helper_image" \
-    sh -c "find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /target -xf /backup/$input"
+  if [[ -f "$stage/$input" ]]; then
+    run docker run --rm --network none -v "$volume:/target" -v "$stage:/backup:ro" "$helper_image" \
+      sh -c "find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /target -xf /backup/$input"
+  else
+    run docker run --rm --network none -v "$volume:/target" "$helper_image" \
+      sh -c "find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"
+  fi
 }
 
 merge_restored_config() {
@@ -734,6 +880,25 @@ with tarfile.open(sys.argv[1], "r:*") as source:
     "/backup/$(basename -- "$archive")"
 }
 
+validate_backup_payloads() {
+  local stage="$1" helper_image="$2" payload
+  local has_env=0 has_data=0 has_workspaces=0
+  [[ -f "$stage/payloads" ]] || die "backup payload manifest is missing"
+  while IFS= read -r payload; do
+    case "$payload" in
+      pixelspace.env) has_env=1 ;;
+      data.tar) has_data=1 ;;
+      workspaces.tar) has_workspaces=1 ;;
+      application.env|volumes/rustfs-data.tar|volumes/mcp-cache.tar) ;;
+      *) die "backup payload manifest contains an unsupported entry: $payload" ;;
+    esac
+    [[ -f "$stage/$payload" ]] || die "backup payload is missing: $payload"
+    [[ "$payload" != *.tar ]] || validate_archive "$stage/$payload" "$helper_image"
+  done < "$stage/payloads"
+  [[ "$has_env" -eq 1 && "$has_data" -eq 1 && "$has_workspaces" -eq 1 ]] ||
+    die "backup payload manifest is incomplete"
+}
+
 safe_extract_archive() {
   local archive="$1" target="$2" helper_image="$3"
   docker run --rm --network none --user "$(id -u):$(id -g)" \
@@ -763,9 +928,7 @@ restore_stack() {
   trap restore_cleanup EXIT
   safe_extract_archive "$archive" "$RESTORE_STAGE" "$helper_image"
   [[ -f "$RESTORE_STAGE/metadata" ]] || die "archive is not a Pixelspace backup"
-  for payload in data.tar workspaces.tar volumes/rustfs-data.tar volumes/mcp-cache.tar; do
-    [[ ! -f "$RESTORE_STAGE/$payload" ]] || validate_archive "$RESTORE_STAGE/$payload" "$helper_image"
-  done
+  validate_backup_payloads "$RESTORE_STAGE" "$helper_image"
 
   data_root="$(canonical_clear_path "$(env_value PIXELSPACE_DATA_ROOT)")"
   sandbox_root="$(canonical_clear_path "$(env_value SANDBOX_ROOT)")"
@@ -778,9 +941,7 @@ restore_stack() {
   trap restore_cleanup EXIT
   RESTORE_ROLLBACK_STAGE="$(mktemp -d)"
   safe_extract_archive "$safety_archive" "$RESTORE_ROLLBACK_STAGE" "$helper_image"
-  for payload in data.tar workspaces.tar volumes/rustfs-data.tar volumes/mcp-cache.tar; do
-    [[ ! -f "$RESTORE_ROLLBACK_STAGE/$payload" ]] || validate_archive "$RESTORE_ROLLBACK_STAGE/$payload" "$helper_image"
-  done
+  validate_backup_payloads "$RESTORE_ROLLBACK_STAGE" "$helper_image"
   RESTORE_SAFETY_ARCHIVE="$safety_archive"
   RESTORE_HELPER_IMAGE="$helper_image"
   RESTORE_DATA_ROOT="$data_root"
@@ -842,6 +1003,7 @@ case "$COMMAND" in
   restore) acquire_lock; restore_stack "${1:-}" ;;
   upgrade) acquire_lock; upgrade_stack ;;
   uninstall) acquire_lock; uninstall_stack ;;
+  reset-admin-password) acquire_lock; reset_admin_password ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command: $COMMAND" ;;
 esac

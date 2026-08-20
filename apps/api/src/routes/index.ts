@@ -15,12 +15,14 @@ import { adminRoutes } from "./admin.routes";
 import { organizationRoutes } from "./organization.routes";
 import { invitationRoutes } from "./invitation.routes";
 import { agentRoutes } from "./agent.routes";
+import { authRoutes } from "./auth.routes";
 
 /** Every HTTP surface the API exposes, mounted under /api. */
 export const apiRoutes = new Hono();
 
 apiRoutes.route("/meta", metaRoutes);
-// Who the authenticating proxy says you are. Behind auth, unlike /meta.
+apiRoutes.route("/auth", authRoutes);
+// Who the active authentication mode says you are. Behind auth, unlike /meta.
 apiRoutes.route("/me", meRoutes);
 apiRoutes.route("/chat", chatRoutes);
 apiRoutes.route("/conversations", conversationRoutes);

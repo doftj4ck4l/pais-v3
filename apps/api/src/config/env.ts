@@ -36,6 +36,24 @@ export function parseAgentInvocationTimeoutMs(raw: string | undefined): number {
   return milliseconds;
 }
 
+export type AuthMode = "proxy" | "dev" | "local";
+
+export function parseAuthMode(raw: string | undefined): AuthMode {
+  const value = raw?.trim() || "proxy";
+  if (value !== "proxy" && value !== "dev" && value !== "local") {
+    throw new Error("AUTH_MODE must be proxy, local, or dev.");
+  }
+  return value;
+}
+
+export function parseLocalSessionTtlMs(raw: string | undefined): number {
+  const hours = raw === undefined || raw.trim() === "" ? 168 : Number(raw);
+  if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
+    throw new Error("LOCAL_SESSION_TTL_HOURS must be an integer from 1 to 720.");
+  }
+  return hours * 60 * 60 * 1000;
+}
+
 /**
  * Every environment variable the API reads, resolved once. Import this instead
  * of touching process.env, so the full configuration surface is one file.
@@ -57,6 +75,9 @@ export const env = {
     process.env.AGENT_INVOCATION_TIMEOUT_MS,
   ),
 
+  /** Browser-session lifetime for AUTH_MODE=local. */
+  localSessionTtlMs: parseLocalSessionTtlMs(process.env.LOCAL_SESSION_TTL_HOURS),
+
   /** OpenAI-compatible gateway that serves the model catalog. */
   gatewayBaseUrl: process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1",
 
@@ -74,7 +95,7 @@ export const env = {
    * deployment that forgets to set this would otherwise merge every tenant
    * into one shared account, silently.
    */
-  authMode: (process.env.AUTH_MODE ?? "proxy") as "proxy" | "dev",
+  authMode: parseAuthMode(process.env.AUTH_MODE),
 
   /**
    * Header carrying the authenticated user id. Authentik's proxy provider

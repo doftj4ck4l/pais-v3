@@ -26,6 +26,7 @@ import type {
   RunStatus,
   AgentDefinition,
   AgentReply,
+  AuthConfig,
 } from '@/shared/lib/types'
 
 async function json<T>(res: Response): Promise<T> {
@@ -95,9 +96,34 @@ export async function deleteWorkspace(id: string): Promise<{ error?: string }> {
   return { error: body.error ?? `HTTP ${res.status}` }
 }
 
-/** Who the authenticating proxy says you are. */
+/** Who the active authentication mode says you are. */
 export async function fetchMe(): Promise<UserProfile> {
   return json<UserProfile>(await fetch('/api/me'))
+}
+
+export async function fetchAuthConfig(): Promise<AuthConfig> {
+  return json<AuthConfig>(await fetch('/api/auth/config'))
+}
+
+export async function loginWithPassword(email: string, password: string): Promise<UserProfile> {
+  const result = await json<{ user: UserProfile }>(
+    await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    }),
+  )
+  return result.user
+}
+
+export async function logoutLocalSession(): Promise<void> {
+  await json<{ ok: true }>(
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
+  )
 }
 
 /** Change what this console calls you. Empty clears it back to the proxy's name. */

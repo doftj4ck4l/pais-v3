@@ -24,6 +24,21 @@ From a release checkout:
 
 ```bash
 ./install.sh \
+  --admin-email operator@example.com \
+  --model-url https://gateway.example.internal/v1 \
+  --model-id my-model
+```
+
+The default `local` authentication mode prompts twice for the first
+administrator password. The password is Argon2id-hashed in Pixelspace's SQLite
+database; it is never written to an environment file or passed as a process
+argument. Automation can provide a protected file instead:
+
+```bash
+chmod 600 /secure/pixelspace-admin-password
+./install.sh \
+  --admin-email operator@example.com \
+  --admin-password-file /secure/pixelspace-admin-password \
   --model-url https://gateway.example.internal/v1 \
   --model-id my-model
 ```
@@ -37,7 +52,7 @@ The default security posture is intentionally local:
 
 ```text
 WEB_BIND_ADDRESS=127.0.0.1
-AUTH_MODE=dev
+AUTH_MODE=local
 ```
 
 That is suitable for a workstation reached locally or through an SSH tunnel:
@@ -46,19 +61,42 @@ That is suitable for a workstation reached locally or through an SSH tunnel:
 ssh -L 8080:127.0.0.1:8080 user@pixelspace-host
 ```
 
-Do not change the bind address to `0.0.0.0` while using `AUTH_MODE=dev`. For
-LAN or public access, configure the existing trusted-proxy identity contract,
-TLS, and host firewall first, then install with:
+For LAN or public access, terminate TLS in front of Pixelspace and set the
+browser-facing HTTPS origin. Password login is rejected on a non-loopback bind
+without that HTTPS origin:
+
+```bash
+./install.sh \
+  --admin-email operator@example.com \
+  --bind-address 0.0.0.0 \
+  --auth-mode local \
+  --public-url https://pixelspace.example.internal
+```
+
+To delegate sign-in to an existing identity provider instead, configure the
+trusted-proxy header contract, TLS, and host firewall, then install with:
 
 ```bash
 ./install.sh \
   --bind-address 0.0.0.0 \
   --auth-mode proxy \
+  --admin-email operator@example.com \
   --public-url https://pixelspace.example.internal
 ```
 
-`scripts/pixelspace doctor` rejects unauthenticated LAN exposure and invalid
-Compose/path configuration.
+`--admin-email` configures the super-admin allowlist in either mode; proxy mode
+does not create a local password. `AUTH_MODE=dev` remains available explicitly
+for loopback-only development and has no login screen.
+
+If the local administrator loses access, reset the password from the host. The
+command revokes every existing browser session for that account:
+
+```bash
+scripts/pixelspace reset-admin-password --admin-email operator@example.com
+```
+
+`scripts/pixelspace doctor` rejects unauthenticated LAN exposure, local-password
+LAN exposure without HTTPS, and invalid Compose/path configuration.
 
 ## DGX Spark
 
@@ -71,6 +109,7 @@ Use the DGX profile for host qualification:
 ```bash
 ./install.sh \
   --profile dgx-spark \
+  --admin-email operator@example.com \
   --model-url http://host.docker.internal:8000/v1 \
   --model-id nemotron-3.5-lightning
 ```

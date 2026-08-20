@@ -23,15 +23,19 @@ For a persistent single-host installation on Linux, use the on-prem operator
 instead of the development setup:
 
 ```bash
-./install.sh
+./install.sh --admin-email operator@example.com
 scripts/pixelspace doctor
 ```
 
 It generates private host configuration, builds or pulls the application and
 sandbox images, starts Compose, and verifies the public `/api/meta` path. The
-secure default listens only on `127.0.0.1:8080`; LAN exposure requires the
-trusted authentication proxy described below. See [ON_PREM.md](ON_PREM.md) for
-DGX Spark, lifecycle, backup, restore, and upgrade instructions.
+secure default listens only on `127.0.0.1:8080` and prompts for the first local
+administrator password; LAN exposure requires TLS or the trusted authentication
+proxy described below. See [ON_PREM.md](ON_PREM.md) for DGX Spark, authentication,
+lifecycle, backup, restore, and upgrade instructions.
+
+For a task-oriented walkthrough from cloning the repository through first login
+and daily operation, use the [Pixelspace setup manual](SETUP_MANUAL.md).
 
 `setup` is idempotent — re-run it any time. It installs dependencies, creates
 `apps/api/.env` from the example if missing, and builds the sandbox image. It

@@ -1,7 +1,11 @@
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import { env } from "../config/env";
+import { LOCAL_SESSION_COOKIE, localAuthService } from "../services/auth/local-auth.service";
+import type { UserProfile } from "../services/auth/types";
+import type { AuthMode } from "../config/env";
 
-export type AuthMode = "proxy" | "dev";
+export type { UserProfile } from "../services/auth/types";
 
 export interface AuthOptions {
   mode?: AuthMode;
@@ -9,23 +13,16 @@ export interface AuthOptions {
   defaultUserId?: string;
   defaultUserEmail?: string;
   profileHeaders?: Partial<typeof PROFILE_HEADERS>;
+  resolveLocalSession?: (token: string) => Promise<UserProfile | null>;
 }
 
 /**
  * Display fields the proxy supplies alongside the id.
  *
- * None of this is persisted: the headers are re-sent on every request and the
- * identity provider is the authority, so a copy in our database could only ever
- * be a stale second opinion about someone's own name.
+ * Proxy mode supplies these fields on every request. Local mode resolves the
+ * same shape from the authenticated account so every controller keeps one
+ * identity contract.
  */
-export interface UserProfile {
-  id: string;
-  username?: string;
-  email?: string;
-  name?: string;
-  groups: string[];
-}
-
 const PROFILE_HEADERS = {
   username: "x-authentik-username",
   email: "x-authentik-email",
@@ -66,6 +63,7 @@ export function createAuth(opts: AuthOptions = {}): MiddlewareHandler {
   const mode = opts.mode ?? env.authMode;
   const header = opts.header ?? env.authUserHeader;
   const fallbackUserId = opts.defaultUserId ?? env.defaultUserId;
+  const resolveLocalSession = opts.resolveLocalSession ?? ((token) => localAuthService.authenticate(token));
   // The first configured super-admin is the local operator when dev mode is
   // using its fallback identity. A real claimed identity never inherits it.
   const fallbackUserEmail = opts.defaultUserEmail ?? env.superAdminEmails[0];
@@ -73,6 +71,16 @@ export function createAuth(opts: AuthOptions = {}): MiddlewareHandler {
   const profileHeaders = { ...PROFILE_HEADERS, ...opts.profileHeaders };
 
   return async (c, next) => {
+    if (mode === "local") {
+      const token = getCookie(c, LOCAL_SESSION_COOKIE);
+      const profile = token ? await resolveLocalSession(token) : null;
+      if (!profile) return c.json({ error: "unauthenticated" }, 401);
+      c.set("userId", profile.id);
+      c.set("userProfile", profile);
+      await next();
+      return;
+    }
+
     const claimed = c.req.header(header)?.trim();
 
     if (!claimed && mode === "proxy") {

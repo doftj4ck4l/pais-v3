@@ -71,6 +71,13 @@
       "when": 1787113117668,
       "tag": "0009_clammy_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787191223073,
+      "tag": "0010_mixed_matthew_murdock",
+      "breakpoints": true
     }
   ]
 }

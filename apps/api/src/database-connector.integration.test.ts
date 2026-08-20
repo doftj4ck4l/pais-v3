@@ -37,7 +37,7 @@ function mockSuccessfulDatabase() {
 
 beforeAll(async () => {
   (env as { connectionSecret: string }).connectionSecret = "database-integration-secret";
-  (env as { authMode: "proxy" | "dev" }).authMode = "proxy";
+  (env as { authMode: typeof env.authMode }).authMode = "proxy";
   const { ensureSchema } = await import("./db/client");
   ensureSchema();
   ({ createApp } = await import("./app"));

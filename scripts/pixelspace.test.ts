@@ -36,6 +36,14 @@ case "$command" in
     ;;
   compose)
     arguments=" $* "
+    if [[ "$arguments" == *"local-admin.ts status"* ]]; then
+      if [[ "\${PIXELSPACE_TEST_ADMIN_EXISTS:-0}" == "1" ]]; then
+        printf 'present\\n'
+        exit 0
+      fi
+      printf 'missing\\n'
+      exit 3
+    fi
     if [[ "$arguments" == *" ps "* && "\${PIXELSPACE_TEST_COMPOSE_PS_FAIL:-0}" == "1" ]]; then
       exit 1
     fi
@@ -136,7 +144,7 @@ case "$command" in
         *) exit 1 ;;
       esac
       find "$target_path" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-      tar -C "$target_path" -xf "$backup_path/$input"
+      [[ -z "$backup_path" ]] || tar -C "$target_path" -xf "$backup_path/$input"
     fi
     ;;
   *) exit 0 ;;
@@ -171,6 +179,7 @@ exit 0
       PIXELSPACE_UID_OVERRIDE: "1234",
       PIXELSPACE_GID_OVERRIDE: "1235",
       PIXELSPACE_DOCKER_GID_OVERRIDE: "1236",
+      PIXELSPACE_AUTH_MODE: "dev",
       PIXELSPACE_TEST_DOCKER_LOG: dockerLog,
       PIXELSPACE_TEST_CURL_LOG: path.join(home, "curl.log"),
       PIXELSPACE_TEST_VOLUME_ROOT: volumeRoot,
@@ -216,6 +225,77 @@ describe("Pixelspace on-prem operator", () => {
     expect(result.stdout.toString()).toContain("docker compose");
   });
 
+  test("defaults on-prem installs to a bootstrapped local administrator", () => {
+    const fx = fixture();
+    const passwordFile = path.join(fx.home, "admin-password");
+    writeFileSync(passwordFile, "correct horse battery staple\n", { mode: 0o600 });
+    const env = { ...fx.env, PIXELSPACE_AUTH_MODE: undefined };
+
+    const result = run(
+      ["install", "--admin-email", "Admin@Example.COM", "--admin-password-file", passwordFile],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = readFileSync(fx.envFile, "utf8");
+    expect(body).toContain('AUTH_MODE="local"');
+    expect(body).toContain('SUPER_ADMIN_EMAILS="admin@example.com"');
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("local-admin.ts create --email admin@example.com");
+    expect(log).not.toContain("correct horse battery staple");
+    expect(body).not.toContain("correct horse battery staple");
+  });
+
+  test("requires an admin identity for unattended local setup", () => {
+    const fx = fixture();
+    const result = run(["install", "--dry-run"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("local auth requires --admin-email");
+  });
+
+  test("resets a local admin password without exposing it in process arguments", () => {
+    const fx = fixture();
+    const passwordFile = path.join(fx.home, "admin-password");
+    writeFileSync(passwordFile, "a completely new password\n", { mode: 0o600 });
+    expect(
+      run(
+        ["install", "--admin-email", "admin@example.com", "--admin-password-file", passwordFile],
+        { ...fx.env, PIXELSPACE_AUTH_MODE: "local", PIXELSPACE_TEST_ADMIN_EXISTS: "1" },
+      ).exitCode,
+    ).toBe(0);
+
+    const result = run(
+      ["reset-admin-password", "--admin-email", "admin@example.com", "--admin-password-file", passwordFile],
+      { ...fx.env, PIXELSPACE_AUTH_MODE: undefined, PIXELSPACE_TEST_ADMIN_EXISTS: "1" },
+    );
+    expect(result.exitCode).toBe(0);
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("local-admin.ts reset --email admin@example.com");
+    expect(log).not.toContain("a completely new password");
+  });
+
+  test("requires HTTPS when local password auth is exposed beyond loopback", () => {
+    const fx = fixture();
+    const result = run(
+      [
+        "install",
+        "--dry-run",
+        "--auth-mode",
+        "local",
+        "--admin-email",
+        "admin@example.com",
+        "--bind-address",
+        "0.0.0.0",
+      ],
+      fx.env,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("requires an https PUBLIC_URL");
+  });
+
   test("refuses unauthenticated LAN exposure", () => {
     const fx = fixture();
     expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
@@ -257,6 +337,37 @@ describe("Pixelspace on-prem operator", () => {
     expect(body).toContain('S3_SECRET_KEY="keep-me"');
     expect(body).toContain(`PIXELSPACE_BACKUP_ROOT="${fx.home}/pixelspace-backups"`);
     expect(body).toContain(`PIXELSPACE_APP_ENV_FILE="${appEnv}"`);
+  });
+
+  test("keeps an installer-derived public URL aligned with a changed port", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+
+    expect(run(["install", "--dry-run", "--port", "9090"], fx.env).exitCode).toBe(0);
+
+    const body = readFileSync(fx.envFile, "utf8");
+    expect(body).toContain('WEB_PORT="9090"');
+    expect(body).toContain('PUBLIC_URL="http://127.0.0.1:9090"');
+  });
+
+  test("preserves an explicitly configured public URL when the port changes", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run", "--public-url", "https://pixelspace.example"], fx.env).exitCode).toBe(0);
+
+    expect(run(["install", "--dry-run", "--port", "9090"], fx.env).exitCode).toBe(0);
+
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PUBLIC_URL="https://pixelspace.example"');
+  });
+
+  test("doctor validates every configured administrator email", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    setEnvValue(fx.envFile, "SUPER_ADMIN_EMAILS", "admin@example.com,not-an-email");
+
+    const result = run(["doctor"], fx.env);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("SUPER_ADMIN_EMAILS contains an invalid email address");
   });
 
   test("adopts the legacy database path instead of disconnecting existing data", () => {
@@ -362,9 +473,9 @@ describe("Pixelspace on-prem operator", () => {
     mkdirSync(path.dirname(appEnv!), { recursive: true });
     writeFileSync(appEnv!, 'AUTH_MODE=""\n', { mode: 0o600 });
 
-    const result = run(["doctor"], fx.env);
+    const result = run(["doctor"], { ...fx.env, PIXELSPACE_AUTH_MODE: undefined });
     expect(result.exitCode).toBe(1);
-    expect(result.stderr.toString()).toContain("AUTH_MODE must be proxy or dev");
+    expect(result.stderr.toString()).toContain("AUTH_MODE must be proxy, local, or dev");
   });
 
   test("uses a bracketed IPv6 address for health checks and display", () => {
@@ -399,8 +510,13 @@ describe("Pixelspace on-prem operator", () => {
     mkdirSync(payload);
     mkdirSync(inner);
     writeFileSync(path.join(payload, "metadata"), "created_at=test\n");
+    writeFileSync(path.join(payload, "pixelspace.env"), "AUTH_MODE=dev\n");
+    writeFileSync(path.join(payload, "payloads"), "pixelspace.env\ndata.tar\nworkspaces.tar\n");
     symlinkSync("/etc/passwd", path.join(inner, "app.db"));
     createTar(inner, path.join(payload, "data.tar"));
+    const emptyWorkspaces = path.join(fx.home, "empty-workspaces");
+    mkdirSync(emptyWorkspaces);
+    createTar(emptyWorkspaces, path.join(payload, "workspaces.tar"));
     const archive = path.join(fx.home, "unsafe.tar.gz");
     createTar(payload, archive, true);
 
@@ -457,6 +573,43 @@ describe("Pixelspace on-prem operator", () => {
     expect(restoredEnv).toContain('WEB_PORT="9090"');
     expect(readFileSync(appEnv!, "utf8")).toContain('CUSTOM_MODEL="source-model"');
     expect(readFileSync(appEnv!, "utf8")).toContain('AUTH_MODE="proxy"');
+  });
+
+  test("rejects an incomplete backup before restore cutover", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const dataRoot = path.join(fx.home, ".local", "share", "pixelspace", "data");
+    mkdirSync(dataRoot, { recursive: true });
+    writeFileSync(path.join(dataRoot, "app.db"), "current-state");
+    const complete = path.join(fx.home, "complete.tar.gz");
+    expect(run(["backup", complete], fx.env).exitCode).toBe(0);
+
+    const unpacked = path.join(fx.home, "unpacked");
+    mkdirSync(unpacked);
+    expect(Bun.spawnSync(["tar", "-C", unpacked, "-xzf", complete]).exitCode).toBe(0);
+    rmSync(path.join(unpacked, "data.tar"));
+    const incomplete = path.join(fx.home, "incomplete.tar.gz");
+    createTar(unpacked, incomplete, true);
+
+    const result = run(["restore", incomplete, "--yes"], fx.env);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("backup payload is missing: data.tar");
+    expect(readFileSync(path.join(dataRoot, "app.db"), "utf8")).toBe("current-state");
+    expect(readFileSync(fx.dockerLog, "utf8")).not.toContain(" down ");
+  });
+
+  test("restoring an intentionally absent volume clears destination state", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const archive = path.join(fx.home, "without-volumes.tar.gz");
+    expect(run(["backup", archive], fx.env).exitCode).toBe(0);
+
+    const destination = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    mkdirSync(destination);
+    writeFileSync(path.join(destination, "stale-object"), "stale");
+
+    expect(run(["restore", archive, "--yes"], fx.env).exitCode).toBe(0);
+    expect(() => readFileSync(path.join(destination, "stale-object"))).toThrow();
   });
 
   test("rolls current state back when restore cutover fails", () => {

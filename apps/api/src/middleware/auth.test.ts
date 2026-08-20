@@ -112,6 +112,33 @@ describe("dev mode", () => {
   });
 });
 
+describe("local mode", () => {
+  it("takes identity only from a valid local session cookie", async () => {
+    const app = appWith({
+      mode: "local",
+      resolveLocalSession: async (token) =>
+        token === "valid"
+          ? { id: "local-user", email: "admin@example.com", groups: [] }
+          : null,
+    });
+
+    const authenticated = await app.request("/who", {
+      headers: { cookie: "pixelspace_session=valid" },
+    });
+    expect(authenticated.status).toBe(200);
+    expect(await authenticated.json()).toEqual({ userId: "local-user" });
+
+    expect((await app.request("/who")).status).toBe(401);
+    expect(
+      (
+        await app.request("/who", {
+          headers: { "x-authentik-uid": "forged-proxy-user" },
+        })
+      ).status,
+    ).toBe(401);
+  });
+});
+
 describe("profile", () => {
   it("reads the display fields the proxy supplies", async () => {
     const app = new Hono();

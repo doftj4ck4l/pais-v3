@@ -9,17 +9,13 @@ import {
 } from '@/shared/ui/dropdown-menu'
 import { ProfileDialog } from '@/features/workspace/components/profile-dialog'
 import { useMe } from '@/features/workspace/hooks/use-me'
+import { logoutLocalSession } from '@/shared/api/api'
 
 /**
  * Who you are signed in as, and how to stop being them.
  *
- * The console has no login of its own — authentication happens at the proxy —
- * so without this there is no way to tell an authenticated session from an open
- * door except by leaving the app and asking the identity provider.
- *
- * Sign-out is a plain link rather than a fetch: it hands the browser to the
- * proxy's own endpoint, which clears the session cookie and redirects. Doing it
- * over XHR would clear the cookie while leaving a stale console on screen.
+ * Local mode revokes its server-side session before returning to the login
+ * screen. Proxy mode hands the browser to the provider's own sign-out endpoint.
  */
 export function UserMenu() {
   const me = useMe()
@@ -29,6 +25,9 @@ export function UserMenu() {
 
   const label = me.name || me.username || me.id
   const secondary = me.email ?? (me.username && me.name ? me.username : null)
+  const localSignOut = () => {
+    void logoutLocalSession().finally(() => window.location.assign('/'))
+  }
 
   return (
     <>
@@ -52,12 +51,19 @@ export function UserMenu() {
             <UserIcon className="size-4 text-muted-foreground" />
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <a href="/outpost.goauthentik.io/sign_out">
+          {me.authMode === 'local' ? (
+            <DropdownMenuItem onSelect={localSignOut}>
               <LogOutIcon className="size-4 text-muted-foreground" />
               Sign out
-            </a>
-          </DropdownMenuItem>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem asChild>
+              <a href="/outpost.goauthentik.io/sign_out">
+                <LogOutIcon className="size-4 text-muted-foreground" />
+                Sign out
+              </a>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

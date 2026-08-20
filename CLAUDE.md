@@ -164,6 +164,14 @@ Two halves make that header trustworthy, and neither works alone:
   that port is ever published more widely, the header is forgeable and the
   isolation is gone** — the firewall rule is part of this control, not separate.
 
+On-prem installs may instead use `AUTH_MODE=local`. The operator bootstraps the
+first email/password administrator after the stack becomes healthy. Passwords
+are Argon2id hashes, browser session tokens are HttpOnly/SameSite cookies stored
+only as SHA-256 digests, and password reset revokes all sessions. Local auth on
+a non-loopback bind requires an HTTPS `PUBLIC_URL`; `AUTH_MODE=dev` remains a
+loopback-only developer convenience. Never put a plaintext password in env,
+Compose arguments, logs, or the database.
+
 `/api/meta` is deliberately open: it carries no tenant data and is what the
 container healthcheck calls. Gate it and the container reports unhealthy.
 
@@ -534,9 +542,10 @@ live SQLite database.
 
 **On-prem hosts and DGX Spark.** `scripts/pixelspace` is the first-party
 single-host operator; `ON_PREM.md` is its user contract. It supports Linux
-`amd64` and `arm64`, defaults to loopback plus `AUTH_MODE=dev`, and rejects LAN
-exposure until `AUTH_MODE=proxy` is configured behind a trusted TLS proxy and
-firewall. Persistent data and workspaces live outside the checkout. Build mode
+`amd64` and `arm64`, defaults to loopback plus `AUTH_MODE=local`, and bootstraps
+the first administrator from a TTY or protected password file. LAN exposure
+requires either local auth behind TLS or `AUTH_MODE=proxy` behind a trusted TLS
+proxy and firewall. Persistent data and workspaces live outside the checkout. Build mode
 builds API, web, and sandbox images locally; image mode accepts only immutable
 multi-architecture digest references and reuses images already loaded for an
 offline install. Pixelspace never installs, restarts, or reconfigures the host's
