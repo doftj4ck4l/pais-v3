@@ -20,6 +20,10 @@ not application installation details.
 
 ## Install
 
+If you do not yet know the model URL or model ID, follow
+[Find the model URL and model ID](SETUP_MANUAL.md#3-find-the-model-url-and-model-id)
+before running the installer.
+
 From a release checkout:
 
 ```bash

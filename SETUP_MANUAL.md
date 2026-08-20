@@ -39,7 +39,157 @@ cd pixelspace
 Use a release tag or an approved branch for production installations. Pulling
 the latest development branch directly into production is not recommended.
 
-## 3. Choose how users will connect
+## 3. Find the model URL and model ID
+
+Pixelspace does not install a model server. It connects to a model gateway that
+is already running and implements the OpenAI-compatible API. Before running the
+Pixelspace installer, you need to discover two values:
+
+| Installer option | Meaning | Example |
+| --- | --- | --- |
+| `--model-url` | Base address of the model API, including `/v1` | `http://10.0.151.4:9504/v1` |
+| `--model-id` | Exact model name returned by `/v1/models` | `qwen3.8-27b-uncensored` |
+
+### Check whether a model service is listening
+
+If the model should run on the same server, inspect its listening ports and
+containers:
+
+```bash
+sudo ss -ltnp
+docker ps --format 'table {{.Names}}\t{{.Ports}}\t{{.Status}}'
+```
+
+Look for the model service and note its port. Common ports include `8000`,
+`9504`, and `11434`, but the actual service can use any port. If the model is on
+another machine, ask its operator for the server address, port, and API key if
+one is required.
+
+### Ask the gateway which models it serves
+
+First test from the host. Replace the address and port with the values you
+found:
+
+```bash
+curl --fail --show-error http://127.0.0.1:9504/v1/models
+```
+
+For a model on another server:
+
+```bash
+curl --fail --show-error http://MODEL_SERVER_IP:9504/v1/models
+```
+
+A successful OpenAI-compatible response contains a `data` list. Copy the
+value of `data[].id`; that exact value is the Pixelspace `--model-id`:
+
+```json
+{
+  "data": [
+    {
+      "id": "qwen3.8-27b-uncensored",
+      "object": "model"
+    }
+  ]
+}
+```
+
+If `jq` is installed, print only the available model IDs:
+
+```bash
+curl --silent --fail http://MODEL_SERVER_IP:9504/v1/models |
+  jq -r '.data[].id'
+```
+
+An HTTP `401` or `403` usually means the gateway requires an API key:
+
+```bash
+read -r -s -p 'Model API key: ' pixelspace_model_api_key
+printf '\n'
+curl --fail --show-error \
+  --header "Authorization: Bearer $pixelspace_model_api_key" \
+  http://MODEL_SERVER_IP:9504/v1/models
+unset pixelspace_model_api_key
+```
+
+Do not put an API key directly in the command history. Pixelspace reads a
+gateway key from `CUSTOM_API_KEY` in the private generated `.env` file. The
+installer intentionally does not accept the key as a command-line option. If a
+key is required, run the installer once to generate `.env`, edit that file and
+set `CUSTOM_API_KEY`, keep it mode `600`, then re-run the same installer
+command. Installation is idempotent and the existing administrator password and
+data are preserved.
+
+### Test one real answer
+
+Listing a model proves that the gateway is reachable, but not that inference
+works. Send a small chat request using the ID returned above:
+
+```bash
+curl --fail --show-error \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"qwen3.8-27b-uncensored","messages":[{"role":"user","content":"Reply with MODEL_OK"}],"max_tokens":32}' \
+  http://MODEL_SERVER_IP:9504/v1/chat/completions
+```
+
+The response should contain an assistant message. If it returns “model not
+found,” copy the ID from `/v1/models` exactly, including capitalization and
+punctuation.
+
+### Choose the URL Pixelspace should use
+
+- Model on another machine: use its reachable address directly, such as
+  `http://10.0.151.4:9504/v1`.
+- Model on the same Docker host: use
+  `http://host.docker.internal:PORT/v1` in the Pixelspace installer.
+- Hosted gateway: use its HTTPS API base URL.
+
+For a same-host model, `ss` must show it listening on a Docker-reachable
+interface such as `0.0.0.0:9504`, not only `127.0.0.1:9504`. Protect that port
+with the host firewall.
+
+You can optionally test the same route from a temporary Docker container before
+installing Pixelspace:
+
+```bash
+docker run --rm \
+  --add-host host.docker.internal:host-gateway \
+  curlimages/curl:8.12.1 \
+  --fail --show-error \
+  http://host.docker.internal:9504/v1/models
+```
+
+If the model is remote, replace `host.docker.internal` with its server address.
+This command may pull the small curl image the first time.
+
+### Worked example
+
+The development-network gateway used while writing this manual responds at:
+
+```bash
+curl --fail --show-error http://10.0.151.4:9504/v1/models
+```
+
+It currently reports:
+
+```text
+model URL: http://10.0.151.4:9504/v1
+model ID:  qwen3.8-27b-uncensored
+context:   8192 tokens
+```
+
+Therefore, its installer arguments are:
+
+```bash
+--model-url http://10.0.151.4:9504/v1 \
+--model-id qwen3.8-27b-uncensored
+```
+
+Use these values only when the target Pixelspace server can reach that internal
+address. Otherwise, repeat the checks above for the gateway available to that
+server.
+
+## 4. Choose how users will connect
 
 ### Option A: private access through an SSH tunnel
 
@@ -51,9 +201,12 @@ Install on the server:
 ```bash
 ./install.sh \
   --admin-email operator@example.com \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id your-model-id
+  --model-url http://10.0.151.4:9504/v1 \
+  --model-id qwen3.8-27b-uncensored
 ```
+
+Those model values come from the `/v1/models` check in step 3. Replace them when
+installing on a network that cannot reach this gateway.
 
 From your computer, open a tunnel:
 
@@ -76,15 +229,15 @@ install with the browser-facing origin:
   --auth-mode local \
   --public-url https://pixelspace.example.internal \
   --admin-email operator@example.com \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id your-model-id
+  --model-url http://10.0.151.4:9504/v1 \
+  --model-id qwen3.8-27b-uncensored
 ```
 
 The reverse proxy should forward the HTTPS site to `http://127.0.0.1:8080` or
 another firewall-restricted interface. Do not expose the plain HTTP port
 directly to an untrusted network.
 
-## 4. Create the first administrator
+## 5. Create the first administrator
 
 Local password authentication is the default. During the first installation,
 the installer asks for the administrator password twice. Use at least 12
@@ -102,15 +255,15 @@ printf 'replace-with-a-long-password\n' > /secure/pixelspace-admin-password
 ./install.sh \
   --admin-email operator@example.com \
   --admin-password-file /secure/pixelspace-admin-password \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id your-model-id
+  --model-url http://10.0.151.4:9504/v1 \
+  --model-id qwen3.8-27b-uncensored
 ```
 
 Delete or securely archive the password file after the installation. Re-running
 the installer preserves the existing administrator and does not silently reset
 the password.
 
-## 5. DGX Spark installation
+## 6. DGX Spark installation
 
 The DGX Spark profile checks the ARM64 architecture, NVIDIA Container Toolkit,
 GPU visibility, Docker, Compose, and the standard Pixelspace security rules:
@@ -132,7 +285,7 @@ that interface with the firewall, and use `host.docker.internal` in the
 Pixelspace model URL.
 
 For mobile access to the DGX Spark, combine the DGX profile with the LAN/HTTPS
-options from step 3:
+options from step 4:
 
 ```bash
 ./install.sh \
@@ -144,7 +297,7 @@ options from step 3:
   --model-id nemotron-3.5-lightning
 ```
 
-## 6. Verify the installation
+## 7. Verify the installation
 
 Run:
 
@@ -164,9 +317,9 @@ scripts/pixelspace logs
 ```
 
 After verification, open the configured URL and sign in with the administrator
-email and password from step 4.
+email and password from step 5.
 
-## 7. Authentication modes
+## 8. Authentication modes
 
 | Mode | Intended use | Sign-in behavior |
 | --- | --- | --- |
@@ -186,7 +339,7 @@ scripts/pixelspace reset-admin-password --admin-email operator@example.com
 
 The reset command revokes every existing browser session for that account.
 
-## 8. Model configuration
+## 9. Change the model later
 
 Pixelspace expects an OpenAI-compatible endpoint and a model identifier:
 
@@ -206,7 +359,11 @@ Important checks:
 - Run a short conversation after installation to verify real inference, not
   only the metadata health endpoint.
 
-## 9. Routine operations
+Repeat the discovery and inference checks from step 3 whenever the gateway or
+model changes, then re-run the installer with the new values. Existing users,
+workspaces, secrets, and application data are preserved.
+
+## 10. Routine operations
 
 Run these commands from the Pixelspace repository directory:
 
@@ -232,7 +389,7 @@ or, when `XDG_DATA_HOME` is unset:
 ~/.local/share/pixelspace
 ```
 
-## 10. Backup and restore
+## 11. Backup and restore
 
 Create a backup:
 
@@ -255,7 +412,7 @@ scripts/pixelspace restore \
 Restore validates the checksum and payload manifest before replacing current
 state, creates a safety backup, and attempts rollback if cutover fails.
 
-## 11. Upgrade
+## 12. Upgrade
 
 In the default build mode, update the release checkout first:
 
@@ -268,7 +425,7 @@ scripts/pixelspace upgrade
 The upgrade command runs host checks, creates a backup, rebuilds or pulls the
 configured images, recreates the services, and verifies the result.
 
-## 12. Uninstall
+## 13. Uninstall
 
 Stop and remove the application containers while keeping all data:
 
@@ -285,7 +442,7 @@ scripts/pixelspace uninstall --purge --yes
 The purge operation is intentionally explicit and cannot be undone without a
 backup.
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### The site does not open
 
@@ -333,7 +490,7 @@ NVIDIA or Docker host components automatically.
 scripts/pixelspace help
 ```
 
-## 14. Security checklist
+## 15. Security checklist
 
 Before giving users access:
 
