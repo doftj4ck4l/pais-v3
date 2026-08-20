@@ -1,5 +1,12 @@
-import { MODELS, getModel, isLikelyConfigured, type ModelConfig } from "../../catalog/llm-models";
+import {
+  MODELS,
+  getModel,
+  isLikelyConfigured,
+  syntheticGatewayModel,
+  type ModelConfig,
+} from "../../catalog/llm-models";
 import { HARNESSES, getHarness, type Harness } from "../../catalog/harnesses";
+import { maybeRefreshServedModels, servedModels } from "./gateway-models";
 
 /** Shape returned by GET /api/meta — the catalog the UI renders. */
 export type MetaPayload = {
@@ -24,21 +31,65 @@ export type MetaPayload = {
 };
 
 export function getMeta(): MetaPayload {
+  return { harnesses: HARNESSES, models: metaModels() };
+}
+
+function toMetaModel(model: ModelConfig, ready: boolean, contextWindow?: number): MetaPayload["models"][number] {
   return {
-    harnesses: HARNESSES,
-    models: MODELS.map((m) => ({
-      id: m.id,
-      label: m.label,
-      provider: m.provider,
-      hint: m.hint,
-      brand: m.brand,
-      mode: m.mode ?? "agent",
-      ready: isLikelyConfigured(m),
-      contextWindow: m.contextWindow,
-      // Only the levels and default reach the UI; the sampling recipe stays server-side.
-      ...(m.thinking ? { thinking: { levels: m.thinking.levels, default: m.thinking.default } } : {}),
-    })),
+    id: model.id,
+    label: model.label,
+    provider: model.provider,
+    hint: model.hint,
+    brand: model.brand,
+    mode: model.mode ?? "agent",
+    ready,
+    contextWindow: contextWindow ?? model.contextWindow,
+    // Only the levels and default reach the UI; the sampling recipe stays server-side.
+    ...(model.thinking
+      ? { thinking: { levels: model.thinking.levels, default: model.thinking.default } }
+      : {}),
   };
+}
+
+/**
+ * The model list the picker renders.
+ *
+ * Without `CUSTOM_MODEL` this is a multi-model deployment (the shared office
+ * gateway) and the full static catalog is correct — unchanged behaviour.
+ *
+ * With `CUSTOM_MODEL` set the box serves one gateway, so the picker follows it:
+ * show only what `GET /v1/models` reports, and nothing else — no greyed-out
+ * models this machine never had, and no hardcoded LAN endpoints that would read
+ * as ready while answering nothing. Until the first discovery lands (or if the
+ * gateway never answers) the configured model alone stands in, which is exactly
+ * the single-model case anyway.
+ */
+function metaModels(): MetaPayload["models"] {
+  const configured = process.env.CUSTOM_MODEL?.trim();
+  if (!configured) {
+    return MODELS.map((m) => toMetaModel(m, isLikelyConfigured(m)));
+  }
+
+  maybeRefreshServedModels();
+  const served = servedModels();
+  const names = served ? [...served.keys()] : [configured];
+
+  const entries: Array<{ model: ModelConfig; contextWindow?: number }> = [];
+  for (const name of names) {
+    const known = MODELS.find(
+      (m) => m.provider === "custom" && m.apiKeyEnv === "CUSTOM_API_KEY" && m.model === name,
+    );
+    if (known) entries.push({ model: known, contextWindow: served?.get(name) });
+    else if (name === configured) {
+      entries.push({ model: syntheticGatewayModel(configured, served?.get(name)), contextWindow: served?.get(name) });
+    }
+    // A served model that is neither in the catalog nor the configured one has
+    // no resolvable config, so it is left out rather than offered and failing.
+  }
+  if (!entries.length) entries.push({ model: syntheticGatewayModel(configured) });
+
+  // Everything here is served by this machine, so it is ready by definition.
+  return entries.map(({ model, contextWindow }) => toMetaModel(model, true, contextWindow));
 }
 
 export type Resolution =
