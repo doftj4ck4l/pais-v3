@@ -419,6 +419,33 @@ describe("Pixelspace on-prem operator", () => {
     expect(body).not.toContain("correct horse battery staple");
   });
 
+  test("an explicit --admin-email overrides a stale first entry from an earlier run", () => {
+    const fx = fixture();
+    // Re-installing over a deployment whose app env already holds a typo'd
+    // administrator address, stored first. The runtime env is the source of
+    // truth, so seed it there and pin the path so the installer adopts it.
+    const appEnv = path.join(fx.home, "app.env");
+    writeFileSync(appEnv, 'SUPER_ADMIN_EMAILS="admin@pixespace.com"\n', { mode: 0o600 });
+    writeFileSync(fx.envFile, `PIXELSPACE_APP_ENV_FILE="${appEnv}"\n`, { mode: 0o600 });
+    const passwordFile = path.join(fx.home, "admin-password");
+    writeFileSync(passwordFile, "correct horse battery staple\n", { mode: 0o600 });
+    const env = { ...fx.env, PIXELSPACE_AUTH_MODE: undefined };
+
+    const result = run(
+      ["install", "--admin-email", "admin@pixelspace.com", "--admin-password-file", passwordFile],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    // The correct address is now first, so first_admin_email returns it.
+    expect(readFileSync(appEnv, "utf8")).toContain(
+      'SUPER_ADMIN_EMAILS="admin@pixelspace.com,admin@pixespace.com"',
+    );
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("local-admin.ts create --fail-if-exists --email admin@pixelspace.com");
+    expect(log).not.toContain("--email admin@pixespace.com");
+  });
+
   test("generates and reports a password for a non-interactive first administrator", () => {
     const fx = fixture();
     const passwordCapture = path.join(fx.home, "created-admin-password");
@@ -1269,6 +1296,30 @@ describe("Pixelspace on-prem operator", () => {
     expect(run(["uninstall", "--purge", "--yes"], fx.env).exitCode).toBe(0);
     expect(() => readFileSync(path.join(dataRoot, "app.db"))).toThrow();
     expect(() => readFileSync(path.join(workspaceRoot, "note.txt"))).toThrow();
+  });
+
+  test("purge removes env, app env, images, and volumes so nothing survives", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const appEnv = path.join(fx.home, "app.env");
+    writeFileSync(appEnv, 'SUPER_ADMIN_EMAILS="admin@pixespace.com"\n', { mode: 0o600 });
+    setEnvValue(fx.envFile, "PIXELSPACE_APP_ENV_FILE", appEnv);
+    const backupRoot = path.join(fx.home, "pixelspace-backups");
+    mkdirSync(backupRoot, { recursive: true });
+    writeFileSync(path.join(backupRoot, "old.tar.gz"), "stale");
+
+    const result = run(["uninstall", "--purge", "--yes"], fx.env);
+    expect(result.exitCode).toBe(0);
+
+    // No configuration is left to re-seed a fresh install.
+    expect(() => readFileSync(fx.envFile)).toThrow();
+    expect(() => readFileSync(appEnv)).toThrow();
+    expect(() => readFileSync(path.join(backupRoot, "old.tar.gz"))).toThrow();
+
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain(" down -v --remove-orphans");
+    expect(log).toContain("image rm pixelspace-api:local");
+    expect(log).toContain("image rm pixelspace-sandbox:1");
   });
 
   test("refuses canonical destructive paths before stopping the stack", () => {

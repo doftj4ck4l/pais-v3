@@ -562,9 +562,21 @@ generate_env() {
   if [[ -n "$admin_email" ]]; then
     admin_email="$(normalize_admin_email "$admin_email")"
     configured_admins="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
-    if [[ ",${configured_admins,,}," != *",$admin_email,"* ]]; then
-      set_runtime_env SUPER_ADMIN_EMAILS "${configured_admins:+$configured_admins,}$admin_email"
-    fi
+    # An explicit --admin-email is the account we bootstrap, so it has to be the
+    # FIRST entry: bootstrap_local_admin and doctor both read first_admin_email.
+    # Appending it (the old behaviour) let a stale first entry from an earlier
+    # run keep winning, so a one-character typo in a prior --admin-email became
+    # un-overridable — the install kept creating the old address instead.
+    local kept="" entry
+    local -a existing_admins
+    IFS=',' read -r -a existing_admins <<< "$configured_admins"
+    for entry in "${existing_admins[@]}"; do
+      entry="${entry#"${entry%%[![:space:]]*}"}"
+      entry="${entry%"${entry##*[![:space:]]}"}"
+      [[ -z "$entry" || "${entry,,}" == "$admin_email" ]] && continue
+      kept="${kept:+$kept,}$entry"
+    done
+    set_runtime_env SUPER_ADMIN_EMAILS "${admin_email}${kept:+,$kept}"
   fi
 }
 
@@ -740,7 +752,12 @@ bootstrap_local_admin() {
   unset password
   local email status_output status password="" generated_password=0 create_status=0 xtrace_enabled=0
   export -n password
-  email="$(first_admin_email)"
+  # Prefer an explicit --admin-email over the stored list, matching
+  # reset_admin_password. configure() already moves the override to the front of
+  # SUPER_ADMIN_EMAILS, but reading it directly here keeps the two in step even
+  # if that order is ever disturbed.
+  email="${ADMIN_EMAIL_OVERRIDE:-$(first_admin_email)}"
+  email="$(normalize_admin_email "$email")"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     note "local administrator $email will be created after the stack starts"
     return
@@ -1359,6 +1376,26 @@ upgrade_stack() {
   say "Upgrade complete."
 }
 
+warn_exported_pixelspace_env() {
+  # A future install reads PIXELSPACE_* overrides (and SUPER_ADMIN_EMAILS) from
+  # the environment before it reads any file, so a value exported in the
+  # operator's shell survives a purge and silently re-seeds the next install —
+  # the exact way a stale admin address kept coming back. This script is a child
+  # process and cannot unset a variable in the parent shell, so name them and
+  # hand back the command that clears them.
+  local leaked
+  leaked="$(env | grep -oE '^(PIXELSPACE_[A-Z0-9_]+|SUPER_ADMIN_EMAILS|AUTH_MODE|DEFAULT_USER_ID)=' \
+    | sed 's/=$//' | grep -vE '^PIXELSPACE_TEST' | sort -u || true)"
+  [[ -n "$leaked" ]] || return 0
+  local -a names=()
+  local name
+  while IFS= read -r name; do names+=("$name"); done <<< "$leaked"
+  warn "These Pixelspace variables are still set in your shell and would re-seed a fresh install:"
+  printf '  %s\n' "${names[@]}" >&2
+  warn "Clear them in your current shell with:"
+  printf '  unset %s\n' "${names[*]}" >&2
+}
+
 uninstall_stack() {
   if [[ "$PURGE" -eq 0 ]]; then
     run_compose down
@@ -1366,13 +1403,57 @@ uninstall_stack() {
     return
   fi
   [[ "$ASSUME_YES" -eq 1 ]] || die "--purge removes Pixelspace data; rerun with --purge --yes"
-  local data_root sandbox_root
+
+  # Read and canonicalise every path before tearing anything down: the env file
+  # removed at the end is where they are recorded, and canonical_clear_path must
+  # reject an unsafe root before the stack is stopped, not after.
+  local data_root sandbox_root backup_root app_env
   data_root="$(canonical_clear_path "$(env_value PIXELSPACE_DATA_ROOT)")"
   sandbox_root="$(canonical_clear_path "$(env_value SANDBOX_ROOT)")"
-  run_compose down -v
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT 2>/dev/null || true)"
+  [[ -z "$backup_root" ]] || backup_root="$(canonical_clear_path "$backup_root")"
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
+
+  local -a app_images=(
+    "$(env_value PIXELSPACE_API_IMAGE 2>/dev/null || printf 'pixelspace-api:local')"
+    "$(env_value PIXELSPACE_WEB_IMAGE 2>/dev/null || printf 'pixelspace-web:local')"
+    "$(env_value SANDBOX_IMAGE 2>/dev/null || printf 'pixelspace-sandbox:1')"
+    "salurai-sandbox:1"
+  )
+
+  # Services, networks, and every named volume — RustFS objects, MCP cache, the
+  # model cache — under whichever project name the stack is running as, plus any
+  # legacy or renamed volume left behind by a partial migration.
+  run_compose down -v --remove-orphans
+  local volume
+  for volume in "$PIXELSPACE_RUSTFS_VOLUME" "$PIXELSPACE_MCP_VOLUME" "$PIXELSPACE_VLLM_VOLUME" \
+    "$LEGACY_RUSTFS_VOLUME" "$LEGACY_MCP_VOLUME" "$LEGACY_VLLM_VOLUME"; do
+    ! docker_volume_exists "$volume" || run docker volume rm "$volume" >/dev/null 2>&1 || true
+  done
+
+  # Locally built images, current and legacy. Upstream base images (the model
+  # runtime, RustFS) are re-pullable and shared, so they are left in place.
+  local image
+  for image in "${app_images[@]}"; do
+    ! docker image inspect "$image" >/dev/null 2>&1 || run docker image rm "$image" >/dev/null 2>&1 || true
+  done
+
+  # On-disk state: database, workspaces, backups, and the private application
+  # env whose stale values would otherwise be adopted by the next install. A
+  # developer checkout's apps/api/.env is git-ignored working config, not
+  # deployment state, so it is left alone.
   clear_directory "$data_root"
   clear_directory "$sandbox_root"
-  say "Pixelspace services, volumes, and data were removed. Configuration remains at $ENV_FILE."
+  [[ -z "$backup_root" ]] || clear_directory "$backup_root"
+  if [[ -n "$app_env" && -f "$app_env" && "$app_env" != "$ROOT/apps/api/.env" ]]; then
+    run rm -f -- "$app_env"
+  fi
+
+  # The deploy env last: everything above was read from it.
+  run rm -f -- "$ENV_FILE"
+
+  say "Pixelspace services, volumes, images, data, and configuration were removed."
+  warn_exported_pixelspace_env
 }
 
 case "$COMMAND" in
