@@ -419,6 +419,10 @@ or, when `XDG_DATA_HOME` is unset:
 ~/.local/share/pixelspace
 ```
 
+The installer prints the dashboard URL at the end of a successful installation.
+With the default loopback bind, use an SSH tunnel before opening that URL from
+another computer. For remote browser access, configure TLS and `--public-url`.
+
 ## 11. Backup and restore
 
 Create a backup:

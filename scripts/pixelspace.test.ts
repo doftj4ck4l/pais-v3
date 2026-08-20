@@ -864,6 +864,14 @@ describe("Pixelspace on-prem operator", () => {
     expect(readFileSync(fx.envFile, "utf8")).toContain('PUBLIC_URL="https://pixelspace.example"');
   });
 
+  test("prints the configured dashboard URL after installation", () => {
+    const fx = fixture();
+    const result = run(["install", "--public-url", "https://pixelspace.example"], fx.env);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Dashboard URL: https://pixelspace.example");
+  });
+
   test("doctor validates every configured administrator email", () => {
     const fx = fixture();
     expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
@@ -991,7 +999,9 @@ describe("Pixelspace on-prem operator", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(readFileSync(fx.curlLog, "utf8")).toContain("http://[::1]:8080/api/meta");
-    expect(result.stdout.toString()).toContain("Open Pixelspace: http://[::1]:8080");
+    expect(result.stdout.toString()).toContain("Pixelspace installation complete.");
+    expect(result.stdout.toString()).toContain("Dashboard URL: http://[::1]:8080");
+    expect(result.stdout.toString()).toContain("Dashboard is bound to this server only");
   });
 
   test("restore is gated before touching the stack", () => {

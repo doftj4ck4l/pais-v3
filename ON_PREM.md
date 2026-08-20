@@ -53,7 +53,10 @@ chmod 600 /secure/pixelspace-admin-password
 The generated `.env` is mode `600`. Persistent state defaults to
 `$XDG_DATA_HOME/pixelspace` or `~/.local/share/pixelspace`, with backups under
 `~/pixelspace-backups`. Re-running the command preserves existing secrets and
-data.
+data. At the end, the installer prints the `Dashboard URL` to give the
+operator a copy-ready browser address. The default loopback URL is only
+reachable on the server itself; use the SSH tunnel below or configure a
+browser-facing `--public-url` for remote access.
 
 The default security posture is intentionally local:
 

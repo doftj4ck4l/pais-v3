@@ -963,10 +963,15 @@ install_stack() {
   wait_for_health
   complete_legacy_compose_migration
   bootstrap_local_admin
-  local bind port
+  local dashboard_url bind
+  dashboard_url="$(env_value PUBLIC_URL || true)"
   bind="$(env_value WEB_BIND_ADDRESS || printf '127.0.0.1')"
-  port="$(env_value WEB_PORT || printf '8080')"
-  say "Open Pixelspace: http://$(http_host_for_bind "$bind"):$port"
+  say ""
+  say "Pixelspace installation complete."
+  say "Dashboard URL: $dashboard_url"
+  if is_loopback_bind "$bind"; then
+    say "Dashboard is bound to this server only; use an SSH tunnel or open it locally on the server."
+  fi
 }
 
 running_service() {
