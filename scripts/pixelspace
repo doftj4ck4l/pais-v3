@@ -29,6 +29,7 @@ BIND_OVERRIDE=""
 PORT_OVERRIDE=""
 AUTH_OVERRIDE="${PIXELSPACE_AUTH_MODE:-}"
 PUBLIC_URL_OVERRIDE=""
+EXPOSE=0
 MODEL_URL_OVERRIDE=""
 MODEL_ID_OVERRIDE=""
 MODEL_PACK_OVERRIDE=""
@@ -71,6 +72,7 @@ Install options:
   --profile core|dgx-spark
   --data-root PATH
   --bind-address ADDRESS       default: 127.0.0.1
+  --expose                    testing-only: bind to this host's private IPv4 address over HTTP
   --port PORT                  default: 8080
   --auth-mode local|proxy|dev  default: local; dev is loopback-only
   --admin-email EMAIL          required for the first local administrator
@@ -93,6 +95,7 @@ while [[ $# -gt 0 ]]; do
     --profile) PROFILE="${2:?missing profile}"; PROFILE_EXPLICIT=1; shift 2 ;;
     --data-root) DATA_ROOT_OVERRIDE="${2:?missing data root}"; shift 2 ;;
     --bind-address) BIND_OVERRIDE="${2:?missing bind address}"; shift 2 ;;
+    --expose) EXPOSE=1; shift ;;
     --port) PORT_OVERRIDE="${2:?missing port}"; shift 2 ;;
     --auth-mode) AUTH_OVERRIDE="${2:?missing auth mode}"; shift 2 ;;
     --admin-email) ADMIN_EMAIL_OVERRIDE="${2:?missing admin email}"; shift 2 ;;
@@ -241,6 +244,28 @@ is_loopback_url() {
 
 is_loopback_bind() {
   [[ "$1" == "127.0.0.1" || "$1" == "::1" || "$1" == "localhost" ]]
+}
+
+is_private_ipv4() {
+  [[ "$1" =~ ^10\.[0-9]+\.[0-9]+\.[0-9]+$ ||
+    "$1" =~ ^192\.168\.[0-9]+\.[0-9]+$ ||
+    "$1" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]+\.[0-9]+$ ]]
+}
+
+private_ipv4_address() {
+  local candidate
+  if [[ -n "${PIXELSPACE_TEST_PRIVATE_IP:-}" ]]; then
+    is_private_ipv4 "$PIXELSPACE_TEST_PRIVATE_IP" || die "PIXELSPACE_TEST_PRIVATE_IP must be an RFC1918 IPv4 address"
+    printf '%s' "$PIXELSPACE_TEST_PRIVATE_IP"
+    return
+  fi
+  while IFS= read -r candidate; do
+    if is_private_ipv4 "$candidate"; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done < <(hostname -I 2>/dev/null | tr ' ' '\n')
+  die "--expose could not find a private IPv4 address; use --bind-address 10.x.x.x explicitly"
 }
 
 normalize_admin_email() {
@@ -404,7 +429,7 @@ generate_env() {
   fi
   [[ "$PROFILE" == "core" || "$PROFILE" == "dgx-spark" ]] || die "profile must be core or dgx-spark"
 
-  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins model_pack
+  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins model_pack expose
   local existing_bind existing_port existing_public_url existing_derived_url existing_model_pack
   home="${HOME:?HOME is required}"
   data_root="${DATA_ROOT_OVERRIDE:-${XDG_DATA_HOME:-$home/.local/share}/pixelspace}"
@@ -413,8 +438,13 @@ generate_env() {
   existing_public_url="$(env_value PUBLIC_URL 2>/dev/null || true)"
   existing_derived_url="http://$(http_host_for_bind "$existing_bind"):$existing_port"
   bind="${BIND_OVERRIDE:-$existing_bind}"
+  if [[ "$EXPOSE" -eq 1 && -z "$BIND_OVERRIDE" ]]; then
+    bind="$(private_ipv4_address)"
+  fi
   port="${PORT_OVERRIDE:-$existing_port}"
   auth="${AUTH_OVERRIDE:-$(env_value AUTH_MODE 2>/dev/null || printf 'local')}"
+  expose="$(env_value PIXELSPACE_EXPOSE 2>/dev/null || printf '0')"
+  [[ "$EXPOSE" -eq 1 ]] && expose=1
   public_url="${PUBLIC_URL_OVERRIDE:-http://$(http_host_for_bind "$bind"):$port}"
   existing_model_pack="$(env_value PIXELSPACE_MODEL_PACK 2>/dev/null || printf 'external')"
   model_pack="${MODEL_PACK_OVERRIDE:-$existing_model_pack}"
@@ -469,6 +499,7 @@ generate_env() {
   ensure_env WEB_PORT "$port"
   ensure_env PUBLIC_URL "$public_url"
   ensure_env AUTH_MODE "$auth"
+  ensure_env PIXELSPACE_EXPOSE "$expose"
   ensure_env DEFAULT_USER_ID "local"
   env_value CONNECTION_SECRET >/dev/null 2>&1 || set_env CONNECTION_SECRET "$(random_secret 32)"
   if ! env_has_key S3_BUCKET; then
@@ -500,11 +531,12 @@ generate_env() {
     set_env PIXELSPACE_APP_ENV_FILE "$DATA_ROOT_OVERRIDE/app.env"
   }
   [[ -z "$BIND_OVERRIDE" ]] || set_env WEB_BIND_ADDRESS "$BIND_OVERRIDE"
+  [[ "$EXPOSE" -eq 1 ]] && set_env PIXELSPACE_EXPOSE 1
   [[ -z "$PORT_OVERRIDE" ]] || set_env WEB_PORT "$PORT_OVERRIDE"
   [[ -z "$AUTH_OVERRIDE" ]] || set_env AUTH_MODE "$AUTH_OVERRIDE"
   if [[ -n "$PUBLIC_URL_OVERRIDE" ]]; then
     set_env PUBLIC_URL "$PUBLIC_URL_OVERRIDE"
-  elif [[ -n "$BIND_OVERRIDE$PORT_OVERRIDE" && "$existing_public_url" == "$existing_derived_url" ]]; then
+  elif [[ -n "$BIND_OVERRIDE$PORT_OVERRIDE" || "$EXPOSE" -eq 1 ]] && [[ "$existing_public_url" == "$existing_derived_url" ]]; then
     set_env PUBLIC_URL "http://$(http_host_for_bind "$bind"):$port"
   fi
   [[ -z "$MODEL_URL_OVERRIDE" ]] || set_runtime_env CUSTOM_BASE_URL "$MODEL_URL_OVERRIDE"
@@ -586,8 +618,12 @@ doctor() {
     if [[ "$auth" == "local" ]]; then
       first_admin_email >/dev/null 2>&1 || { warn "AUTH_MODE=local requires at least one valid SUPER_ADMIN_EMAILS entry"; failures=$((failures + 1)); }
       if ! is_loopback_bind "$bind" && [[ "$(env_value PUBLIC_URL || true)" != https://* ]]; then
-        warn "AUTH_MODE=local requires an https PUBLIC_URL before LAN exposure"
-        failures=$((failures + 1))
+        if [[ "$(env_value PIXELSPACE_EXPOSE || printf '0')" == "1" ]] && is_private_ipv4 "$bind"; then
+          warn "--expose enables insecure HTTP password login on private address $bind for testing only"
+        else
+          warn "AUTH_MODE=local requires an https PUBLIC_URL before LAN exposure (or explicit --expose for testing)"
+          failures=$((failures + 1))
+        fi
       fi
     fi
     [[ "$deploy_mode" == "build" || "$deploy_mode" == "images" ]] || { warn "PIXELSPACE_DEPLOY_MODE must be build or images"; failures=$((failures + 1)); }
@@ -971,6 +1007,8 @@ install_stack() {
   say "Dashboard URL: $dashboard_url"
   if is_loopback_bind "$bind"; then
     say "Dashboard is bound to this server only; use an SSH tunnel or open it locally on the server."
+  elif [[ "$(env_value PIXELSPACE_EXPOSE || printf '0')" == "1" ]]; then
+    say "WARNING: --expose is testing-only and uses HTTP password login on the private network."
   fi
 }
 

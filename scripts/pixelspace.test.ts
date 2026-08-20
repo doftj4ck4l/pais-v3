@@ -217,6 +217,7 @@ exit 0
       PIXELSPACE_AUTH_MODE: "dev",
       PIXELSPACE_TEST_DOCKER_LOG: dockerLog,
       PIXELSPACE_TEST_CURL_LOG: path.join(home, "curl.log"),
+      PIXELSPACE_TEST_PRIVATE_IP: "10.104.118.67",
       PIXELSPACE_TEST_VOLUME_ROOT: volumeRoot,
       PIXELSPACE_TEST_IMAGE_STATE: path.join(home, "image-present"),
       XDG_RUNTIME_DIR: home,
@@ -567,6 +568,24 @@ describe("Pixelspace on-prem operator", () => {
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("requires an https PUBLIC_URL");
+  });
+
+  test("exposes the dashboard on the host private IP when explicitly requested", () => {
+    const fx = fixture();
+    const result = run(["install", "--expose", "--admin-email", "admin@example.com"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+    });
+
+    if (result.exitCode !== 0) {
+      throw new Error(`expose install failed\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`);
+    }
+    const body = readFileSync(fx.envFile, "utf8");
+    expect(body).toContain('WEB_BIND_ADDRESS="10.104.118.67"');
+    expect(body).toContain('PUBLIC_URL="http://10.104.118.67:8080"');
+    expect(body).toContain('PIXELSPACE_EXPOSE="1"');
+    expect(result.stdout.toString()).toContain("Dashboard URL: http://10.104.118.67:8080");
+    expect(result.stdout.toString()).toContain("--expose is testing-only");
   });
 
   test("refuses unauthenticated LAN exposure", () => {

@@ -422,6 +422,9 @@ or, when `XDG_DATA_HOME` is unset:
 The installer prints the dashboard URL at the end of a successful installation.
 With the default loopback bind, use an SSH tunnel before opening that URL from
 another computer. For remote browser access, configure TLS and `--public-url`.
+For trusted-network testing only, `./install.sh --expose` binds to the detected
+private IPv4 address and prints its dashboard URL; this intentionally permits
+HTTP password login and must not be used on an untrusted or production network.
 
 ## 11. Backup and restore
 

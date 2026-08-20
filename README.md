@@ -32,7 +32,8 @@ sandbox images, starts Compose, and verifies the public `/api/meta` path. The
 secure default listens only on `127.0.0.1:8080`. Unless a protected password
 file is supplied, installation generates a random first-administrator password
 and shows it once after account creation. LAN exposure requires TLS or the
-trusted authentication proxy described below. See [ON_PREM.md](ON_PREM.md) for
+trusted authentication proxy described below. For trusted-network testing,
+`./install.sh --expose` opts into a private-IP HTTP endpoint. See [ON_PREM.md](ON_PREM.md) for
 DGX Spark, authentication, lifecycle, backup, restore, and upgrade instructions.
 
 For a task-oriented walkthrough from cloning the repository through first login

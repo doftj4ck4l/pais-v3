@@ -65,6 +65,17 @@ WEB_BIND_ADDRESS=127.0.0.1
 AUTH_MODE=local
 ```
 
+For quick testing from a trusted private network, you can explicitly expose
+the detected RFC1918 address over HTTP:
+
+```bash
+./install.sh --expose --admin-email operator@example.com
+```
+
+This prints a private-IP dashboard URL and persists the opt-in. `--expose` is
+testing-only: password login travels over plain HTTP, so use HTTPS for any
+shared, production, or untrusted network.
+
 That is suitable for a workstation reached locally or through an SSH tunnel:
 
 ```bash
