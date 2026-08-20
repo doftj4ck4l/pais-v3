@@ -1,9 +1,9 @@
 # Pixelspace on-prem installation
 
-Pixelspace ships as a single-host Docker Compose appliance. The application
-stack stays independent from model inference: point it at an existing
-OpenAI-compatible gateway rather than letting the installer consume a GPU or
-replace a model service the host already runs.
+Pixelspace ships as a single-host Docker Compose appliance. A core installation
+stays independent from model inference and points at an existing
+OpenAI-compatible gateway. On a DGX Spark, an explicit model pack can instead
+run the supported Nemotron vLLM service inside the same private Compose network.
 
 The first supported host contract is:
 
@@ -12,7 +12,8 @@ The first supported host contract is:
 - a local filesystem for Pixelspace state (not NFS)
 - outbound access to build/pull images and dependencies, unless images have
   already been loaded for an offline installation
-- an existing OpenAI-compatible model endpoint
+- either an existing OpenAI-compatible model endpoint or the DGX Spark model
+  pack
 
 The installer does not add operating-system repositories, modify the firewall,
 or install Docker with root privileges. Those are host-administration choices,
@@ -114,27 +115,36 @@ Use the DGX profile for host qualification:
 ./install.sh \
   --profile dgx-spark \
   --admin-email operator@example.com \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id nemotron-3.5-lightning
+  --model-pack nemotron-3.5-lightning
 ```
 
 The profile verifies ARM64, `nvidia-ctk`, `nvidia-smi`, Docker, Compose, and the
-same security checks as the core profile. Pixelspace itself does not request
-the GPU; the checks establish that the target is the intended Spark host and
-that its separately managed gateway can keep using the NVIDIA runtime.
+same security checks as the core profile. The model pack starts the pinned vLLM
+runtime with NVIDIA Nemotron 3.5 Lightning and DSpark speculative decoding. It
+uses 85% of GPU memory, serves a 131,072-token context, and reuses the host's
+`~/.cache/huggingface` model cache. First startup can take several minutes or
+download model weights when they are not already cached. Compiled kernels and
+autotuning results persist in the `vllm-cache` Docker volume to make later
+container recreation faster.
 
-A model listening on host `127.0.0.1` is not reachable from the bridged API
-container. Configure that model service to listen on a Docker-reachable host
-interface and restrict the interface with the host firewall. Then use
-`host.docker.internal` in `CUSTOM_BASE_URL`; Compose supplies the Linux
-`host-gateway` mapping. The operator rejects a `localhost` or `127.0.0.1` model
-URL because accepting it would produce an install whose model fails only at the
-first conversation.
+The bundled model listens only on the private Compose network. Pixelspace uses
+`http://model:8000/v1`; Docker publishes no model port to the host or LAN. The
+pack is explicit so installing Pixelspace never claims a GPU or downloads a
+large model unexpectedly. External gateways remain supported by omitting
+`--model-pack` and supplying `--model-url` plus `--model-id`.
 
-The Spark's CPU and GPU share memory. The installer never starts a model,
-changes an existing model container, or assumes unused GPU capacity. Model
-installation can become a separate, explicitly selected provider pack after
-the core appliance is proven.
+For an external model running directly on the Spark host, a service listening
+on `127.0.0.1` is not reachable from the bridged API container. Configure that
+service to listen on a Docker-reachable host interface and restrict the
+interface with the host firewall. Then use `host.docker.internal` in
+`CUSTOM_BASE_URL`; Compose supplies the Linux `host-gateway` mapping. The
+operator rejects a `localhost` or `127.0.0.1` model URL because accepting it
+would produce an install whose model fails only at the first conversation.
+
+The Spark's CPU and GPU share memory. Do not enable the pack while another model
+runtime owns the GPU. Removing the Compose model container does not delete the
+Hugging Face cache, so the pack can be recreated without downloading the weights
+again.
 
 ## Build mode and image mode
 
@@ -149,6 +159,7 @@ pulled:
 PIXELSPACE_API_IMAGE=registry.example/pixelspace/api@sha256:DIGEST
 PIXELSPACE_WEB_IMAGE=registry.example/pixelspace/web@sha256:DIGEST
 SANDBOX_IMAGE=registry.example/pixelspace/sandbox@sha256:DIGEST
+PIXELSPACE_MODEL_IMAGE=vllm/vllm-openai@sha256:DIGEST  # DGX pack only
 ```
 
 Release automation must publish one manifest containing `linux/amd64` and
@@ -177,6 +188,9 @@ compression. The archive includes:
 - RustFS object data
 - the MCP package cache
 - encrypted-data secrets and deployment metadata
+
+The Hugging Face model cache is not included because it is large reproducible
+data. Preserve it separately for fully offline recovery.
 
 Every archive and checksum sidecar is private to the operator account. The
 checksum remains valid if both files are moved or renamed together. Restore

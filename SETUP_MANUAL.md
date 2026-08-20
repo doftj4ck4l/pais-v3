@@ -12,7 +12,8 @@ Prepare the following before starting:
 - Docker Engine and Docker Compose v2
 - Git and SSH access to the Pixelspace repository
 - A local disk for Pixelspace data (do not use NFS)
-- An existing OpenAI-compatible model endpoint ending in `/v1`
+- An existing OpenAI-compatible model endpoint ending in `/v1`, unless using
+  the bundled DGX Spark model pack
 - A DNS name and HTTPS reverse proxy if users will access Pixelspace over a LAN
   or from a mobile device
 
@@ -41,9 +42,10 @@ the latest development branch directly into production is not recommended.
 
 ## 3. Find the model URL and model ID
 
-Pixelspace does not install a model server. It connects to a model gateway that
-is already running and implements the OpenAI-compatible API. Before running the
-Pixelspace installer, you need to discover two values:
+For a normal installation, Pixelspace connects to a model gateway that is
+already running and implements the OpenAI-compatible API. Before running the
+installer, discover these two values. DGX Spark users who select the bundled
+model pack can skip to step 4 because the installer supplies both values.
 
 | Installer option | Meaning | Example |
 | --- | --- | --- |
@@ -266,18 +268,33 @@ the password.
 ## 6. DGX Spark installation
 
 The DGX Spark profile checks the ARM64 architecture, NVIDIA Container Toolkit,
-GPU visibility, Docker, Compose, and the standard Pixelspace security rules:
+GPU visibility, Docker, Compose, and the standard Pixelspace security rules.
+To let Pixelspace manage the known-good Nemotron service, run:
 
 ```bash
 ./install.sh \
   --profile dgx-spark \
   --admin-email operator@example.com \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id nemotron-3.5-lightning
+  --model-pack nemotron-3.5-lightning
 ```
 
-Pixelspace does not install or start a model. It connects to a separately
-managed OpenAI-compatible model gateway.
+This starts a pinned vLLM image with NVIDIA Nemotron 3.5 Lightning, DSpark
+speculative decoding, a 131,072-token context, and an 85% GPU-memory limit. It
+reuses `~/.cache/huggingface`; an existing download is not discarded. If the
+weights are absent, the first start downloads them and can take a while. vLLM's
+compiled kernels and tuning results persist separately in the `vllm-cache`
+Docker volume, so later container recreation is faster.
+
+The bundled model has no published host port. Only the Pixelspace API can reach
+it at `http://model:8000/v1`. Use `scripts/pixelspace logs model` to watch model
+startup and `scripts/pixelspace status` to check its health.
+
+Do not enable the model pack while another inference runtime owns the GPU. The
+pack is optional and explicit because its image is large and starting it changes
+GPU resource usage.
+
+When using a separately managed model instead, omit `--model-pack` and pass the
+external `--model-url` and `--model-id` found in step 3.
 
 A model bound only to the host's `127.0.0.1` is not reachable from the API
 container. Bind the model service to a Docker-reachable host interface, protect
@@ -293,8 +310,7 @@ options from step 4:
   --bind-address 0.0.0.0 \
   --public-url https://pixelspace.example.internal \
   --admin-email operator@example.com \
-  --model-url http://host.docker.internal:8000/v1 \
-  --model-id nemotron-3.5-lightning
+  --model-pack nemotron-3.5-lightning
 ```
 
 ## 7. Verify the installation
@@ -362,6 +378,18 @@ Important checks:
 Repeat the discovery and inference checks from step 3 whenever the gateway or
 model changes, then re-run the installer with the new values. Existing users,
 workspaces, secrets, and application data are preserved.
+
+To change a DGX from the bundled model pack to an external gateway, specify the
+external pack explicitly together with the new values:
+
+```bash
+./install.sh \
+  --profile dgx-spark \
+  --model-pack external \
+  --model-url https://gateway.example.internal/v1 \
+  --model-id your-model-id \
+  --admin-email operator@example.com
+```
 
 ## 10. Routine operations
 
@@ -470,6 +498,8 @@ reverse proxy permits access.
 - Confirm the model service is reachable from Docker, not only from the host.
 - Verify the model identifier exactly matches the gateway's configured alias.
 - Check the API key and gateway firewall rules.
+- For the bundled DGX pack, run `scripts/pixelspace logs model` and confirm that
+  no other runtime is already consuming the GPU.
 
 ### DGX checks fail
 

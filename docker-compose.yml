@@ -1,8 +1,8 @@
 # Pixelspace, deployed on this host.
 #
-# Two services. `web` is the only one published: Caddy serves the built console
-# and proxies /api to `api` over the compose network, so the API has no host
-# port at all. It has no authentication, and a port is an invitation.
+# Core application services plus an optional DGX model pack. `web` is the only
+# one published: Caddy serves the built console and proxies /api to `api` over
+# the Compose network, so neither the API nor bundled model has a host port.
 #
 # The API talks to the host's Docker daemon through a bind-mounted socket, and
 # starts each workspace's sandbox as a *sibling* container. That is why three
@@ -89,6 +89,67 @@ services:
       start_period: 20s
       retries: 3
 
+  # Optional DGX Spark pack, enabled only through `--profile dgx-model`. The
+  # model stays on the private Compose network; API traffic uses
+  # http://model:8000/v1 and no inference port is exposed to the host or LAN.
+  model:
+    profiles: ["dgx-model"]
+    image: "${PIXELSPACE_MODEL_IMAGE:-vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967}"
+    command:
+      - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      - --served-model-name
+      - nemotron-3.5-lightning
+      - --moe-backend
+      - marlin
+      - --kv-cache-dtype
+      - fp8
+      - --enable-prefix-caching
+      - --gpu-memory-utilization
+      - "0.85"
+      - --max-num-seqs
+      - "4"
+      - --max-model-len
+      - "131072"
+      - --speculative_config.method
+      - dspark
+      - --speculative_config.model
+      - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark
+      - --speculative_config.num_speculative_tokens
+      - "3"
+      - --mamba-backend
+      - flashinfer
+      - --mamba-cache-mode
+      - align
+      - --reasoning-parser
+      - nemotron_v3
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-auto-tool-choice
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - "${PIXELSPACE_MODEL_CACHE_ROOT:-./.cache/huggingface}:/root/.cache/huggingface"
+      - vllm-cache:/root/.cache/vllm
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30m
+      retries: 4
+
   # S3-compatible object storage for generated images. Unpublished like `api`:
   # the only thing that talks to it is the API, which re-serves objects through
   # /api/images/:id so a link in a transcript never expires and the bucket
@@ -125,6 +186,9 @@ services:
 
 volumes:
   mcp-cache:
+  # Compiled kernels and autotuning results make model container recreation
+  # materially faster. This is reproducible cache data, not backup state.
+  vllm-cache:
   # Generated images. A named volume rather than a bind mount: nothing outside
   # RustFS reads these files by path, so there is no reason to pin them to a
   # host directory the way SANDBOX_ROOT has to be.

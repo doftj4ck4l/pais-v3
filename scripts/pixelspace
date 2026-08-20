@@ -4,6 +4,10 @@ set -Eeuo pipefail
 ROOT="${PIXELSPACE_ROOT_OVERRIDE:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 COMPOSE_FILE="$ROOT/docker-compose.yml"
 ENV_FILE="${PIXELSPACE_ENV_FILE:-$ROOT/.env}"
+readonly BUNDLED_MODEL_PACK="nemotron-3.5-lightning"
+readonly BUNDLED_MODEL_URL="http://model:8000/v1"
+readonly BUNDLED_MODEL_PROFILE="dgx-model"
+readonly BUNDLED_MODEL_IMAGE="vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967"
 COMMAND="${1:-help}"
 [[ $# -eq 0 ]] || shift
 
@@ -19,6 +23,8 @@ AUTH_OVERRIDE="${PIXELSPACE_AUTH_MODE:-}"
 PUBLIC_URL_OVERRIDE=""
 MODEL_URL_OVERRIDE=""
 MODEL_ID_OVERRIDE=""
+MODEL_PACK_OVERRIDE=""
+MODEL_PACK_DISABLE_PENDING=0
 DEPLOY_MODE_OVERRIDE=""
 ADMIN_EMAIL_OVERRIDE="${PIXELSPACE_ADMIN_EMAIL:-}"
 ADMIN_PASSWORD_FILE="${PIXELSPACE_ADMIN_PASSWORD_FILE:-}"
@@ -61,6 +67,8 @@ Install options:
   --public-url URL
   --model-url URL              OpenAI-compatible /v1 endpoint
   --model-id ID
+  --model-pack external|nemotron-3.5-lightning
+                               optional Compose-managed DGX model
   --deploy-mode build|images   default: build
   --env-file PATH
   --dry-run
@@ -81,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --public-url) PUBLIC_URL_OVERRIDE="${2:?missing public URL}"; shift 2 ;;
     --model-url) MODEL_URL_OVERRIDE="${2:?missing model URL}"; shift 2 ;;
     --model-id) MODEL_ID_OVERRIDE="${2:?missing model id}"; shift 2 ;;
+    --model-pack) MODEL_PACK_OVERRIDE="${2:?missing model pack}"; shift 2 ;;
     --deploy-mode) DEPLOY_MODE_OVERRIDE="${2:?missing deploy mode}"; shift 2 ;;
     --env-file) ENV_FILE="${2:?missing env file}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -301,10 +310,27 @@ host_arch() {
   esac
 }
 
-compose() {
-  PIXELSPACE_DEPLOY_ENV_FILE="$ENV_FILE" \
-    docker compose --project-directory "$ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+model_pack_enabled() {
+  [[ "$(env_value PIXELSPACE_MODEL_PACK 2>/dev/null || printf 'external')" == "$BUNDLED_MODEL_PACK" ]]
 }
+
+invoke_compose() {
+  local mode="$1"
+  shift
+  local -a profile_args=()
+  local -a command=(
+    env PIXELSPACE_DEPLOY_ENV_FILE="$ENV_FILE"
+    docker compose --project-directory "$ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE"
+  )
+  model_pack_enabled && profile_args=(--profile "$BUNDLED_MODEL_PROFILE")
+  if [[ "$mode" == "dry-run-aware" ]]; then
+    run "${command[@]}" "${profile_args[@]}" "$@"
+  else
+    "${command[@]}" "${profile_args[@]}" "$@"
+  fi
+}
+
+compose() { invoke_compose direct "$@"; }
 
 run() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -317,8 +343,7 @@ run() {
 }
 
 run_compose() {
-  run env PIXELSPACE_DEPLOY_ENV_FILE="$ENV_FILE" \
-    docker compose --project-directory "$ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  invoke_compose dry-run-aware "$@"
 }
 
 acquire_lock() {
@@ -336,8 +361,8 @@ generate_env() {
   fi
   [[ "$PROFILE" == "core" || "$PROFILE" == "dgx-spark" ]] || die "profile must be core or dgx-spark"
 
-  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins
-  local existing_bind existing_port existing_public_url existing_derived_url
+  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins model_pack
+  local existing_bind existing_port existing_public_url existing_derived_url existing_model_pack
   home="${HOME:?HOME is required}"
   data_root="${DATA_ROOT_OVERRIDE:-${XDG_DATA_HOME:-$home/.local/share}/pixelspace}"
   existing_bind="$(env_value WEB_BIND_ADDRESS 2>/dev/null || printf '127.0.0.1')"
@@ -348,6 +373,25 @@ generate_env() {
   port="${PORT_OVERRIDE:-$existing_port}"
   auth="${AUTH_OVERRIDE:-$(env_value AUTH_MODE 2>/dev/null || printf 'local')}"
   public_url="${PUBLIC_URL_OVERRIDE:-http://$(http_host_for_bind "$bind"):$port}"
+  existing_model_pack="$(env_value PIXELSPACE_MODEL_PACK 2>/dev/null || printf 'external')"
+  model_pack="${MODEL_PACK_OVERRIDE:-$existing_model_pack}"
+  if [[ -z "$MODEL_PACK_OVERRIDE" && -n "$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]]; then
+    model_pack="external"
+  fi
+  if [[ "$existing_model_pack" == "$BUNDLED_MODEL_PACK" && "$model_pack" == "external" ]]; then
+    [[ -n "$MODEL_URL_OVERRIDE" ]] ||
+      die "disabling the bundled model requires --model-url for the external gateway"
+    MODEL_PACK_DISABLE_PENDING=1
+  fi
+  case "$model_pack" in
+    external) ;;
+    "$BUNDLED_MODEL_PACK")
+      [[ "$PROFILE" == "dgx-spark" ]] || die "the $BUNDLED_MODEL_PACK model pack requires --profile dgx-spark"
+      [[ -z "$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]] ||
+        die "--model-pack $BUNDLED_MODEL_PACK cannot be combined with --model-url or --model-id"
+      ;;
+    *) die "model pack must be external or $BUNDLED_MODEL_PACK" ;;
+  esac
   uid="${PIXELSPACE_UID_OVERRIDE:-$(id -u)}"
   gid="${PIXELSPACE_GID_OVERRIDE:-$(id -g)}"
   docker_gid="${PIXELSPACE_DOCKER_GID_OVERRIDE:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || printf '999')}"
@@ -392,6 +436,10 @@ generate_env() {
   ensure_env PIXELSPACE_WEB_IMAGE "pixelspace-web:local"
   ensure_env SANDBOX_IMAGE "pixelspace-sandbox:1"
   ensure_env RUSTFS_IMAGE "rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21"
+  ensure_env PIXELSPACE_MODEL_PACK "$model_pack"
+  ensure_env PIXELSPACE_MODEL_IMAGE "$BUNDLED_MODEL_IMAGE"
+  ensure_env PIXELSPACE_MODEL_CACHE_ROOT "$home/.cache/huggingface"
+  ensure_env PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS "1800"
   ensure_env DATABASE_ALLOWED_CIDRS "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
   ensure_env SUPER_ADMIN_EMAILS ""
   ensure_env LOCAL_SESSION_TTL_HOURS "168"
@@ -410,8 +458,16 @@ generate_env() {
   elif [[ -n "$BIND_OVERRIDE$PORT_OVERRIDE" && "$existing_public_url" == "$existing_derived_url" ]]; then
     set_env PUBLIC_URL "http://$(http_host_for_bind "$bind"):$port"
   fi
-  [[ -z "$MODEL_URL_OVERRIDE" ]] || set_env CUSTOM_BASE_URL "$MODEL_URL_OVERRIDE"
-  [[ -z "$MODEL_ID_OVERRIDE" ]] || set_env CUSTOM_MODEL "$MODEL_ID_OVERRIDE"
+  [[ -z "$MODEL_URL_OVERRIDE" ]] || set_runtime_env CUSTOM_BASE_URL "$MODEL_URL_OVERRIDE"
+  [[ -z "$MODEL_ID_OVERRIDE" ]] || set_runtime_env CUSTOM_MODEL "$MODEL_ID_OVERRIDE"
+  if [[ -n "$MODEL_PACK_OVERRIDE$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]]; then
+    set_env PIXELSPACE_MODEL_PACK "$model_pack"
+  fi
+  if [[ "$model_pack" == "$BUNDLED_MODEL_PACK" ]]; then
+    set_runtime_env CUSTOM_BASE_URL "$BUNDLED_MODEL_URL"
+    set_runtime_env CUSTOM_MODEL "$BUNDLED_MODEL_PACK"
+    set_runtime_env CUSTOM_API_KEY "local-no-auth"
+  fi
   [[ -z "$DEPLOY_MODE_OVERRIDE" ]] || set_env PIXELSPACE_DEPLOY_MODE "$DEPLOY_MODE_OVERRIDE"
   [[ "$PROFILE_EXPLICIT" -eq 0 ]] || set_env PIXELSPACE_PROFILE "$PROFILE"
 
@@ -433,7 +489,7 @@ generate_env() {
 
 doctor() {
   local failures=0 warnings=0 arch bind auth deploy_mode data_root sandbox_root skills_root app_env
-  local connection_secret
+  local connection_secret effective_profile model_pack model_image model_cache model_timeout
   local docker_installed=0 docker_reachable=0
   say "Pixelspace host doctor"
   arch="$(host_arch)"
@@ -457,6 +513,8 @@ doctor() {
   fi
   [[ -S /var/run/docker.sock || "${PIXELSPACE_TEST_MODE:-0}" == "1" ]] || { warn "/var/run/docker.sock is missing"; failures=$((failures + 1)); }
   [[ -f "$ENV_FILE" ]] || { warn "configuration is missing: $ENV_FILE"; failures=$((failures + 1)); }
+  effective_profile="$(env_value PIXELSPACE_PROFILE 2>/dev/null || printf '%s' "$PROFILE")"
+  [[ "$PROFILE_EXPLICIT" -eq 0 ]] || effective_profile="$PROFILE"
 
   if [[ -f "$ENV_FILE" ]]; then
     bind="${BIND_OVERRIDE:-$(env_value WEB_BIND_ADDRESS || printf '0.0.0.0')}"
@@ -466,6 +524,7 @@ doctor() {
     sandbox_root="$(env_value SANDBOX_ROOT || true)"
     skills_root="$(env_value SKILLS_ROOT || true)"
     app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
+    model_pack="$(env_value PIXELSPACE_MODEL_PACK || printf 'external')"
     [[ "$auth" == "proxy" || "$auth" == "local" || "$auth" == "dev" ]] || { warn "AUTH_MODE must be proxy, local, or dev"; failures=$((failures + 1)); }
     connection_secret="$(runtime_env_value CONNECTION_SECRET 2>/dev/null || true)"
     [[ -n "$connection_secret" ]] || { warn "CONNECTION_SECRET must not be empty"; failures=$((failures + 1)); }
@@ -496,10 +555,32 @@ doctor() {
     for path in "$data_root" "$sandbox_root" "$skills_root" "$app_env"; do
       [[ -z "$path" || "$path" == /* ]] || { warn "deployment paths must be absolute: $path"; failures=$((failures + 1)); }
     done
-    if is_loopback_url "$(runtime_env_value CUSTOM_BASE_URL || true)"; then
-      warn "a container cannot reach a host model bound to loopback; use host.docker.internal and make the gateway listen on a Docker-reachable interface"
-      failures=$((failures + 1))
-    fi
+    case "$model_pack" in
+      external)
+        if is_loopback_url "$(runtime_env_value CUSTOM_BASE_URL || true)"; then
+          warn "a container cannot reach a host model bound to loopback; use host.docker.internal and make the gateway listen on a Docker-reachable interface"
+          failures=$((failures + 1))
+        fi
+        ;;
+      "$BUNDLED_MODEL_PACK")
+        [[ "$effective_profile" == "dgx-spark" ]] || { warn "the $BUNDLED_MODEL_PACK model pack requires the dgx-spark profile"; failures=$((failures + 1)); }
+        [[ "$(runtime_env_value CUSTOM_BASE_URL || true)" == "$BUNDLED_MODEL_URL" ]] || { warn "the bundled model URL must be $BUNDLED_MODEL_URL"; failures=$((failures + 1)); }
+        [[ "$(runtime_env_value CUSTOM_MODEL || true)" == "$BUNDLED_MODEL_PACK" ]] || { warn "the bundled model ID must be $BUNDLED_MODEL_PACK"; failures=$((failures + 1)); }
+        model_image="$(env_value PIXELSPACE_MODEL_IMAGE || true)"
+        is_digest_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest"; failures=$((failures + 1)); }
+        model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT || true)"
+        [[ "$model_cache" == /* ]] || { warn "PIXELSPACE_MODEL_CACHE_ROOT must be an absolute path"; failures=$((failures + 1)); }
+        model_timeout="$(env_value PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS || true)"
+        if [[ ! "$model_timeout" =~ ^[0-9]+$ ]] || (( model_timeout < 60 || model_timeout > 7200 )); then
+          warn "PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS must be between 60 and 7200"
+          failures=$((failures + 1))
+        fi
+        ;;
+      *)
+        warn "PIXELSPACE_MODEL_PACK must be external or $BUNDLED_MODEL_PACK"
+        failures=$((failures + 1))
+        ;;
+    esac
     local mode
     mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || printf 'unknown')"
     if [[ "$mode" != "600" && "$mode" != "400" ]]; then
@@ -511,9 +592,6 @@ doctor() {
     fi
   fi
 
-  local effective_profile
-  effective_profile="$(env_value PIXELSPACE_PROFILE 2>/dev/null || printf '%s' "$PROFILE")"
-  [[ "$PROFILE_EXPLICIT" -eq 0 ]] || effective_profile="$PROFILE"
   if [[ "$effective_profile" == "dgx-spark" ]]; then
     [[ "$arch" == "arm64" ]] || { warn "dgx-spark profile requires arm64"; failures=$((failures + 1)); }
     command -v nvidia-ctk >/dev/null 2>&1 || { warn "NVIDIA Container Toolkit was not found"; failures=$((failures + 1)); }
@@ -527,17 +605,34 @@ doctor() {
 }
 
 prepare_paths() {
-  local data_root sandbox_root app_env backup_root
+  local data_root sandbox_root app_env backup_root model_cache
   data_root="$(env_value PIXELSPACE_DATA_ROOT)"
   sandbox_root="$(env_value SANDBOX_ROOT)"
   app_env="$(env_value PIXELSPACE_APP_ENV_FILE)"
   backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
   run mkdir -p "$data_root" "$sandbox_root" "$(dirname -- "$app_env")" "$backup_root"
+  if model_pack_enabled; then
+    model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT)"
+    run mkdir -p "$model_cache"
+  fi
   if [[ "$DRY_RUN" -eq 0 && ! -f "$app_env" ]]; then
     umask 077
     : > "$app_env"
     chmod 600 "$app_env"
   fi
+}
+
+prepare_model_pack() {
+  model_pack_enabled || return 0
+  local image
+  image="$(env_value PIXELSPACE_MODEL_IMAGE)"
+  docker image inspect "$image" >/dev/null 2>&1 && return
+  run docker pull "$image"
+}
+
+remove_disabled_model_pack() {
+  [[ "$MODEL_PACK_DISABLE_PENDING" -eq 1 ]] || return 0
+  run_compose --profile "$BUNDLED_MODEL_PROFILE" rm -s -f model
 }
 
 refresh_stack() {
@@ -626,12 +721,45 @@ wait_for_health() {
   die "Pixelspace did not become healthy on port $port"
 }
 
+wait_for_model() {
+  model_pack_enabled || return 0
+  [[ "$DRY_RUN" -eq 0 ]] || { note "bundled model health check skipped during dry-run"; return; }
+  [[ "${PIXELSPACE_SKIP_HEALTHCHECK:-0}" == "1" ]] && return
+  local timeout attempts attempt container_id state health status
+  timeout="$(env_value PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS)"
+  attempts=$((timeout / 5))
+  say "Waiting for the bundled Nemotron model (first start may load cached weights for several minutes)..."
+  container_id="$(compose ps -q model)"
+  if [[ -z "$container_id" ]]; then
+    compose logs --tail 80 model || true
+    die "bundled model container is not running"
+  fi
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    read -r state health <<< "$status"
+    if [[ "$state" == "running" && "$health" == "healthy" ]]; then
+      say "Bundled model is healthy."
+      return
+    fi
+    if [[ "$state" == "exited" || "$state" == "dead" ]]; then
+      compose logs --tail 80 model || true
+      die "bundled model container $state before becoming healthy"
+    fi
+    sleep 5
+  done
+  compose logs --tail 80 model || true
+  die "bundled model did not become healthy within ${timeout}s"
+}
+
 install_stack() {
   acquire_lock
   generate_env
   doctor
+  remove_disabled_model_pack
   prepare_paths
+  prepare_model_pack
   refresh_stack
+  wait_for_model
   wait_for_health
   bootstrap_local_admin
   local bind port
@@ -813,7 +941,8 @@ merge_restored_config() {
   local restored="$1" destination="${2:-$ENV_FILE}" key value
   for key in CONNECTION_SECRET S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY OPENAI_API_KEY \
     DEEPSEEK_API_KEY CUSTOM_BASE_URL CUSTOM_MODEL CUSTOM_API_KEY OPENROUTER_API_KEY \
-    SUPER_ADMIN_EMAILS ORGANIZATION_INVITE_TTL_HOURS; do
+    HF_TOKEN PIXELSPACE_MODEL_PACK \
+    PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS SUPER_ADMIN_EMAILS ORGANIZATION_INVITE_TTL_HOURS; do
     value="$(env_value_from "$restored" "$key" || true)"
     [[ -z "$value" ]] || set_env_in "$destination" "$key" "$value"
   done
@@ -848,6 +977,7 @@ rollback_restore() {
     cp "$RESTORE_ROLLBACK_STAGE/application.env" "$RESTORE_APP_ENV" && chmod 600 "$RESTORE_APP_ENV" || failed=1
   fi
   refresh_stack || failed=1
+  (wait_for_model) || failed=1
   if [[ "$failed" -eq 0 ]]; then
     warn "restore rollback completed; the requested archive was not applied"
   else
@@ -963,7 +1093,10 @@ restore_stack() {
       merge_restored_config "$RESTORE_STAGE/application.env" "$app_env"
     fi
   fi
+  doctor
+  prepare_model_pack
   refresh_stack
+  wait_for_model
   wait_for_health
   RESTORE_CUTOVER=0
   say "Restore complete. Host paths and exposure settings were preserved; stored-data secrets were restored."
@@ -972,8 +1105,10 @@ restore_stack() {
 upgrade_stack() {
   doctor
   prepare_backup_helper
+  prepare_model_pack
   backup_stack
   refresh_stack
+  wait_for_model
   wait_for_health
   say "Upgrade complete."
 }

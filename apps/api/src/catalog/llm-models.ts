@@ -168,6 +168,16 @@ export function getModel(id: string): ModelConfig | undefined {
 /** True if the requested provider can actually be reached (key present). */
 export function isLikelyConfigured(model: ModelConfig): boolean {
   if (model.provider === "mock") return true;
+  const configuredGatewayModel = process.env.CUSTOM_MODEL?.trim();
+  if (
+    model.provider === "custom" &&
+    model.apiKeyEnv === "CUSTOM_API_KEY" &&
+    !model.apiKey &&
+    configuredGatewayModel &&
+    model.model !== configuredGatewayModel
+  ) {
+    return false;
+  }
   const key = effectiveApiKey(model);
   if (!model.apiKeyEnv && !key) return false;
   const ready = !!key && key.length > 0;

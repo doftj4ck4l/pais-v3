@@ -69,6 +69,13 @@ case "$command" in
   image)
     [[ "\${1:-}" != "inspect" || "\${PIXELSPACE_TEST_MISSING_IMAGES:-0}" != "1" || -f "\${PIXELSPACE_TEST_IMAGE_STATE:-/nonexistent}" ]]
     ;;
+  inspect)
+    if [[ -n "\${PIXELSPACE_TEST_MODEL_STATE:-}" ]]; then
+      printf '%s\n' "$PIXELSPACE_TEST_MODEL_STATE"
+    elif [[ "\${PIXELSPACE_TEST_MODEL_HEALTHY:-0}" == "1" ]]; then
+      printf 'running healthy\n'
+    fi
+    ;;
   volume)
     operation="\${1:-}"
     [[ $# -eq 0 ]] || shift
@@ -314,6 +321,238 @@ describe("Pixelspace on-prem operator", () => {
     const result = run(["doctor", "--profile", "dgx-spark"], env);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("architecture: arm64");
+  });
+
+  test("configures the bundled Nemotron model pack on DGX Spark", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+
+    const result = run(
+      ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const body = readFileSync(fx.envFile, "utf8");
+    expect(body).toContain('PIXELSPACE_MODEL_PACK="nemotron-3.5-lightning"');
+    expect(body).toContain('CUSTOM_BASE_URL="http://model:8000/v1"');
+    expect(body).toContain('CUSTOM_MODEL="nemotron-3.5-lightning"');
+    expect(body).toContain('CUSTOM_API_KEY="local-no-auth"');
+    expect(body).toContain(`PIXELSPACE_MODEL_CACHE_ROOT="${fx.home}/.cache/huggingface"`);
+    expect(body).toContain("PIXELSPACE_MODEL_IMAGE=\"vllm/vllm-openai@sha256:");
+    expect(readFileSync(fx.dockerLog, "utf8")).toContain("--profile dgx-model");
+  });
+
+  test("waits on Docker's model health status without repeated container probes", () => {
+    const fx = fixture();
+    const env = {
+      ...fx.env,
+      PIXELSPACE_ARCH_OVERRIDE: "aarch64",
+      PIXELSPACE_SKIP_HEALTHCHECK: "0",
+      PIXELSPACE_TEST_MODEL_HEALTHY: "1",
+      PIXELSPACE_TEST_RUNNING_SERVICES: "1",
+    };
+
+    const result = run(
+      ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning"],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("inspect --format");
+    expect(log).not.toContain("exec -T model python3");
+  });
+
+  test("fails immediately when the bundled model container exits", () => {
+    const fx = fixture();
+    const env = {
+      ...fx.env,
+      PIXELSPACE_ARCH_OVERRIDE: "aarch64",
+      PIXELSPACE_SKIP_HEALTHCHECK: "0",
+      PIXELSPACE_TEST_MODEL_STATE: "exited unhealthy",
+      PIXELSPACE_TEST_RUNNING_SERVICES: "1",
+    };
+
+    const result = run(
+      ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning"],
+      env,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("bundled model container exited");
+    expect(readFileSync(fx.dockerLog, "utf8")).toContain("logs --tail 80 model");
+  });
+
+  test("reports a missing bundled model container before application setup", () => {
+    const fx = fixture();
+    const env = {
+      ...fx.env,
+      PIXELSPACE_ARCH_OVERRIDE: "aarch64",
+      PIXELSPACE_SKIP_HEALTHCHECK: "0",
+    };
+
+    const result = run(
+      ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning"],
+      env,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("bundled model container is not running");
+    expect(readFileSync(fx.dockerLog, "utf8")).toContain("logs --tail 80 model");
+  });
+
+  test("keeps a bundled model pack explicit and DGX-only", () => {
+    const core = fixture();
+    const wrongProfile = run(
+      ["install", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+      core.env,
+    );
+    expect(wrongProfile.exitCode).toBe(1);
+    expect(wrongProfile.stderr.toString()).toContain("requires --profile dgx-spark");
+
+    const conflicting = fixture();
+    const conflict = run(
+      [
+        "install",
+        "--profile",
+        "dgx-spark",
+        "--model-pack",
+        "nemotron-3.5-lightning",
+        "--model-url",
+        "http://model.example/v1",
+        "--dry-run",
+      ],
+      { ...conflicting.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" },
+    );
+    expect(conflict.exitCode).toBe(1);
+    expect(conflict.stderr.toString()).toContain("cannot be combined with --model-url or --model-id");
+  });
+
+  test("preserves and validates an existing bundled model pack", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    expect(readFileSync(fx.envFile, "utf8")).toContain(
+      'PIXELSPACE_MODEL_PACK="nemotron-3.5-lightning"',
+    );
+
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_IMAGE", "vllm/vllm-openai:latest");
+    const invalid = run(["doctor"], env);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr.toString()).toContain(
+      "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest",
+    );
+
+    setEnvValue(
+      fx.envFile,
+      "PIXELSPACE_MODEL_IMAGE",
+      `vllm/vllm-openai@sha256:${"a".repeat(64)}`,
+    );
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_CACHE_ROOT", "relative/cache");
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS", "30");
+    const invalidRuntime = run(["doctor"], env);
+    expect(invalidRuntime.exitCode).toBe(1);
+    expect(invalidRuntime.stderr.toString()).toContain(
+      "PIXELSPACE_MODEL_CACHE_ROOT must be an absolute path",
+    );
+    expect(invalidRuntime.stderr.toString()).toContain(
+      "PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS must be between 60 and 7200",
+    );
+  });
+
+  test("removes the managed model container when switching to an external gateway", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+    writeFileSync(fx.dockerLog, "");
+
+    const result = run(
+      [
+        "install",
+        "--model-pack",
+        "external",
+        "--model-url",
+        "https://gateway.example/v1",
+        "--model-id",
+        "external-model",
+        "--dry-run",
+      ],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("--profile dgx-model rm -s -f model");
+  });
+
+  test("requires a reachable gateway when disabling the bundled model", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+
+    const result = run(["install", "--model-pack", "external", "--dry-run"], env);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain(
+      "disabling the bundled model requires --model-url",
+    );
+  });
+
+  test("updates external model settings in the effective application env", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+    const appEnv = readFileSync(fx.envFile, "utf8").match(
+      /^PIXELSPACE_APP_ENV_FILE="([^"]+)"$/m,
+    )?.[1];
+    expect(appEnv).toBeDefined();
+    mkdirSync(path.dirname(appEnv!), { recursive: true });
+    writeFileSync(
+      appEnv!,
+      'CUSTOM_BASE_URL="http://model:8000/v1"\nCUSTOM_MODEL="nemotron-3.5-lightning"\n',
+      { mode: 0o600 },
+    );
+
+    const result = run(
+      [
+        "install",
+        "--model-pack",
+        "external",
+        "--model-url",
+        "https://gateway.example/v1",
+        "--model-id",
+        "external-model",
+        "--dry-run",
+      ],
+      env,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const effective = readFileSync(appEnv!, "utf8");
+    expect(effective).toContain('CUSTOM_BASE_URL="https://gateway.example/v1"');
+    expect(effective).toContain('CUSTOM_MODEL="external-model"');
   });
 
   test("preserves an existing DGX profile when reinstalling without a profile flag", () => {
@@ -598,6 +837,39 @@ describe("Pixelspace on-prem operator", () => {
     expect(readFileSync(fx.dockerLog, "utf8")).not.toContain(" down ");
   });
 
+  test("restore preserves the host-approved bundled model image", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const archivedImage = `registry.example/attacker@sha256:${"a".repeat(64)}`;
+    const approvedImage = `registry.example/vllm@sha256:${"b".repeat(64)}`;
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_IMAGE", archivedImage);
+    const archive = path.join(fx.home, "model-image.tar.gz");
+    expect(run(["backup", archive], fx.env).exitCode).toBe(0);
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_IMAGE", approvedImage);
+
+    expect(run(["restore", archive, "--yes"], fx.env).exitCode).toBe(0);
+
+    expect(readFileSync(fx.envFile, "utf8")).toContain(`PIXELSPACE_MODEL_IMAGE="${approvedImage}"`);
+    expect(readFileSync(fx.envFile, "utf8")).not.toContain(archivedImage);
+  });
+
+  test("restore validates archived model-pack settings before startup", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_PACK", "unknown-pack");
+    const archive = path.join(fx.home, "invalid-model-pack.tar.gz");
+    expect(run(["backup", archive], fx.env).exitCode).toBe(0);
+    setEnvValue(fx.envFile, "PIXELSPACE_MODEL_PACK", "external");
+
+    const result = run(["restore", archive, "--yes"], fx.env);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain(
+      "PIXELSPACE_MODEL_PACK must be external or nemotron-3.5-lightning",
+    );
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_MODEL_PACK="external"');
+  });
+
   test("restoring an intentionally absent volume clears destination state", () => {
     const fx = fixture();
     expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
@@ -614,7 +886,19 @@ describe("Pixelspace on-prem operator", () => {
 
   test("rolls current state back when restore cutover fails", () => {
     const fx = fixture();
-    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const env = {
+      ...fx.env,
+      PIXELSPACE_ARCH_OVERRIDE: "aarch64",
+      PIXELSPACE_SKIP_HEALTHCHECK: "0",
+      PIXELSPACE_TEST_MODEL_HEALTHY: "1",
+      PIXELSPACE_TEST_RUNNING_SERVICES: "1",
+    };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
     const dataRoot = path.join(fx.home, ".local", "share", "pixelspace", "data");
     const workspaceRoot = path.join(fx.home, ".local", "share", "pixelspace", "workspaces");
     const rustfsVolume = path.join(fx.volumeRoot, "salurai_rustfs-data");
@@ -630,12 +914,13 @@ describe("Pixelspace on-prem operator", () => {
 
     const result = run(
       ["restore", archive, "--yes"],
-      { ...fx.env, PIXELSPACE_TEST_RESTORE_FAIL_ONCE: path.join(fx.home, "restore-failed") },
+      { ...env, PIXELSPACE_TEST_RESTORE_FAIL_ONCE: path.join(fx.home, "restore-failed") },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("restore rollback completed");
     expect(readFileSync(path.join(dataRoot, "app.db"), "utf8")).toBe("current-state");
     expect(readFileSync(path.join(rustfsVolume, "object.bin"), "utf8")).toBe("current-object");
+    expect(readFileSync(fx.dockerLog, "utf8")).toContain("inspect --format");
   });
 
   test("restore can preserve all destination configuration", () => {
@@ -719,6 +1004,31 @@ describe("Pixelspace on-prem operator", () => {
     expect(log.indexOf("pull registry/sandbox")).toBeLessThan(log.indexOf(" stop "));
   });
 
+  test("upgrade prepares and verifies the bundled model lifecycle", () => {
+    const fx = fixture();
+    const env = {
+      ...fx.env,
+      PIXELSPACE_ARCH_OVERRIDE: "aarch64",
+      PIXELSPACE_SKIP_HEALTHCHECK: "0",
+      PIXELSPACE_TEST_MODEL_HEALTHY: "1",
+      PIXELSPACE_TEST_RUNNING_SERVICES: "1",
+    };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+    writeFileSync(fx.dockerLog, "");
+
+    expect(run(["upgrade"], env).exitCode).toBe(0);
+
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("--profile dgx-model");
+    expect(log).toContain("image inspect vllm/vllm-openai@sha256:");
+    expect(log).toContain("inspect --format");
+  });
+
   test("backup quiesces and restarts workspace sandboxes", () => {
     const fx = fixture();
     expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
@@ -787,6 +1097,58 @@ describe("Pixelspace on-prem operator", () => {
     );
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("the bundled model renders on a private Compose network", () => {
+    const fx = fixture();
+    const env = { ...fx.env, PIXELSPACE_ARCH_OVERRIDE: "aarch64" };
+    expect(
+      run(
+        ["install", "--profile", "dgx-spark", "--model-pack", "nemotron-3.5-lightning", "--dry-run"],
+        env,
+      ).exitCode,
+    ).toBe(0);
+    const result = Bun.spawnSync(
+      [
+        "docker",
+        "compose",
+        "--project-directory",
+        root,
+        "--env-file",
+        fx.envFile,
+        "-f",
+        path.join(root, "docker-compose.yml"),
+        "--profile",
+        "dgx-model",
+        "config",
+        "--format",
+        "json",
+      ],
+      {
+        cwd: root,
+        env: { ...process.env, PIXELSPACE_DEPLOY_ENV_FILE: fx.envFile },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+    const config = JSON.parse(result.stdout.toString()) as {
+      services: Record<string, {
+        ports?: unknown[];
+        command?: string[];
+        volumes?: Array<{ source: string; target: string }>;
+      }>;
+    };
+    expect(config.services.model).toBeDefined();
+    expect(config.services.model.ports).toBeUndefined();
+    expect(config.services.model.command).toContain("nemotron-3.5-lightning");
+    expect(config.services.model.volumes).toContainEqual({
+      type: "volume",
+      source: "vllm-cache",
+      target: "/root/.cache/vllm",
+      volume: {},
+    });
   });
 
   test("Docker build context excludes generated application env files", () => {

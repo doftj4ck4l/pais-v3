@@ -37,6 +37,16 @@ lifecycle, backup, restore, and upgrade instructions.
 For a task-oriented walkthrough from cloning the repository through first login
 and daily operation, use the [Pixelspace setup manual](SETUP_MANUAL.md).
 
+On a DGX Spark, Pixelspace can manage the supported Nemotron runtime on its
+private Compose network:
+
+```bash
+./install.sh \
+  --profile dgx-spark \
+  --model-pack nemotron-3.5-lightning \
+  --admin-email operator@example.com
+```
+
 `setup` is idempotent — re-run it any time. It installs dependencies, creates
 `apps/api/.env` from the example if missing, and builds the sandbox image. It
 finishes by listing anything it could not do rather than failing silently, so a
