@@ -227,10 +227,9 @@ export const env = {
    * run without RustFS up degrades to a clear error rather than a wrong path.
    */
   s3Endpoint: (process.env.S3_ENDPOINT ?? "http://rustfs:9000").replace(/\/+$/, ""),
-  // Named before the rebrand and left that way: this is where the images
-  // already are. A new default would point a deployment at an empty bucket and
-  // every `/api/images/<id>` in an old transcript would 404.
-  s3Bucket: process.env.S3_BUCKET ?? "salur-media",
+  // Existing deployments keep their explicit legacy bucket value. New
+  // Pixelspace installs use the product name consistently.
+  s3Bucket: process.env.S3_BUCKET ?? "pixelspace-media",
   s3AccessKey: process.env.S3_ACCESS_KEY ?? "rustfsadmin",
   s3SecretKey: process.env.S3_SECRET_KEY ?? "",
   s3Region: process.env.S3_REGION ?? "us-east-1",

@@ -563,29 +563,29 @@ the suite that gates the deploy. The binary comes from npm's platform package
 rather than `bun.sh/install`, because that script pulls ~35MB from github.com and
 a deploy has already died on `curl: (56)` doing it.
 
-## The old name
+## Legacy name compatibility
 
-The product was called Salur. Three things still say so, and each of them is a
-migration rather than an edit:
+Fresh deployments use Pixelspace for the Compose project, volumes, container
+names, and media bucket. The installer migrates legacy Compose volumes before
+starting the renamed stack, keeps the source volumes until the new stack passes
+health checks, then removes the old resources.
+
+Two internal compatibility values can still contain the former name:
 
 - **`SALT` in `lib/crypto.ts`** derives the key every stored secret was
   encrypted with. A new salt derives a different key, and every MCP header,
   database URL and connector token in `app.db` becomes undecryptable.
-- **`S3_BUCKET` defaults to `salur-media`** because that is where the images
-  already are. Point it somewhere new and every `/api/images/<id>` in an old
-  transcript 404s.
-- **The compose project is `name: salurai`**, which is what the running
-  containers and the `rustfs` named volume are keyed by. Renaming it starts a
-  second, empty stack beside the first.
+- Existing `.env` files can keep **`S3_BUCKET=salur-media`** so stored images
+  remain readable. New installs default to `pixelspace-media`; changing an
+  existing bucket value without copying its objects breaks old image links.
 
 `.forgejo/workflows/deploy.yml` also still deploys to `salur@/opt/salur`: that
 is a user and a directory on the deploy host, not a string in this repo.
 
 Everything else — package names, the sandbox container prefix, the sandbox
-image tag, `SANDBOX_ROOT`, the spill directory — is Pixelspace. A machine that
-ran the old build keeps its old workspace directory and image tag, so a dev box
-wants `mv ~/salurai-workspaces ~/pixelspace-workspaces` and a
-`docker tag salurai-sandbox:1 pixelspace-sandbox:1` once.
+image tag, `SANDBOX_ROOT`, and the spill directory — is Pixelspace. The on-prem
+installer also removes the unused legacy sandbox image tag after a successful
+resource migration.
 
 ## Conventions
 

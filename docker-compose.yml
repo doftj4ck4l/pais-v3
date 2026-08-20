@@ -13,11 +13,7 @@
 # Socket access is root-equivalent on the host. This is a deliberate trade for
 # real per-workspace isolation; see README under "Deploying".
 
-# Left at the old name deliberately: the compose project name is what the
-# running containers and the `rustfs` named volume are keyed by. Renaming it
-# starts a second, empty stack and orphans the volume every generated image
-# lives in. Renaming it is a migration, not an edit.
-name: salurai
+name: pixelspace
 
 services:
   api:
@@ -56,7 +52,7 @@ services:
       # host, by design. `bun dev` needs S3_ENDPOINT=http://localhost:9000 in
       # apps/api/.env to reach the published port instead.
       S3_ENDPOINT: "http://rustfs:9000"
-      S3_BUCKET: "${S3_BUCKET:-salur-media}"
+      S3_BUCKET: "${S3_BUCKET:-pixelspace-media}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-rustfsadmin}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}"
     extra_hosts:

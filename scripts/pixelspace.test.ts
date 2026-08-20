@@ -85,6 +85,11 @@ case "$command" in
         [[ -d "$PIXELSPACE_TEST_VOLUME_ROOT/\${1:?}" ]]
         ;;
       create) mkdir -p "$PIXELSPACE_TEST_VOLUME_ROOT/\${1:?}"; printf '%s\\n' "$1" ;;
+      rm)
+        for volume in "$@"; do
+          find "$PIXELSPACE_TEST_VOLUME_ROOT/$volume" -depth -delete 2>/dev/null || true
+        done
+        ;;
       ls)
         [[ "\${PIXELSPACE_TEST_VOLUME_LIST_FAIL:-0}" != "1" ]]
         for entry in "$PIXELSPACE_TEST_VOLUME_ROOT"/*; do
@@ -133,6 +138,12 @@ case "$command" in
       else
         python3 -c "$3" "$backup_path/$input"
       fi
+    elif [[ -n "$source_path" && -n "$target_path" ]]; then
+      if [[ "$(basename "$target_path")" == "\${PIXELSPACE_TEST_COPY_FAIL_VOLUME:-}" ]]; then
+        exit 1
+      fi
+      mkdir -p "$target_path"
+      cp -a "$source_path"/. "$target_path"/
     elif [[ -n "$source_path" ]]; then
       output=""
       for argument in "$@"; do
@@ -146,8 +157,8 @@ case "$command" in
         exit 1
       fi
       case "$(basename "$target_path")" in
-        salurai_rustfs-data) input=rustfs-data.tar ;;
-        salurai_mcp-cache) input=mcp-cache.tar ;;
+        pixelspace_rustfs-data) input=rustfs-data.tar ;;
+        pixelspace_mcp-cache) input=mcp-cache.tar ;;
         *) exit 1 ;;
       esac
       find "$target_path" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
@@ -225,11 +236,120 @@ describe("Pixelspace on-prem operator", () => {
     const body = readFileSync(fx.envFile, "utf8");
     expect(body).toContain('WEB_BIND_ADDRESS="127.0.0.1"');
     expect(body).toContain('AUTH_MODE="dev"');
+    expect(body).toContain('S3_BUCKET="pixelspace-media"');
     expect(body).toContain(`PIXELSPACE_DATA_ROOT="${fx.home}/.local/share/pixelspace/data"`);
     expect(body).toContain('HOST_UID="1234"');
     expect(body).toContain('DOCKER_GID="1236"');
     expect(body).not.toContain("CONNECTION_SECRET=\"\"");
     expect(result.stdout.toString()).toContain("docker compose");
+    expect(result.stdout.toString()).toContain("-p pixelspace");
+  });
+
+  test("migrates legacy Compose volumes before starting the Pixelspace stack", () => {
+    const fx = fixture();
+    const legacyRustfs = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const legacyMcp = path.join(fx.volumeRoot, "salurai_mcp-cache");
+    const legacyVllm = path.join(fx.volumeRoot, "salurai_vllm-cache");
+    mkdirSync(legacyRustfs);
+    mkdirSync(legacyMcp);
+    mkdirSync(legacyVllm);
+    writeFileSync(path.join(legacyRustfs, "object.bin"), "kept object");
+    writeFileSync(path.join(legacyMcp, "package.bin"), "kept package");
+    writeFileSync(path.join(legacyVllm, "kernel.bin"), "kept kernel");
+
+    const dryRun = run(["install", "--dry-run"], fx.env);
+    expect(dryRun.exitCode).toBe(0);
+    expect(readFileSync(fx.envFile, "utf8")).not.toContain("PIXELSPACE_RESOURCE_MIGRATION");
+    expect(readFileSync(fx.envFile, "utf8")).toContain('S3_BUCKET="salur-media"');
+    expect(() => statSync(path.join(fx.volumeRoot, "pixelspace_rustfs-data"))).toThrow();
+    expect(readFileSync(path.join(legacyRustfs, "object.bin"), "utf8")).toBe("kept object");
+
+    const result = run(["install"], fx.env);
+
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(path.join(fx.volumeRoot, "pixelspace_rustfs-data", "object.bin"), "utf8"))
+      .toBe("kept object");
+    expect(readFileSync(path.join(fx.volumeRoot, "pixelspace_mcp-cache", "package.bin"), "utf8"))
+      .toBe("kept package");
+    expect(readFileSync(path.join(fx.volumeRoot, "pixelspace_vllm-cache", "kernel.bin"), "utf8"))
+      .toBe("kept kernel");
+    expect(() => statSync(legacyRustfs)).toThrow();
+    expect(() => statSync(legacyMcp)).toThrow();
+    expect(() => statSync(legacyVllm)).toThrow();
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_RESOURCE_MIGRATION="complete"');
+    const log = readFileSync(fx.dockerLog, "utf8");
+    expect(log).toContain("-p salurai");
+    expect(log).toContain("-p pixelspace");
+  });
+
+  test("refuses an untracked legacy and Pixelspace volume collision", () => {
+    const fx = fixture();
+    const legacy = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const current = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
+    mkdirSync(legacy);
+    mkdirSync(current);
+    writeFileSync(path.join(legacy, "object.bin"), "legacy");
+    writeFileSync(path.join(current, "object.bin"), "current");
+
+    const result = run(["install"], fx.env);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("refusing to overwrite either");
+    expect(readFileSync(path.join(legacy, "object.bin"), "utf8")).toBe("legacy");
+    expect(readFileSync(path.join(current, "object.bin"), "utf8")).toBe("current");
+  });
+
+  test("resumes after a later legacy volume copy fails", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const legacyRustfs = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const legacyMcp = path.join(fx.volumeRoot, "salurai_mcp-cache");
+    mkdirSync(legacyRustfs);
+    mkdirSync(legacyMcp);
+    writeFileSync(path.join(legacyRustfs, "object.bin"), "kept object");
+    writeFileSync(path.join(legacyMcp, "package.bin"), "kept package");
+
+    const interrupted = run(["install"], {
+      ...fx.env,
+      PIXELSPACE_TEST_COPY_FAIL_VOLUME: "pixelspace_mcp-cache",
+    });
+
+    expect(interrupted.exitCode).toBe(1);
+    expect(readFileSync(fx.envFile, "utf8")).toContain(
+      'PIXELSPACE_RESOURCE_MIGRATION="copying:rustfs"',
+    );
+    const currentRustfs = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
+    expect(readFileSync(path.join(currentRustfs, "object.bin"), "utf8")).toBe("kept object");
+    expect(() => statSync(path.join(fx.volumeRoot, "pixelspace_mcp-cache"))).toThrow();
+    writeFileSync(path.join(currentRustfs, "object.bin"), "completed copy stays intact");
+
+    const resumed = run(["install"], fx.env);
+
+    expect(resumed.exitCode).toBe(0);
+    expect(readFileSync(path.join(currentRustfs, "object.bin"), "utf8"))
+      .toBe("completed copy stays intact");
+    expect(readFileSync(path.join(fx.volumeRoot, "pixelspace_mcp-cache", "package.bin"), "utf8"))
+      .toBe("kept package");
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_RESOURCE_MIGRATION="complete"');
+  });
+
+  test("resumes a copied migration without replacing Pixelspace data", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const legacy = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const current = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
+    mkdirSync(legacy);
+    mkdirSync(current);
+    writeFileSync(path.join(legacy, "object.bin"), "source snapshot");
+    writeFileSync(path.join(current, "object.bin"), "newer Pixelspace data");
+    setEnvValue(fx.envFile, "PIXELSPACE_RESOURCE_MIGRATION", "pending");
+
+    const result = run(["install"], fx.env);
+
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(path.join(current, "object.bin"), "utf8")).toBe("newer Pixelspace data");
+    expect(() => statSync(legacy)).toThrow();
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_RESOURCE_MIGRATION="complete"');
   });
 
   test("defaults on-prem installs to a bootstrapped local administrator", () => {
@@ -772,8 +892,8 @@ describe("Pixelspace on-prem operator", () => {
     const workspaceRoot = path.join(fx.home, ".local", "share", "pixelspace", "workspaces");
     mkdirSync(dataRoot, { recursive: true });
     mkdirSync(workspaceRoot, { recursive: true });
-    const rustfsVolume = path.join(fx.volumeRoot, "salurai_rustfs-data");
-    const mcpVolume = path.join(fx.volumeRoot, "salurai_mcp-cache");
+    const rustfsVolume = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
+    const mcpVolume = path.join(fx.volumeRoot, "pixelspace_mcp-cache");
     mkdirSync(rustfsVolume);
     mkdirSync(mcpVolume);
     writeFileSync(path.join(dataRoot, "app.db"), "database-before");
@@ -876,7 +996,7 @@ describe("Pixelspace on-prem operator", () => {
     const archive = path.join(fx.home, "without-volumes.tar.gz");
     expect(run(["backup", archive], fx.env).exitCode).toBe(0);
 
-    const destination = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const destination = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
     mkdirSync(destination);
     writeFileSync(path.join(destination, "stale-object"), "stale");
 
@@ -901,7 +1021,7 @@ describe("Pixelspace on-prem operator", () => {
     ).toBe(0);
     const dataRoot = path.join(fx.home, ".local", "share", "pixelspace", "data");
     const workspaceRoot = path.join(fx.home, ".local", "share", "pixelspace", "workspaces");
-    const rustfsVolume = path.join(fx.volumeRoot, "salurai_rustfs-data");
+    const rustfsVolume = path.join(fx.volumeRoot, "pixelspace_rustfs-data");
     mkdirSync(dataRoot, { recursive: true });
     mkdirSync(workspaceRoot, { recursive: true });
     mkdirSync(rustfsVolume);

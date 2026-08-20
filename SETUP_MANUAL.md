@@ -453,6 +453,13 @@ scripts/pixelspace upgrade
 The upgrade command runs host checks, creates a backup, rebuilds or pulls the
 configured images, recreates the services, and verifies the result.
 
+If the host still has containers or named volumes from the former Compose
+project name, `install` or `upgrade` migrates their data automatically. It
+stops the old stack, copies each named volume to its `pixelspace_*` replacement,
+starts and verifies Pixelspace, and removes the old resources only after the
+health check passes. The existing `S3_BUCKET` value is preserved so previously
+generated images remain available.
+
 ## 13. Uninstall
 
 Stop and remove the application containers while keeping all data:
