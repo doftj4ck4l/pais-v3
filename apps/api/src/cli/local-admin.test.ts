@@ -63,6 +63,30 @@ describe("local administrator CLI", () => {
     sqlite.close();
   });
 
+  it("can report a create race without changing the existing password", () => {
+    const fx = fixture();
+    expect(
+      runCli(
+        ["create", "--email", "admin@example.com"],
+        fx.env,
+        "correct horse battery staple",
+      ).exitCode,
+    ).toBe(0);
+
+    const sqlite = new Database(fx.dbPath);
+    const before = sqlite.query("SELECT password_hash FROM local_auth_accounts").get();
+    const raced = runCli(
+      ["create", "--fail-if-exists", "--email", "admin@example.com"],
+      fx.env,
+      "a different valid password",
+    );
+    expect(raced.exitCode).toBe(5);
+    expect(raced.stdout.toString()).toContain("already exists; password unchanged");
+    const after = sqlite.query("SELECT password_hash FROM local_auth_accounts").get();
+    expect(after).toEqual(before);
+    sqlite.close();
+  });
+
   it("resets the password and revokes active sessions", () => {
     const fx = fixture();
     expect(

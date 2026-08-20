@@ -44,6 +44,23 @@ case "$command" in
       printf 'missing\\n'
       exit 3
     fi
+    if [[ "$arguments" == *"local-admin.ts create"* && -n "\${PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE:-}" ]]; then
+      if [[ -n "\${PIXELSPACE_TEST_ADMIN_PASSWORD_ENV_CAPTURE:-}" ]]; then
+        if [[ -v password ]]; then
+          printf '%s' "$password" > "$PIXELSPACE_TEST_ADMIN_PASSWORD_ENV_CAPTURE"
+        else
+          printf '__unset__' > "$PIXELSPACE_TEST_ADMIN_PASSWORD_ENV_CAPTURE"
+        fi
+      fi
+      IFS= read -r password
+      printf '%s' "$password" > "$PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE"
+      if [[ "\${PIXELSPACE_TEST_ADMIN_CREATE_EXISTS:-0}" == "1" ]]; then
+        printf 'Local administrator already exists; password unchanged.\n'
+        exit 5
+      fi
+      [[ "\${PIXELSPACE_TEST_ADMIN_CREATE_FAIL:-0}" != "1" ]]
+      exit 0
+    fi
     if [[ "$arguments" == *" ps "* && "\${PIXELSPACE_TEST_COMPOSE_PS_FAIL:-0}" == "1" ]]; then
       exit 1
     fi
@@ -207,8 +224,36 @@ exit 0
   };
 }
 
-function run(args: string[], env: Record<string, string | undefined>) {
-  return Bun.spawnSync(["bash", script, ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
+function run(
+  args: string[],
+  env: Record<string, string | undefined>,
+  shellArgs: string[] = [],
+) {
+  return Bun.spawnSync(["bash", ...shellArgs, script, ...args], {
+    cwd: root,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function runInPty(
+  args: string[],
+  env: Record<string, string | undefined>,
+  input: string,
+) {
+  const command = `stty -echo; exec ${["bash", script, ...args].map(shellQuote).join(" ")}`;
+  return Bun.spawnSync(["script", "-qefc", command, "/dev/null"], {
+    cwd: root,
+    env,
+    stdin: Buffer.from(input),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 }
 
 function setEnvValue(file: string, key: string, value: string) {
@@ -368,9 +413,110 @@ describe("Pixelspace on-prem operator", () => {
     expect(body).toContain('AUTH_MODE="local"');
     expect(body).toContain('SUPER_ADMIN_EMAILS="admin@example.com"');
     const log = readFileSync(fx.dockerLog, "utf8");
-    expect(log).toContain("local-admin.ts create --email admin@example.com");
+    expect(log).toContain("local-admin.ts create --fail-if-exists --email admin@example.com");
     expect(log).not.toContain("correct horse battery staple");
     expect(body).not.toContain("correct horse battery staple");
+  });
+
+  test("generates and reports a password for a non-interactive first administrator", () => {
+    const fx = fixture();
+    const passwordCapture = path.join(fx.home, "created-admin-password");
+
+    const passwordEnvironmentCapture = path.join(fx.home, "admin-password-environment");
+    const result = run(["install", "--admin-email", "admin@example.com"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+      PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE: passwordCapture,
+      PIXELSPACE_TEST_ADMIN_PASSWORD_ENV_CAPTURE: passwordEnvironmentCapture,
+      password: "inherited caller password",
+    }, ["-x"]);
+
+    expect(result.exitCode).toBe(0);
+    const output = result.stdout.toString();
+    const match = output.match(
+      /Generated local admin password for admin@example\.com: ([A-Za-z0-9+/=]+)\n/,
+    );
+    expect(match).not.toBeNull();
+    const generatedPassword = match?.[1] ?? "";
+    expect(generatedPassword.length).toBeGreaterThanOrEqual(24);
+    expect(readFileSync(passwordCapture, "utf8")).toBe(generatedPassword);
+    expect(output.split(generatedPassword)).toHaveLength(2);
+    expect(readFileSync(fx.envFile, "utf8")).not.toContain(generatedPassword);
+    expect(readFileSync(fx.dockerLog, "utf8")).not.toContain(generatedPassword);
+    expect(readFileSync(passwordEnvironmentCapture, "utf8")).toBe("__unset__");
+    expect(result.stderr.toString()).not.toContain(generatedPassword);
+  });
+
+  test("does not report a generated password until administrator creation succeeds", () => {
+    const fx = fixture();
+    const passwordCapture = path.join(fx.home, "rejected-admin-password");
+
+    const result = run(["install", "--admin-email", "admin@example.com"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+      PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE: passwordCapture,
+      PIXELSPACE_TEST_ADMIN_CREATE_FAIL: "1",
+    }, ["-x"]);
+
+    expect(result.exitCode).toBe(1);
+    const rejectedPassword = readFileSync(passwordCapture, "utf8");
+    expect(rejectedPassword.length).toBeGreaterThanOrEqual(24);
+    expect(result.stdout.toString()).not.toContain(rejectedPassword);
+    expect(result.stderr.toString()).not.toContain(rejectedPassword);
+  });
+
+  test("does not reveal an unused generated password after an administrator create race", () => {
+    const fx = fixture();
+    const passwordCapture = path.join(fx.home, "raced-admin-password");
+
+    const result = run(["install", "--admin-email", "admin@example.com"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+      PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE: passwordCapture,
+      PIXELSPACE_TEST_ADMIN_CREATE_EXISTS: "1",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const unusedPassword = readFileSync(passwordCapture, "utf8");
+    expect(result.stdout.toString()).toContain("already exists; password unchanged");
+    expect(result.stdout.toString()).not.toContain(unusedPassword);
+    expect(result.stderr.toString()).not.toContain(unusedPassword);
+  });
+
+  test("generates the administrator password when attached to a terminal", () => {
+    const fx = fixture();
+    const passwordCapture = path.join(fx.home, "interactive-admin-password");
+
+    const result = runInPty(
+      ["install", "--admin-email", "admin@example.com"],
+      {
+        ...fx.env,
+        PIXELSPACE_AUTH_MODE: undefined,
+        PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE: passwordCapture,
+      },
+      "",
+    );
+
+    expect(result.exitCode).toBe(0);
+    const generatedPassword = readFileSync(passwordCapture, "utf8");
+    expect(generatedPassword.length).toBeGreaterThanOrEqual(24);
+    expect(result.stdout.toString()).toContain(
+      `Generated local admin password for admin@example.com: ${generatedPassword}`,
+    );
+  });
+
+  test("does not generate a password when the administrator already exists", () => {
+    const fx = fixture();
+
+    const result = run(["install", "--admin-email", "admin@example.com"], {
+      ...fx.env,
+      PIXELSPACE_AUTH_MODE: undefined,
+      PIXELSPACE_TEST_ADMIN_EXISTS: "1",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("password unchanged");
+    expect(result.stdout.toString()).not.toContain("Generated local admin password");
   });
 
   test("requires an admin identity for unattended local setup", () => {

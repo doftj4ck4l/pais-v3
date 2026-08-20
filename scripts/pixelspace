@@ -74,7 +74,7 @@ Install options:
   --port PORT                  default: 8080
   --auth-mode local|proxy|dev  default: local; dev is loopback-only
   --admin-email EMAIL          required for the first local administrator
-  --admin-password-file PATH   mode 600/400 file for unattended setup
+  --admin-password-file PATH   mode 600/400 file; otherwise a random password is generated
   --public-url URL
   --model-url URL              OpenAI-compatible /v1 endpoint
   --model-id ID
@@ -283,7 +283,7 @@ read_admin_password() {
     password="$(<"$ADMIN_PASSWORD_FILE")"
     [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || die "admin password file must contain one line"
   else
-    [[ -t 0 && -t 1 ]] || die "local auth needs an interactive password or --admin-password-file"
+    [[ -t 0 ]] || die "local auth needs an interactive password or --admin-password-file"
     IFS= read -r -s -p "Local admin password: " password < /dev/tty
     printf '\n' > /dev/tty
     IFS= read -r -s -p "Confirm password: " confirm < /dev/tty
@@ -701,7 +701,9 @@ refresh_stack() {
 
 bootstrap_local_admin() {
   [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || return 0
-  local email status_output status password
+  unset password
+  local email status_output status password="" generated_password=0 create_status=0 xtrace_enabled=0
+  export -n password
   email="$(first_admin_email)"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     note "local administrator $email will be created after the stack starts"
@@ -714,20 +716,56 @@ bootstrap_local_admin() {
     status=$?
   fi
   [[ "$status" -eq 3 ]] || die "could not inspect the local administrator: $status_output"
-  password="$(read_admin_password)"
-  printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts create --email "$email"
+  if [[ $- == *x* ]]; then
+    xtrace_enabled=1
+    set +x
+  fi
+  if [[ -n "$ADMIN_PASSWORD_FILE" ]]; then
+    password="$(read_admin_password)"
+  else
+    password="$(random_secret 24)"
+    generated_password=1
+  fi
+  if printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts create --fail-if-exists --email "$email"; then
+    create_status=0
+  else
+    create_status=$?
+  fi
+  if [[ "$create_status" -eq 0 && "$generated_password" -eq 1 ]]; then
+    say "Generated local admin password for $email: $password"
+    say "Save this password now; Pixelspace will not show it again."
+  fi
   password=""
+  if [[ "$xtrace_enabled" -eq 1 ]]; then
+    set -x
+  fi
+  [[ "$create_status" -eq 5 ]] && return 0
+  return "$create_status"
 }
 
 reset_admin_password() {
   doctor
   [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || die "reset-admin-password requires AUTH_MODE=local"
-  local email password
+  unset password
+  local email password="" reset_status=0 xtrace_enabled=0
+  export -n password
   email="${ADMIN_EMAIL_OVERRIDE:-$(first_admin_email)}"
   email="$(normalize_admin_email "$email")"
+  if [[ $- == *x* ]]; then
+    xtrace_enabled=1
+    set +x
+  fi
   password="$(read_admin_password)"
-  printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts reset --email "$email"
+  if printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts reset --email "$email"; then
+    reset_status=0
+  else
+    reset_status=$?
+  fi
   password=""
+  if [[ "$xtrace_enabled" -eq 1 ]]; then
+    set -x
+  fi
+  return "$reset_status"
 }
 
 prepare_backup_helper() {

@@ -242,13 +242,15 @@ directly to an untrusted network.
 ## 5. Create the first administrator
 
 Local password authentication is the default. During the first installation,
-the installer asks for the administrator password twice. Use at least 12
-characters.
+the installer generates a strong random password and prints it once after the
+administrator is created. Save that value immediately; it cannot be displayed
+again. Treat terminal or automation output containing it as sensitive.
 
 The password is stored only as an Argon2id hash. It is not written to `.env`,
-shown in logs, or passed as a command-line argument.
+Docker logs, or passed as a command-line argument.
 
-For unattended installation, place the password in a protected file:
+To choose the initial password yourself, place it in a protected file. Use 12
+to 256 characters:
 
 ```bash
 install -m 600 /dev/null /secure/pixelspace-admin-password

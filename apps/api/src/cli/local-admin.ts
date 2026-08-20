@@ -55,7 +55,7 @@ try {
 } catch (error) {
   if (error instanceof LocalAccountExistsError) {
     console.log(`Local administrator ${email.toLowerCase()} already exists; password unchanged.`);
-    process.exit(0);
+    process.exit(command === "create" && args.includes("--fail-if-exists") ? 5 : 0);
   }
   if (error instanceof LocalAccountNotFoundError) fail(error.message, 4);
   if (error instanceof PasswordPolicyError) fail(error.message, 2);

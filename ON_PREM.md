@@ -34,10 +34,12 @@ From a release checkout:
   --model-id my-model
 ```
 
-The default `local` authentication mode prompts twice for the first
-administrator password. The password is Argon2id-hashed in Pixelspace's SQLite
-database; it is never written to an environment file or passed as a process
-argument. Automation can provide a protected file instead:
+The default `local` authentication mode generates a strong random password for
+the first administrator and prints it once after the account is created. Save
+it immediately and treat captured installer output as sensitive. The password
+is Argon2id-hashed in Pixelspace's SQLite database and is never written to an
+environment file or passed as a process argument. To choose the password, use a
+protected file instead:
 
 ```bash
 chmod 600 /secure/pixelspace-admin-password
