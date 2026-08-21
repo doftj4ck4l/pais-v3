@@ -1,8 +1,12 @@
 # Agent capability-discovery improvements (from DGX Spark traces)
 
-Status: **plan / not started.** Source: `app.db` on the DGX Spark box
-(`pixelspace-api-1`), 2026-08-21 — 9 runs, 375 traces, 57 tool calls. Read from
-the `traces` table (`step='tool'`, `fields` JSON: name/ok/args/result).
+Status: **first cut done** on branch `feat/agent-capability-discovery` —
+#1, #2, #3, #5, #7 implemented and verified (API tests 784 pass; sandbox image
+rebuilt and smoke-tested: bash/curl/ps2pdf/reportlab present, runtime
+`pip install` works). **Remaining: #4 (skill arg schemas), #6 (search-thrash
+nudge).** Source: `app.db` on the DGX Spark box (`pixelspace-api-1`),
+2026-08-21 — 9 runs, 375 traces, 57 tool calls. Read from the `traces` table
+(`step='tool'`, `fields` JSON: name/ok/args/result).
 
 ## The core problem
 
@@ -54,15 +58,15 @@ workspace"). It doesn't have a clear model of what runs where.
 
 ## Proposed fixes (ranked by impact ÷ effort)
 
-| # | Fix | Addresses | Likely location |
+| # | Fix | Addresses | Status / location |
 |---|-----|-----------|-----------------|
-| 1 | **Make `web_search` a first-class tool** (thin wrapper over the existing skill) | #1 | `catalog/tools.ts` + skill runner |
-| 2 | **Bake tooling into the sandbox image + allow installs**: add `curl`, `ghostscript`, a PDF lib (reportlab/weasyprint); give a writable venv or permit `pip --break-system-packages` | #2 | sandbox `Dockerfile`, `services/.../docker.ts` |
-| 3 | **Run the `bash` tool under real bash** (install bash, `exec bash -c`) | #3 | sandbox image + docker exec invocation |
-| 4 | **Advertise skill input schemas** (required args) in `call_skill` / the skill catalog, or return a structured "missing arg" before executing | #4 | skill catalog / `call_skill` tool |
-| 5 | **Don't reap a sandbox with an active run; recreate on `ENOENT`** | #6 | sandbox reaper / `sandbox.acquire` (`reapIdle`) |
-| 6 | **Runtime nudge on search thrash**: after N empty/near-duplicate searches, tell the model to stop and ask the user or use a URL. The `searching` signal in `playbook/signals.ts` already detects this — surface it mid-run, not only to the reflector | #5 | `playbook/signals` + run loop (`pi.service.ts`) |
-| 7 | **System-prompt clarifications**: the three execution contexts (bash = sandbox; `fetch_url`/`web_search`/skills = API-side), the writable workspace path, and a one-line inventory of what the sandbox ships with | #2/#3/#7 | system prompt assembly |
+| 1 | **Make `web_search` a first-class tool** (wraps the existing skill via `invokeSkill`) | #1 | **DONE** — `pi.service.ts` (registered beside `call_skill`) |
+| 2 | **Bake tooling into the sandbox image + allow installs**: added `bash`, `curl`, `ghostscript`, `reportlab`; set `PIP_BREAK_SYSTEM_PACKAGES=1` so runtime `pip install` works | #2 | **DONE** — `apps/api/sandbox/Dockerfile` |
+| 3 | **Run the `bash` tool under real bash** | #3 | **DONE** — `services/sandbox/docker.ts` (`sh -lc` → `bash -lc`) |
+| 4 | **Advertise skill input schemas** (required args) in `call_skill` / the skill catalog, or return a structured "missing arg" before executing | #4 | **TODO** — skill frontmatter parsing (`skill.service.ts`) has no arg schema today; would extend `readRunDirective` + `skillsBlock` + `call_skill` description |
+| 5 | **Don't reap a sandbox with an active run** — heartbeat refreshes `lastUsedAt` at half the idle window for the life of the run | #6 | **DONE** — `pi.service.ts` heartbeat + `sandbox.service.ts` `keepAlive` |
+| 6 | **Runtime nudge on search thrash**: after N empty/near-duplicate searches, tell the model to stop and ask the user or use a URL. The `searching` signal in `playbook/signals.ts` already detects this — surface it mid-run, not only to the reflector | #5 | **TODO** — `playbook/signals` + run loop (`pi.service.ts`) |
+| 7 | **System-prompt clarifications**: bash = in the sandbox, `fetch_url`/`web_search`/`search_docs`/skills = platform-side; plus the extended sandbox inventory (curl, ghostscript, reportlab) and that `pip install` works | #2/#3/#7 | **DONE** — `environment-prompt.ts` |
 
 ## Suggested first cut
 

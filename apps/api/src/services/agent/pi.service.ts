@@ -171,7 +171,23 @@ export async function runPiAgent(opts: {
       containerId: sandbox.containerId,
       cwd: sandbox.workspacePath,
     });
-    releaseSandbox = () => sandboxService.release(workspaceId);
+    // Keep the sandbox marked in-use for the life of the run. lastUsedAt is
+    // otherwise written only at acquire and release, so a run whose work — or
+    // the model's own thinking between tool calls — outlasts SANDBOX_IDLE_MS had
+    // its container reaped from under it, and the next tool call died with
+    // "No such container" (measured in the DGX traces). A heartbeat at half the
+    // idle window keeps the reaper away while the run is active.
+    const heartbeat = setInterval(
+      () => {
+        void sandboxService.keepAlive(workspaceId);
+      },
+      Math.max(1_000, Math.floor(appEnv.sandboxIdleMs / 2)),
+    );
+    heartbeat.unref?.();
+    releaseSandbox = async () => {
+      clearInterval(heartbeat);
+      await sandboxService.release(workspaceId);
+    };
     execCwd = sandbox.workspacePath;
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
@@ -480,6 +496,25 @@ export async function runPiAgent(opts: {
         return { content: [{ type: "text" as const, text: out }], details: { output: out } };
       },
     });
+
+    // web_search is a skill, but the model reaches for it as a bare tool and
+    // burns a turn discovering it isn't one ("Tool web-search not found",
+    // measured in the DGX traces). Surface it as a first-class tool that runs
+    // the exact same skill, so the capability is findable where it's looked for.
+    if (skills.some((s) => s.name === "web-search")) {
+      agentTools.push({
+        name: "web_search",
+        description:
+          "Search the web and return result titles, snippets, and URLs. Use this for " +
+          "current or external information, then read a promising result with fetch_url.",
+        parameters: Type.Object({ query: Type.String() }),
+        label: "web_search",
+        execute: async (_id: string, params: any) => {
+          const out = await invokeSkill("web-search", String(params?.query ?? ""), execEnv);
+          return { content: [{ type: "text" as const, text: out }], details: { output: out } };
+        },
+      });
+    }
   }
 
   // --- prompt templates loaded from apps/api/prompts/*.md ---

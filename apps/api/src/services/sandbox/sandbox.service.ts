@@ -75,6 +75,15 @@ export const sandboxService = {
     await sandboxRepository.touch(workspaceId);
   },
 
+  /**
+   * Refresh the in-use timestamp mid-run so the reaper does not remove a
+   * container while a run is still using it. `release` does the same at the end;
+   * this is the same touch, called on a heartbeat during a long run.
+   */
+  async keepAlive(workspaceId: string): Promise<void> {
+    await sandboxRepository.touch(workspaceId);
+  },
+
   /** Remove containers unused for longer than the window. Returns how many. */
   async reapIdle(olderThanMs: number = env.sandboxIdleMs): Promise<number> {
     const idle = await sandboxRepository.listIdle(olderThanMs);
