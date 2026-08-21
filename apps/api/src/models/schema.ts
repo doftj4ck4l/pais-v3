@@ -17,12 +17,58 @@ export const users = sqliteTable("users", {
    * What this console calls you, when you would rather it did not use the name
    * the identity provider sends.
    *
-   * Null means "use the proxy's". Nothing else about the identity is stored:
-   * the provider remains the authority on who you are, and a copy of an email
-   * or a group list here could only ever be a stale second opinion.
+   * Null means "use the active identity's name". Proxy-mode profile data stays
+   * external; local-mode credentials live in their dedicated account table.
    */
   displayName: text("display_name"),
 });
+
+/** Password credentials owned by Pixelspace when AUTH_MODE=local. */
+export const localAuthAccounts = sqliteTable(
+  "local_auth_accounts",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("idx_local_auth_accounts_email").on(t.email)],
+);
+
+export type LocalAuthAccountRow = {
+  userId: string;
+  email: string;
+  passwordHash: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** Digest-only browser sessions. The bearer token exists only in the cookie. */
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    tokenDigest: text("token_digest").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [
+    index("idx_auth_sessions_user").on(t.userId, t.createdAt),
+    index("idx_auth_sessions_expiry").on(t.expiresAt),
+  ],
+);
+
+export type AuthSessionRow = {
+  tokenDigest: string;
+  userId: string;
+  createdAt: number;
+  expiresAt: number;
+};
 
 /**
  * A container for one body of work: its agents, documents, databases and files.

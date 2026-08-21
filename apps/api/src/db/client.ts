@@ -34,6 +34,8 @@ import {
   organizationMemberships,
   organizationInvitations,
   agentDefinitions,
+  localAuthAccounts,
+  authSessions,
 } from "../models/schema";
 
 /**
@@ -88,6 +90,8 @@ export {
   organizationMemberships,
   organizationInvitations,
   agentDefinitions,
+  localAuthAccounts,
+  authSessions,
 };
 export type {
   WorkspaceRow,
@@ -117,6 +121,8 @@ export type {
   OrganizationMembershipRow,
   OrganizationInvitationRow,
   AgentDefinitionRow,
+  LocalAuthAccountRow,
+  AuthSessionRow,
 } from "../models/schema";
 
 const sqlite = new Database(DB_PATH, { create: true });

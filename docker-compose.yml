@@ -1,8 +1,8 @@
 # Pixelspace, deployed on this host.
 #
-# Two services. `web` is the only one published: Caddy serves the built console
-# and proxies /api to `api` over the compose network, so the API has no host
-# port at all. It has no authentication, and a port is an invitation.
+# Core application services plus an optional DGX model pack. `web` is the only
+# one published: Caddy serves the built console and proxies /api to `api` over
+# the Compose network, so neither the API nor bundled model has a host port.
 #
 # The API talks to the host's Docker daemon through a bind-mounted socket, and
 # starts each workspace's sandbox as a *sibling* container. That is why three
@@ -13,14 +13,18 @@
 # Socket access is root-equivalent on the host. This is a deliberate trade for
 # real per-workspace isolation; see README under "Deploying".
 
-# Left at the old name deliberately: the compose project name is what the
-# running containers and the `rustfs` named volume are keyed by. Renaming it
-# starts a second, empty stack and orphans the volume every generated image
-# lives in. Renaming it is a migration, not an edit.
-name: salurai
+# Project name = the named-volume prefix, so it is identity, not cosmetics.
+# Renaming it in place strands an existing stack's data (RustFS media, the MCP
+# and vLLM caches) under the old prefix, so it is env-driven rather than hard
+# renamed: the internal box carries `COMPOSE_PROJECT_NAME=pixelspace` in its
+# `.env` (its legacy `salurai_*` volumes were migrated to `pixelspace_*`), and
+# the on-prem installer passes `-p pixelspace`, which overrides this anyway.
+# The default below is the value a fresh checkout with no override resolves to.
+name: ${COMPOSE_PROJECT_NAME:-pixelspace}
 
 services:
   api:
+    image: "${PIXELSPACE_API_IMAGE:-pixelspace-api:local}"
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -36,8 +40,8 @@ services:
     # absent from the deployment. Later file wins, and it is optional — a fresh
     # checkout that has only the root `.env` still boots.
     env_file:
-      - path: .env
-      - path: apps/api/.env
+      - path: "${PIXELSPACE_DEPLOY_ENV_FILE:-.env}"
+      - path: "${PIXELSPACE_APP_ENV_FILE:-apps/api/.env}"
         required: false
     environment:
       PORT: "4000"
@@ -49,15 +53,20 @@ services:
       SANDBOX_IMAGE: "${SANDBOX_IMAGE:-pixelspace-sandbox:1}"
       # Both must be host paths, mounted below at the same path inside.
       SANDBOX_ROOT: "${SANDBOX_ROOT:?set SANDBOX_ROOT in .env}"
-      SKILLS_ROOT: "${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills"
+      SKILLS_ROOT: "${SKILLS_ROOT:-${REPO_ROOT:?set REPO_ROOT in .env}/apps/api/skills}"
       # Generated media. `rustfs` is the compose service name, so this only
       # resolves on the compose network — the bucket is not reachable from the
       # host, by design. `bun dev` needs S3_ENDPOINT=http://localhost:9000 in
       # apps/api/.env to reach the published port instead.
       S3_ENDPOINT: "http://rustfs:9000"
-      S3_BUCKET: "${S3_BUCKET:-salur-media}"
+      S3_BUCKET: "${S3_BUCKET:-pixelspace-media}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-rustfsadmin}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}"
+    extra_hosts:
+      # Linux has no host.docker.internal alias unless Compose adds it. This
+      # gives an on-prem install an explicit route to a host-side model gateway;
+      # the gateway must still listen beyond 127.0.0.1 for the bridge to reach it.
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Workspaces: written by this container, bind-mounted by sandbox siblings.
@@ -65,10 +74,10 @@ services:
       # Skills: read by this container to build the prompt, mounted read-only
       # into every sandbox. Read-only here too — the agent cannot rewrite the
       # code it is about to run.
-      - "${REPO_ROOT}/apps/api/skills:${REPO_ROOT}/apps/api/skills:ro"
+      - "${SKILLS_ROOT:-${REPO_ROOT}/apps/api/skills}:${SKILLS_ROOT:-${REPO_ROOT}/apps/api/skills}:ro"
       # SQLite lives on the host so a rebuild does not discard conversations,
       # workspaces, documents, or MCP servers.
-      - "${REPO_ROOT}/apps/api/data:/app/apps/api/data"
+      - "${PIXELSPACE_DATA_ROOT:-${REPO_ROOT}/apps/api/data}:/app/apps/api/data"
       # uvx / npx package cache. Without it every deploy re-downloads every
       # stdio MCP server on its first call, which reads as a hang.
       - mcp-cache:/cache
@@ -83,12 +92,75 @@ services:
       start_period: 20s
       retries: 3
 
+  # Optional DGX Spark pack, enabled only through `--profile dgx-model`. The
+  # model stays on the private Compose network; API traffic uses
+  # http://model:8000/v1 and no inference port is exposed to the host or LAN.
+  model:
+    profiles: ["dgx-model"]
+    image: "${PIXELSPACE_MODEL_IMAGE:-vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967}"
+    command:
+      - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      - --served-model-name
+      - nemotron-3.5-lightning
+      - --moe-backend
+      - marlin
+      - --kv-cache-dtype
+      - fp8
+      - --enable-prefix-caching
+      - --gpu-memory-utilization
+      - "0.85"
+      - --max-num-seqs
+      - "4"
+      - --max-model-len
+      - "131072"
+      - --speculative_config.method
+      - dspark
+      - --speculative_config.model
+      - nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark
+      - --speculative_config.num_speculative_tokens
+      - "3"
+      - --mamba-backend
+      - flashinfer
+      - --mamba-cache-mode
+      - align
+      - --reasoning-parser
+      - nemotron_v3
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-auto-tool-choice
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - "${PIXELSPACE_MODEL_CACHE_ROOT:-./.cache/huggingface}:/root/.cache/huggingface"
+      - vllm-cache:/root/.cache/vllm
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30m
+      retries: 4
+
   # S3-compatible object storage for generated images. Unpublished like `api`:
   # the only thing that talks to it is the API, which re-serves objects through
   # /api/images/:id so a link in a transcript never expires and the bucket
   # credentials never leave the compose network.
   rustfs:
-    image: rustfs/rustfs:latest
+    # A multi-architecture index pinned after amd64 + arm64 verification. The
+    # override is the release escape hatch; a floating latest tag is not one.
+    image: "${RUSTFS_IMAGE:-rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21}"
     # Deliberately NOT pinned to HOST_UID the way `api` is. `api` needs it
     # because it writes into bind mounts the host user must own; rustfs owns a
     # named volume that nothing outside the container ever opens by path. The
@@ -104,11 +176,12 @@ services:
     restart: unless-stopped
 
   web:
+    image: "${PIXELSPACE_WEB_IMAGE:-pixelspace-web:local}"
     build:
       context: .
       dockerfile: apps/web/Dockerfile
     ports:
-      - "${WEB_PORT:-8080}:8080"
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8080}:8080"
     depends_on:
       api:
         condition: service_started
@@ -116,6 +189,9 @@ services:
 
 volumes:
   mcp-cache:
+  # Compiled kernels and autotuning results make model container recreation
+  # materially faster. This is reproducible cache data, not backup state.
+  vllm-cache:
   # Generated images. A named volume rather than a bind mount: nothing outside
   # RustFS reads these files by path, so there is no reason to pin them to a
   # host directory the way SANDBOX_ROOT has to be.

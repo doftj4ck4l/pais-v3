@@ -137,6 +137,8 @@ export async function runDetached(options: {
     "-d",
     "--name",
     options.name,
+    "--label",
+    "com.pixelspace.sandbox=1",
     "-v",
     `${options.workspacePath}:${options.workspacePath}`,
     // Skills are mounted at a fixed path so a skill's `run` command does not

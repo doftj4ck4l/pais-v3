@@ -1,14 +1,13 @@
-import { extractPagesMarkdown } from "@firecrawl/pdf-inspector";
+import { extractText } from "unpdf";
 import type { PageText } from "./chunk.service";
 
 /**
  * Bytes -> text per page. The only module that knows what a PDF is.
  *
- * Backed by @firecrawl/pdf-inspector (Rust/NAPI): it returns per-page Markdown
- * with headings, lists and pipe-tables preserved, and reports per page whether
- * the text is trustworthy. Structure matters downstream — chunking splits on
- * paragraph boundaries, so a table that survives as a table stays one coherent
- * passage instead of collapsing into a run of loose numbers.
+ * Uses @firecrawl/pdf-inspector when its native binding exists: it returns
+ * per-page Markdown with headings, lists and pipe-tables preserved. Linux ARM64
+ * has no published binding, so that platform falls back to unpdf's portable
+ * PDF.js extractor instead of preventing the entire API from starting.
  *
  * Every future format lands here, and chunking, storage, search, and the agent
  * tool stay untouched.
@@ -26,15 +25,60 @@ export type ExtractResult =
   | { ok: false; reason: "no-text"; pageCount: number; message: string }
   | { ok: false; reason: "unreadable"; pageCount: 0; message: string };
 
+type ExtractedPage = {
+  page: number;
+  text: string;
+  needsOcr: boolean;
+  ocrReason?: string;
+};
+
+type NativePdfExtractor =
+  (typeof import("@firecrawl/pdf-inspector"))["extractPagesMarkdown"];
+
+let nativePdfExtractor: Promise<NativePdfExtractor | null> | undefined;
+
+function loadNativePdfExtractor(): Promise<NativePdfExtractor | null> {
+  nativePdfExtractor ??= import("@firecrawl/pdf-inspector")
+    .then(({ extractPagesMarkdown }) => extractPagesMarkdown)
+    .catch((error) => {
+      if (error instanceof Error && error.message.includes("Cannot find native binding")) {
+        return null;
+      }
+      nativePdfExtractor = undefined;
+      throw error;
+    });
+  return nativePdfExtractor;
+}
+
+async function extractPages(bytes: Uint8Array): Promise<ExtractedPage[]> {
+  const extractPagesMarkdown = await loadNativePdfExtractor();
+  if (extractPagesMarkdown) {
+    const result = extractPagesMarkdown(
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    );
+    return result.pages.map((page) => ({
+      page: page.page,
+      text: page.markdown ?? "",
+      needsOcr: page.needsOcr,
+      ...(page.ocrReason ? { ocrReason: page.ocrReason } : {}),
+    }));
+  }
+
+  const result = await extractText(bytes, { mergePages: false });
+  return result.text.map((text, page) => ({
+    page,
+    text,
+    needsOcr: text.trim().length === 0,
+    ...(text.trim().length === 0 ? { ocrReason: "no text layer" } : {}),
+  }));
+}
+
 export async function extractPdf(bytes: Uint8Array): Promise<ExtractResult> {
-  let result: ReturnType<typeof extractPagesMarkdown>;
+  let extractedPages: ExtractedPage[];
 
   try {
-    // The NAPI binding takes a Node Buffer; Buffer.from here is a view, not a copy.
-    result = extractPagesMarkdown(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    extractedPages = await extractPages(bytes);
   } catch (e: any) {
-    // pdf-inspector throws on anything it cannot open, with a specific reason
-    // ("Not a PDF: file appears to be plain text"), which is worth surfacing.
     return {
       ok: false,
       reason: "unreadable",
@@ -43,19 +87,19 @@ export async function extractPdf(bytes: Uint8Array): Promise<ExtractResult> {
     };
   }
 
-  const pageCount = result.pages.length;
+  const pageCount = extractedPages.length;
 
   // `pages[].page` is 0-indexed; citations are 1-indexed. Pages flagged
   // needsOcr are dropped rather than indexed: their text is garbage when it
   // exists at all, and garbage in the index surfaces as a confident wrong
   // citation later.
-  const pages: PageText[] = result.pages
+  const pages: PageText[] = extractedPages
     .filter((p) => !p.needsOcr)
-    .map((p) => ({ page: p.page + 1, text: (p.markdown ?? "").trim() }))
+    .map((p) => ({ page: p.page + 1, text: p.text.trim() }))
     .filter((p) => p.text.length > 0);
 
   if (!pages.length) {
-    const reasons = [...new Set(result.pages.map((p) => p.ocrReason).filter(Boolean))];
+    const reasons = [...new Set(extractedPages.map((p) => p.ocrReason).filter(Boolean))];
     return {
       ok: false,
       reason: "no-text",
@@ -73,7 +117,7 @@ export async function extractPdf(bytes: Uint8Array): Promise<ExtractResult> {
   const skipped = pageCount - pages.length;
   const note = skipped
     ? `${skipped} of ${pageCount} page(s) had no usable text and were skipped ` +
-      `(pages ${result.pages.filter((p) => p.needsOcr).map((p) => p.page + 1).join(", ")}) — they need OCR`
+      `(pages ${extractedPages.filter((p) => p.needsOcr).map((p) => p.page + 1).join(", ")}) — they need OCR`
     : undefined;
 
   return { ok: true, pages, pageCount, note };

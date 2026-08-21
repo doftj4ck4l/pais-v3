@@ -90,6 +90,20 @@ function brandOf(id: string): string {
 }
 
 /** Helper: a named chat-completion model served by the local gateway. */
+/**
+ * A gateway model the static catalog does not list.
+ *
+ * On-prem serves whichever model the operator chose at install, and that name
+ * need not appear in the hand-maintained list above. Synthesising it lets a
+ * freshly installed machine both show and run its own model. It carries the
+ * gateway's base URL and key like any other `gw()` entry, so a run resolves the
+ * same way.
+ */
+export function syntheticGatewayModel(name: string, contextWindow?: number): ModelConfig {
+  const model = gw(name, `Local · ${name}`);
+  return contextWindow && contextWindow > 0 ? { ...model, contextWindow } : model;
+}
+
 function gw(id: string, hint: string, contextWindow = DEFAULT_CONTEXT_WINDOW): ModelConfig {
   const brand = brandOf(id);
   return {
@@ -162,12 +176,29 @@ export const MODELS: ModelConfig[] = [
 ];
 
 export function getModel(id: string): ModelConfig | undefined {
-  return MODELS.find((m) => m.id === id);
+  const known = MODELS.find((m) => m.id === id);
+  if (known) return known;
+  // The single model an on-prem gateway serves may not be in the static list;
+  // resolve it so the picker's choice can actually run. Bounded to the
+  // configured model, never an arbitrary `gw-*` id.
+  const configured = process.env.CUSTOM_MODEL?.trim();
+  if (configured && id === `gw-${configured}`) return syntheticGatewayModel(configured);
+  return undefined;
 }
 
 /** True if the requested provider can actually be reached (key present). */
 export function isLikelyConfigured(model: ModelConfig): boolean {
   if (model.provider === "mock") return true;
+  const configuredGatewayModel = process.env.CUSTOM_MODEL?.trim();
+  if (
+    model.provider === "custom" &&
+    model.apiKeyEnv === "CUSTOM_API_KEY" &&
+    !model.apiKey &&
+    configuredGatewayModel &&
+    model.model !== configuredGatewayModel
+  ) {
+    return false;
+  }
   const key = effectiveApiKey(model);
   if (!model.apiKeyEnv && !key) return false;
   const ready = !!key && key.length > 0;

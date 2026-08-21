@@ -1,0 +1,1471 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="${PIXELSPACE_ROOT_OVERRIDE:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
+COMPOSE_FILE="$ROOT/docker-compose.yml"
+ENV_FILE="${PIXELSPACE_ENV_FILE:-$ROOT/.env}"
+readonly BUNDLED_MODEL_PACK="nemotron-3.5-lightning"
+readonly BUNDLED_MODEL_URL="http://model:8000/v1"
+readonly BUNDLED_MODEL_PROFILE="dgx-model"
+readonly BUNDLED_MODEL_IMAGE="vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967"
+readonly PIXELSPACE_COMPOSE_PROJECT="pixelspace"
+readonly LEGACY_COMPOSE_PROJECT="salurai"
+readonly PIXELSPACE_RUSTFS_VOLUME="pixelspace_rustfs-data"
+readonly PIXELSPACE_MCP_VOLUME="pixelspace_mcp-cache"
+readonly PIXELSPACE_VLLM_VOLUME="pixelspace_vllm-cache"
+readonly LEGACY_RUSTFS_VOLUME="salurai_rustfs-data"
+readonly LEGACY_MCP_VOLUME="salurai_mcp-cache"
+readonly LEGACY_VLLM_VOLUME="salurai_vllm-cache"
+COMMAND="${1:-help}"
+[[ $# -eq 0 ]] || shift
+
+DRY_RUN=0
+ASSUME_YES=0
+RESTORE_CONFIG=1
+PROFILE="${PIXELSPACE_PROFILE:-core}"
+PROFILE_EXPLICIT=0
+DATA_ROOT_OVERRIDE=""
+BIND_OVERRIDE=""
+PORT_OVERRIDE=""
+AUTH_OVERRIDE="${PIXELSPACE_AUTH_MODE:-}"
+PUBLIC_URL_OVERRIDE=""
+EXPOSE=0
+MODEL_URL_OVERRIDE=""
+MODEL_ID_OVERRIDE=""
+MODEL_PACK_OVERRIDE=""
+MODEL_PACK_DISABLE_PENDING=0
+LEGACY_RESOURCE_CLEANUP_PENDING=0
+COMPOSE_PROJECT_CACHE=""
+BACKUP_HELPER_READY=0
+DEPLOY_MODE_OVERRIDE=""
+ADMIN_EMAIL_OVERRIDE="${PIXELSPACE_ADMIN_EMAIL:-}"
+ADMIN_PASSWORD_FILE="${PIXELSPACE_ADMIN_PASSWORD_FILE:-}"
+PURGE=0
+POSITIONAL=()
+
+say() { printf '%s\n' "$*"; }
+note() { printf 'note: %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Pixelspace on-prem operator
+
+Usage:
+  ./install.sh [install options]
+  scripts/pixelspace <command> [options]
+
+Commands:
+  install     Generate secure host configuration and start Pixelspace
+  doctor      Validate host, configuration, architecture, and security posture
+  status      Show service status
+  logs        Follow service logs
+  backup      Stop stateful services briefly and create a consistent archive
+  restore     Restore an archive (requires --yes)
+  upgrade     Back up, refresh images/builds, recreate, and verify
+  uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
+  reset-admin-password  Reset a local admin password and revoke its sessions
+  help        Show this help
+
+Install options:
+  --profile core|dgx-spark
+  --data-root PATH
+  --bind-address ADDRESS       default: 127.0.0.1
+  --expose                    testing-only: bind to this host's private IPv4 address over HTTP
+  --port PORT                  default: 8080
+  --auth-mode local|proxy|dev  default: local; dev is loopback-only
+  --admin-email EMAIL          required for the first local administrator
+  --admin-password-file PATH   mode 600/400 file; otherwise a random password is generated
+  --public-url URL
+  --model-url URL              OpenAI-compatible /v1 endpoint
+  --model-id ID
+  --model-pack external|nemotron-3.5-lightning
+                               optional Compose-managed DGX model
+  --deploy-mode build|images   default: build
+  --env-file PATH
+  --dry-run
+
+Destructive commands require --yes. Restore accepts --no-restore-config.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) PROFILE="${2:?missing profile}"; PROFILE_EXPLICIT=1; shift 2 ;;
+    --data-root) DATA_ROOT_OVERRIDE="${2:?missing data root}"; shift 2 ;;
+    --bind-address) BIND_OVERRIDE="${2:?missing bind address}"; shift 2 ;;
+    --expose) EXPOSE=1; shift ;;
+    --port) PORT_OVERRIDE="${2:?missing port}"; shift 2 ;;
+    --auth-mode) AUTH_OVERRIDE="${2:?missing auth mode}"; shift 2 ;;
+    --admin-email) ADMIN_EMAIL_OVERRIDE="${2:?missing admin email}"; shift 2 ;;
+    --admin-password-file) ADMIN_PASSWORD_FILE="${2:?missing admin password file}"; shift 2 ;;
+    --public-url) PUBLIC_URL_OVERRIDE="${2:?missing public URL}"; shift 2 ;;
+    --model-url) MODEL_URL_OVERRIDE="${2:?missing model URL}"; shift 2 ;;
+    --model-id) MODEL_ID_OVERRIDE="${2:?missing model id}"; shift 2 ;;
+    --model-pack) MODEL_PACK_OVERRIDE="${2:?missing model pack}"; shift 2 ;;
+    --deploy-mode) DEPLOY_MODE_OVERRIDE="${2:?missing deploy mode}"; shift 2 ;;
+    --env-file) ENV_FILE="${2:?missing env file}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --yes) ASSUME_YES=1; shift ;;
+    --purge) PURGE=1; shift ;;
+    --no-restore-config) RESTORE_CONFIG=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; POSITIONAL+=("$@"); break ;;
+    -*) die "unknown option: $1" ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+set -- "${POSITIONAL[@]}"
+
+if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" ]]; then
+  die "--dry-run is supported only for install"
+fi
+
+env_value_from_allow_empty() {
+  local file="$1" key="$2" line
+  [[ -f "$file" ]] || return 1
+  awk -v key="$key" 'index($0, key "=") == 1 { found=1; value=substr($0, length(key)+2) } END { if (!found) exit 1; print value }' "$file" |
+    while IFS= read -r line; do
+      if [[ "$line" == \"*\" && "$line" == *\" ]]; then
+        line="${line:1:${#line}-2}"
+        line="${line//\\\"/\"}"
+        line="${line//\\\\/\\}"
+      fi
+      printf '%s' "$line"
+    done
+}
+
+env_value_from() {
+  local line
+  line="$(env_value_from_allow_empty "$1" "$2")" || return 1
+  [[ -n "$line" ]] || return 1
+  printf '%s' "$line"
+}
+
+env_value() { env_value_from "$ENV_FILE" "$1"; }
+
+quote_env() {
+  local value="$1"
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || die "environment values cannot contain newlines"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+set_env_in() {
+  local file="$1" key="$2" value="$3" tmp
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "invalid environment key: $key"
+  mkdir -p "$(dirname -- "$file")"
+  tmp="$(mktemp "${file}.tmp.XXXXXX")"
+  if [[ -f "$file" ]]; then
+    awk -v key="$key" 'index($0, key "=") != 1 { print }' "$file" > "$tmp"
+  fi
+  printf '%s=%s\n' "$key" "$(quote_env "$value")" >> "$tmp"
+  chmod 600 "$tmp"
+  mv -f -- "$tmp" "$file"
+}
+
+set_env() { set_env_in "$ENV_FILE" "$1" "$2"; }
+
+env_has_key() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] &&
+    awk -v key="$key" 'index($0, key "=") == 1 { found=1; exit } END { exit !found }' "$ENV_FILE"
+}
+
+ensure_env() {
+  local key="$1" value="$2"
+  env_has_key "$key" || set_env "$key" "$value"
+}
+
+set_runtime_env() {
+  local key="$1" value="$2" app_env
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
+  if [[ -n "$app_env" ]] && env_value_from_allow_empty "$app_env" "$key" >/dev/null 2>&1; then
+    set_env_in "$app_env" "$key" "$value"
+  else
+    set_env "$key" "$value"
+  fi
+}
+
+runtime_env_value() {
+  local key="$1" app_env
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
+  if [[ -n "$app_env" ]] && env_value_from_allow_empty "$app_env" "$key" 2>/dev/null; then
+    return
+  fi
+  env_value_from_allow_empty "$ENV_FILE" "$key"
+}
+
+is_digest_image() {
+  [[ "$1" =~ @sha256:[0-9a-fA-F]{64}$ ]]
+}
+
+is_ipv6_loopback_literal() {
+  local host="${1,,}" collapsed group value compressed=0
+  local -a groups
+  [[ "$host" == *:* && "$host" =~ ^[0-9a-f:]+$ ]] || return 1
+  if [[ "$host" == *::* ]]; then
+    compressed=1
+    [[ "${host#*::}" != *::* ]] || return 1
+    collapsed="${host/::/:}"
+  else
+    collapsed="$host"
+  fi
+  collapsed="${collapsed#:}"
+  collapsed="${collapsed%:}"
+  IFS=: read -r -a groups <<< "$collapsed"
+  [[ "${#groups[@]}" -gt 0 ]] || return 1
+  if [[ "$compressed" -eq 1 ]]; then
+    [[ "${#groups[@]}" -lt 8 ]] || return 1
+  else
+    [[ "${#groups[@]}" -eq 8 ]] || return 1
+  fi
+  for group in "${groups[@]}"; do
+    [[ "$group" =~ ^[0-9a-f]{1,4}$ ]] || return 1
+  done
+  for group in "${groups[@]:0:${#groups[@]}-1}"; do
+    value=$((16#$group))
+    [[ "$value" -eq 0 ]] || return 1
+  done
+  value=$((16#${groups[-1]}))
+  [[ "$value" -eq 1 ]]
+}
+
+is_loopback_url() {
+  local url="${1,,}" host
+  [[ "$url" =~ ^https?://([^/@]+@)?(\[[^]]+\]|[^/:]+) ]] || return 1
+  host="${BASH_REMATCH[2]}"
+  host="${host#[}"
+  host="${host%]}"
+  [[ "$host" == "localhost" || "$host" == 127.* ]] || is_ipv6_loopback_literal "$host"
+}
+
+is_loopback_bind() {
+  [[ "$1" == "127.0.0.1" || "$1" == "::1" || "$1" == "localhost" ]]
+}
+
+is_private_ipv4() {
+  [[ "$1" =~ ^10\.[0-9]+\.[0-9]+\.[0-9]+$ ||
+    "$1" =~ ^192\.168\.[0-9]+\.[0-9]+$ ||
+    "$1" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]+\.[0-9]+$ ]]
+}
+
+private_ipv4_address() {
+  local candidate
+  if [[ -n "${PIXELSPACE_TEST_PRIVATE_IP:-}" ]]; then
+    is_private_ipv4 "$PIXELSPACE_TEST_PRIVATE_IP" || die "PIXELSPACE_TEST_PRIVATE_IP must be an RFC1918 IPv4 address"
+    printf '%s' "$PIXELSPACE_TEST_PRIVATE_IP"
+    return
+  fi
+  while IFS= read -r candidate; do
+    if is_private_ipv4 "$candidate"; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done < <(hostname -I 2>/dev/null | tr ' ' '\n')
+  die "--expose could not find a private IPv4 address; use --bind-address 10.x.x.x explicitly"
+}
+
+normalize_admin_email() {
+  local email="${1,,}"
+  email="${email#"${email%%[![:space:]]*}"}"
+  email="${email%"${email##*[![:space:]]}"}"
+  is_valid_admin_email "$email" || die "enter a valid --admin-email address"
+  printf '%s' "$email"
+}
+
+is_valid_admin_email() {
+  [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+all_admin_emails_valid() {
+  local configured entry trimmed
+  local -a entries
+  configured="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+  IFS=, read -r -a entries <<< "$configured"
+  for entry in "${entries[@]}"; do
+    trimmed="${entry#"${entry%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -z "$trimmed" ]] || is_valid_admin_email "${trimmed,,}" || return 1
+  done
+}
+
+first_admin_email() {
+  local configured
+  configured="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+  configured="${configured%%,*}"
+  [[ -z "$configured" ]] || normalize_admin_email "$configured"
+}
+
+read_admin_password() {
+  local password confirm mode
+  if [[ -n "$ADMIN_PASSWORD_FILE" ]]; then
+    [[ -f "$ADMIN_PASSWORD_FILE" && ! -L "$ADMIN_PASSWORD_FILE" ]] || die "admin password file must be a regular non-symlink file"
+    mode="$(stat -c '%a' "$ADMIN_PASSWORD_FILE" 2>/dev/null || printf unknown)"
+    [[ "$mode" == "600" || "$mode" == "400" ]] || die "admin password file must be mode 600 or 400 (currently $mode)"
+    password="$(<"$ADMIN_PASSWORD_FILE")"
+    [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || die "admin password file must contain one line"
+  else
+    [[ -t 0 ]] || die "local auth needs an interactive password or --admin-password-file"
+    IFS= read -r -s -p "Local admin password: " password < /dev/tty
+    printf '\n' > /dev/tty
+    IFS= read -r -s -p "Confirm password: " confirm < /dev/tty
+    printf '\n' > /dev/tty
+    [[ "$password" == "$confirm" ]] || die "passwords do not match"
+  fi
+  [[ "${#password}" -ge 12 && "${#password}" -le 256 ]] || die "admin password must be 12 to 256 characters"
+  printf '%s' "$password"
+}
+
+http_host_for_bind() {
+  local bind="${1,,}"
+  case "$bind" in
+    0.0.0.0) printf '127.0.0.1' ;;
+    ::) printf '[::1]' ;;
+    *:*) printf '[%s]' "$bind" ;;
+    *) printf '%s' "$bind" ;;
+  esac
+}
+
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 "$1" | tr -d '\n'
+  else
+    head -c "$1" /dev/urandom | base64 | tr -d '\n'
+  fi
+}
+
+host_arch() {
+  local arch="${PIXELSPACE_ARCH_OVERRIDE:-$(uname -m)}"
+  case "$arch" in
+    x86_64|amd64) printf 'amd64' ;;
+    aarch64|arm64) printf 'arm64' ;;
+    *) printf '%s' "$arch" ;;
+  esac
+}
+
+model_pack_enabled() {
+  [[ "$(env_value PIXELSPACE_MODEL_PACK 2>/dev/null || printf 'external')" == "$BUNDLED_MODEL_PACK" ]]
+}
+
+docker_volume_exists() {
+  docker volume inspect "$1" >/dev/null 2>&1
+}
+
+resolve_compose_project() {
+  if [[ -n "$COMPOSE_PROJECT_CACHE" ]]; then
+    return
+  elif [[ "$(env_value PIXELSPACE_RESOURCE_MIGRATION 2>/dev/null || true)" == "complete" ]]; then
+    COMPOSE_PROJECT_CACHE="$PIXELSPACE_COMPOSE_PROJECT"
+  elif docker_volume_exists "$PIXELSPACE_RUSTFS_VOLUME" || docker_volume_exists "$PIXELSPACE_MCP_VOLUME"; then
+    COMPOSE_PROJECT_CACHE="$PIXELSPACE_COMPOSE_PROJECT"
+  elif docker_volume_exists "$LEGACY_RUSTFS_VOLUME" || docker_volume_exists "$LEGACY_MCP_VOLUME"; then
+    COMPOSE_PROJECT_CACHE="$LEGACY_COMPOSE_PROJECT"
+  else
+    COMPOSE_PROJECT_CACHE="$PIXELSPACE_COMPOSE_PROJECT"
+  fi
+}
+
+compose_volume_name() {
+  resolve_compose_project
+  printf '%s_%s' "$COMPOSE_PROJECT_CACHE" "$1"
+}
+
+invoke_compose() {
+  local mode="$1"
+  shift
+  resolve_compose_project
+  local -a profile_args=()
+  local -a command=(
+    env PIXELSPACE_DEPLOY_ENV_FILE="$ENV_FILE"
+    docker compose -p "$COMPOSE_PROJECT_CACHE" --project-directory "$ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE"
+  )
+  model_pack_enabled && profile_args=(--profile "$BUNDLED_MODEL_PROFILE")
+  if [[ "$mode" == "dry-run-aware" ]]; then
+    run "${command[@]}" "${profile_args[@]}" "$@"
+  else
+    "${command[@]}" "${profile_args[@]}" "$@"
+  fi
+}
+
+compose() { invoke_compose direct "$@"; }
+
+run() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf '+ '
+    printf '%q ' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
+
+run_compose() {
+  invoke_compose dry-run-aware "$@"
+}
+
+run_legacy_compose() {
+  local -a profile_args=()
+  model_pack_enabled && profile_args=(--profile "$BUNDLED_MODEL_PROFILE")
+  run env PIXELSPACE_DEPLOY_ENV_FILE="$ENV_FILE" docker compose -p "$LEGACY_COMPOSE_PROJECT" \
+    --project-directory "$ROOT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \
+    "${profile_args[@]}" "$@"
+}
+
+acquire_lock() {
+  local runtime="${XDG_RUNTIME_DIR:-/tmp}"
+  LOCK_DIR="$runtime/pixelspace-operator-${UID:-$(id -u)}.lock"
+  mkdir "$LOCK_DIR" 2>/dev/null || die "another Pixelspace lifecycle command is running"
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+}
+
+generate_env() {
+  local config_existed=0
+  [[ ! -f "$ENV_FILE" ]] || config_existed=1
+  if [[ -f "$ENV_FILE" && "$PROFILE_EXPLICIT" -eq 0 ]]; then
+    PROFILE="$(env_value PIXELSPACE_PROFILE || printf 'core')"
+  fi
+  [[ "$PROFILE" == "core" || "$PROFILE" == "dgx-spark" ]] || die "profile must be core or dgx-spark"
+
+  local home data_root bind port auth public_url uid gid docker_gid admin_email configured_admins model_pack expose
+  local existing_bind existing_port existing_public_url existing_derived_url existing_model_pack
+  home="${HOME:?HOME is required}"
+  data_root="${DATA_ROOT_OVERRIDE:-${XDG_DATA_HOME:-$home/.local/share}/pixelspace}"
+  existing_bind="$(env_value WEB_BIND_ADDRESS 2>/dev/null || printf '127.0.0.1')"
+  existing_port="$(env_value WEB_PORT 2>/dev/null || printf '8080')"
+  existing_public_url="$(env_value PUBLIC_URL 2>/dev/null || true)"
+  existing_derived_url="http://$(http_host_for_bind "$existing_bind"):$existing_port"
+  bind="${BIND_OVERRIDE:-$existing_bind}"
+  if [[ "$EXPOSE" -eq 1 && -z "$BIND_OVERRIDE" ]]; then
+    bind="$(private_ipv4_address)"
+  fi
+  port="${PORT_OVERRIDE:-$existing_port}"
+  auth="${AUTH_OVERRIDE:-$(env_value AUTH_MODE 2>/dev/null || printf 'local')}"
+  expose="$(env_value PIXELSPACE_EXPOSE 2>/dev/null || printf '0')"
+  [[ "$EXPOSE" -eq 1 ]] && expose=1
+  public_url="${PUBLIC_URL_OVERRIDE:-http://$(http_host_for_bind "$bind"):$port}"
+  existing_model_pack="$(env_value PIXELSPACE_MODEL_PACK 2>/dev/null || printf 'external')"
+  model_pack="${MODEL_PACK_OVERRIDE:-$existing_model_pack}"
+  if [[ -z "$MODEL_PACK_OVERRIDE" && -n "$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]]; then
+    model_pack="external"
+  fi
+  if [[ "$existing_model_pack" == "$BUNDLED_MODEL_PACK" && "$model_pack" == "external" ]]; then
+    [[ -n "$MODEL_URL_OVERRIDE" ]] ||
+      die "disabling the bundled model requires --model-url for the external gateway"
+    MODEL_PACK_DISABLE_PENDING=1
+  fi
+  case "$model_pack" in
+    external) ;;
+    "$BUNDLED_MODEL_PACK")
+      [[ "$PROFILE" == "dgx-spark" ]] || die "the $BUNDLED_MODEL_PACK model pack requires --profile dgx-spark"
+      [[ -z "$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]] ||
+        die "--model-pack $BUNDLED_MODEL_PACK cannot be combined with --model-url or --model-id"
+      ;;
+    *) die "model pack must be external or $BUNDLED_MODEL_PACK" ;;
+  esac
+  uid="${PIXELSPACE_UID_OVERRIDE:-$(id -u)}"
+  gid="${PIXELSPACE_GID_OVERRIDE:-$(id -g)}"
+  docker_gid="${PIXELSPACE_DOCKER_GID_OVERRIDE:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null || printf '999')}"
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    umask 077
+    mkdir -p "$(dirname -- "$ENV_FILE")"
+    : > "$ENV_FILE"
+    say "Created $ENV_FILE with mode 600."
+  else
+    say "Using existing $ENV_FILE."
+  fi
+
+  ensure_env REPO_ROOT "$ROOT"
+  if [[ "$config_existed" -eq 1 ]] && ! env_has_key PIXELSPACE_DATA_ROOT; then
+    ensure_env PIXELSPACE_DATA_ROOT "$(env_value REPO_ROOT 2>/dev/null || printf '%s' "$ROOT")/apps/api/data"
+  else
+    ensure_env PIXELSPACE_DATA_ROOT "$data_root/data"
+  fi
+  ensure_env SANDBOX_ROOT "$data_root/workspaces"
+  ensure_env SKILLS_ROOT "$ROOT/apps/api/skills"
+  if [[ "$config_existed" -eq 1 && -f "$ROOT/apps/api/.env" ]] && ! env_has_key PIXELSPACE_APP_ENV_FILE; then
+    ensure_env PIXELSPACE_APP_ENV_FILE "$ROOT/apps/api/.env"
+  else
+    ensure_env PIXELSPACE_APP_ENV_FILE "$data_root/app.env"
+  fi
+  ensure_env PIXELSPACE_BACKUP_ROOT "${PIXELSPACE_BACKUP_ROOT:-$home/pixelspace-backups}"
+  ensure_env HOST_UID "$uid"
+  ensure_env HOST_GID "$gid"
+  ensure_env DOCKER_GID "$docker_gid"
+  ensure_env WEB_BIND_ADDRESS "$bind"
+  ensure_env WEB_PORT "$port"
+  ensure_env PUBLIC_URL "$public_url"
+  ensure_env AUTH_MODE "$auth"
+  ensure_env PIXELSPACE_EXPOSE "$expose"
+  ensure_env DEFAULT_USER_ID "local"
+  env_value CONNECTION_SECRET >/dev/null 2>&1 || set_env CONNECTION_SECRET "$(random_secret 32)"
+  if ! env_has_key S3_BUCKET; then
+    if legacy_compose_resources_exist; then
+      set_env S3_BUCKET "salur-media"
+    else
+      set_env S3_BUCKET "pixelspace-media"
+    fi
+  fi
+  ensure_env S3_ACCESS_KEY "rustfsadmin"
+  env_value S3_SECRET_KEY >/dev/null 2>&1 || set_env S3_SECRET_KEY "$(random_secret 24)"
+  ensure_env PIXELSPACE_DEPLOY_MODE "${DEPLOY_MODE_OVERRIDE:-build}"
+  ensure_env PIXELSPACE_API_IMAGE "pixelspace-api:local"
+  ensure_env PIXELSPACE_WEB_IMAGE "pixelspace-web:local"
+  ensure_env SANDBOX_IMAGE "pixelspace-sandbox:1"
+  ensure_env RUSTFS_IMAGE "rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21"
+  ensure_env PIXELSPACE_MODEL_PACK "$model_pack"
+  ensure_env PIXELSPACE_MODEL_IMAGE "$BUNDLED_MODEL_IMAGE"
+  ensure_env PIXELSPACE_MODEL_CACHE_ROOT "$home/.cache/huggingface"
+  ensure_env PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS "1800"
+  ensure_env DATABASE_ALLOWED_CIDRS "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+  ensure_env SUPER_ADMIN_EMAILS ""
+  ensure_env LOCAL_SESSION_TTL_HOURS "168"
+  ensure_env PIXELSPACE_PROFILE "$PROFILE"
+
+  [[ -z "$DATA_ROOT_OVERRIDE" ]] || {
+    set_env PIXELSPACE_DATA_ROOT "$DATA_ROOT_OVERRIDE/data"
+    set_env SANDBOX_ROOT "$DATA_ROOT_OVERRIDE/workspaces"
+    set_env PIXELSPACE_APP_ENV_FILE "$DATA_ROOT_OVERRIDE/app.env"
+  }
+  [[ -z "$BIND_OVERRIDE" ]] || set_env WEB_BIND_ADDRESS "$BIND_OVERRIDE"
+  [[ "$EXPOSE" -eq 1 ]] && set_env PIXELSPACE_EXPOSE 1
+  [[ -z "$PORT_OVERRIDE" ]] || set_env WEB_PORT "$PORT_OVERRIDE"
+  [[ -z "$AUTH_OVERRIDE" ]] || set_env AUTH_MODE "$AUTH_OVERRIDE"
+  if [[ -n "$PUBLIC_URL_OVERRIDE" ]]; then
+    set_env PUBLIC_URL "$PUBLIC_URL_OVERRIDE"
+  elif [[ -n "$BIND_OVERRIDE$PORT_OVERRIDE" || "$EXPOSE" -eq 1 ]] && [[ "$existing_public_url" == "$existing_derived_url" ]]; then
+    set_env PUBLIC_URL "http://$(http_host_for_bind "$bind"):$port"
+  fi
+  [[ -z "$MODEL_URL_OVERRIDE" ]] || set_runtime_env CUSTOM_BASE_URL "$MODEL_URL_OVERRIDE"
+  [[ -z "$MODEL_ID_OVERRIDE" ]] || set_runtime_env CUSTOM_MODEL "$MODEL_ID_OVERRIDE"
+  if [[ -n "$MODEL_PACK_OVERRIDE$MODEL_URL_OVERRIDE$MODEL_ID_OVERRIDE" ]]; then
+    set_env PIXELSPACE_MODEL_PACK "$model_pack"
+  fi
+  if [[ "$model_pack" == "$BUNDLED_MODEL_PACK" ]]; then
+    set_runtime_env CUSTOM_BASE_URL "$BUNDLED_MODEL_URL"
+    set_runtime_env CUSTOM_MODEL "$BUNDLED_MODEL_PACK"
+    set_runtime_env CUSTOM_API_KEY "local-no-auth"
+  fi
+  [[ -z "$DEPLOY_MODE_OVERRIDE" ]] || set_env PIXELSPACE_DEPLOY_MODE "$DEPLOY_MODE_OVERRIDE"
+  [[ "$PROFILE_EXPLICIT" -eq 0 ]] || set_env PIXELSPACE_PROFILE "$PROFILE"
+
+  admin_email="$ADMIN_EMAIL_OVERRIDE"
+  if [[ "$auth" == "local" ]]; then
+    if [[ -z "$admin_email" && -t 0 && -t 1 ]]; then
+      IFS= read -r -p "Local admin email: " admin_email < /dev/tty
+    fi
+    [[ -n "$admin_email" ]] || die "local auth requires --admin-email (or PIXELSPACE_ADMIN_EMAIL)"
+  fi
+  if [[ -n "$admin_email" ]]; then
+    admin_email="$(normalize_admin_email "$admin_email")"
+    configured_admins="$(runtime_env_value SUPER_ADMIN_EMAILS 2>/dev/null || true)"
+    # An explicit --admin-email is the account we bootstrap, so it has to be the
+    # FIRST entry: bootstrap_local_admin and doctor both read first_admin_email.
+    # Appending it (the old behaviour) let a stale first entry from an earlier
+    # run keep winning, so a one-character typo in a prior --admin-email became
+    # un-overridable — the install kept creating the old address instead.
+    local kept="" entry
+    local -a existing_admins
+    IFS=',' read -r -a existing_admins <<< "$configured_admins"
+    for entry in "${existing_admins[@]}"; do
+      entry="${entry#"${entry%%[![:space:]]*}"}"
+      entry="${entry%"${entry##*[![:space:]]}"}"
+      [[ -z "$entry" || "${entry,,}" == "$admin_email" ]] && continue
+      kept="${kept:+$kept,}$entry"
+    done
+    set_runtime_env SUPER_ADMIN_EMAILS "${admin_email}${kept:+,$kept}"
+  fi
+}
+
+doctor() {
+  local failures=0 warnings=0 arch bind auth deploy_mode data_root sandbox_root skills_root app_env
+  local connection_secret effective_profile model_pack model_image model_cache model_timeout
+  local docker_installed=0 docker_reachable=0
+  say "Pixelspace host doctor"
+  arch="$(host_arch)"
+  case "$arch" in
+    amd64|arm64) say "  ok  architecture: $arch" ;;
+    *) warn "unsupported architecture: $arch"; failures=$((failures + 1)) ;;
+  esac
+  [[ "$(uname -s)" == "Linux" ]] || { warn "only Linux hosts are supported in v1"; failures=$((failures + 1)); }
+  if command -v docker >/dev/null 2>&1; then
+    docker_installed=1
+    if docker info >/dev/null 2>&1; then
+      docker_reachable=1
+    else
+      warn "docker daemon is not reachable by $(id -un)"
+      failures=$((failures + 1))
+    fi
+    docker compose version >/dev/null 2>&1 || { warn "Docker Compose v2 is unavailable"; failures=$((failures + 1)); }
+  else
+    warn "docker is not installed"
+    failures=$((failures + 1))
+  fi
+  [[ -S /var/run/docker.sock || "${PIXELSPACE_TEST_MODE:-0}" == "1" ]] || { warn "/var/run/docker.sock is missing"; failures=$((failures + 1)); }
+  [[ -f "$ENV_FILE" ]] || { warn "configuration is missing: $ENV_FILE"; failures=$((failures + 1)); }
+  effective_profile="$(env_value PIXELSPACE_PROFILE 2>/dev/null || printf '%s' "$PROFILE")"
+  [[ "$PROFILE_EXPLICIT" -eq 0 ]] || effective_profile="$PROFILE"
+
+  if [[ -f "$ENV_FILE" ]]; then
+    bind="${BIND_OVERRIDE:-$(env_value WEB_BIND_ADDRESS || printf '0.0.0.0')}"
+    auth="${AUTH_OVERRIDE:-$(runtime_env_value AUTH_MODE || printf 'proxy')}"
+    deploy_mode="${DEPLOY_MODE_OVERRIDE:-$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')}"
+    data_root="$(env_value PIXELSPACE_DATA_ROOT || true)"
+    sandbox_root="$(env_value SANDBOX_ROOT || true)"
+    skills_root="$(env_value SKILLS_ROOT || true)"
+    app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
+    model_pack="$(env_value PIXELSPACE_MODEL_PACK || printf 'external')"
+    [[ "$auth" == "proxy" || "$auth" == "local" || "$auth" == "dev" ]] || { warn "AUTH_MODE must be proxy, local, or dev"; failures=$((failures + 1)); }
+    connection_secret="$(runtime_env_value CONNECTION_SECRET 2>/dev/null || true)"
+    [[ -n "$connection_secret" ]] || { warn "CONNECTION_SECRET must not be empty"; failures=$((failures + 1)); }
+    env_value S3_SECRET_KEY >/dev/null 2>&1 || { warn "S3_SECRET_KEY must not be empty"; failures=$((failures + 1)); }
+    all_admin_emails_valid || { warn "SUPER_ADMIN_EMAILS contains an invalid email address"; failures=$((failures + 1)); }
+    if [[ "$auth" == "dev" ]] && ! is_loopback_bind "$bind"; then
+      warn "AUTH_MODE=dev may bind only to loopback; configure a trusted proxy before LAN exposure"
+      failures=$((failures + 1))
+    fi
+    if [[ "$auth" == "local" ]]; then
+      first_admin_email >/dev/null 2>&1 || { warn "AUTH_MODE=local requires at least one valid SUPER_ADMIN_EMAILS entry"; failures=$((failures + 1)); }
+      if ! is_loopback_bind "$bind" && [[ "$(env_value PUBLIC_URL || true)" != https://* ]]; then
+        if [[ "$(env_value PIXELSPACE_EXPOSE || printf '0')" == "1" ]] && is_private_ipv4 "$bind"; then
+          warn "--expose enables insecure HTTP password login on private address $bind for testing only"
+        else
+          warn "AUTH_MODE=local requires an https PUBLIC_URL before LAN exposure (or explicit --expose for testing)"
+          failures=$((failures + 1))
+        fi
+      fi
+    fi
+    [[ "$deploy_mode" == "build" || "$deploy_mode" == "images" ]] || { warn "PIXELSPACE_DEPLOY_MODE must be build or images"; failures=$((failures + 1)); }
+    if [[ "$deploy_mode" == "images" ]]; then
+      local image_key image_ref
+      for image_key in PIXELSPACE_API_IMAGE PIXELSPACE_WEB_IMAGE SANDBOX_IMAGE RUSTFS_IMAGE; do
+        image_ref="$(env_value "$image_key" || true)"
+        if ! is_digest_image "$image_ref"; then
+          warn "$image_key must use an immutable @sha256 digest in image mode"
+          failures=$((failures + 1))
+        fi
+      done
+    fi
+    for path in "$data_root" "$sandbox_root" "$skills_root" "$app_env"; do
+      [[ -z "$path" || "$path" == /* ]] || { warn "deployment paths must be absolute: $path"; failures=$((failures + 1)); }
+    done
+    case "$model_pack" in
+      external)
+        if is_loopback_url "$(runtime_env_value CUSTOM_BASE_URL || true)"; then
+          warn "a container cannot reach a host model bound to loopback; use host.docker.internal and make the gateway listen on a Docker-reachable interface"
+          failures=$((failures + 1))
+        fi
+        ;;
+      "$BUNDLED_MODEL_PACK")
+        [[ "$effective_profile" == "dgx-spark" ]] || { warn "the $BUNDLED_MODEL_PACK model pack requires the dgx-spark profile"; failures=$((failures + 1)); }
+        [[ "$(runtime_env_value CUSTOM_BASE_URL || true)" == "$BUNDLED_MODEL_URL" ]] || { warn "the bundled model URL must be $BUNDLED_MODEL_URL"; failures=$((failures + 1)); }
+        [[ "$(runtime_env_value CUSTOM_MODEL || true)" == "$BUNDLED_MODEL_PACK" ]] || { warn "the bundled model ID must be $BUNDLED_MODEL_PACK"; failures=$((failures + 1)); }
+        model_image="$(env_value PIXELSPACE_MODEL_IMAGE || true)"
+        is_digest_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest"; failures=$((failures + 1)); }
+        model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT || true)"
+        [[ "$model_cache" == /* ]] || { warn "PIXELSPACE_MODEL_CACHE_ROOT must be an absolute path"; failures=$((failures + 1)); }
+        model_timeout="$(env_value PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS || true)"
+        if [[ ! "$model_timeout" =~ ^[0-9]+$ ]] || (( model_timeout < 60 || model_timeout > 7200 )); then
+          warn "PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS must be between 60 and 7200"
+          failures=$((failures + 1))
+        fi
+        ;;
+      *)
+        warn "PIXELSPACE_MODEL_PACK must be external or $BUNDLED_MODEL_PACK"
+        failures=$((failures + 1))
+        ;;
+    esac
+    local mode
+    mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || printf 'unknown')"
+    if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+      warn "$ENV_FILE contains secrets and should be mode 600 (currently $mode)"
+      warnings=$((warnings + 1))
+    fi
+    if [[ "$docker_installed" -eq 1 && "$docker_reachable" -eq 1 ]]; then
+      compose config -q >/dev/null 2>&1 || { warn "docker compose configuration is invalid"; failures=$((failures + 1)); }
+    fi
+  fi
+
+  if [[ "$effective_profile" == "dgx-spark" ]]; then
+    [[ "$arch" == "arm64" ]] || { warn "dgx-spark profile requires arm64"; failures=$((failures + 1)); }
+    command -v nvidia-ctk >/dev/null 2>&1 || { warn "NVIDIA Container Toolkit was not found"; failures=$((failures + 1)); }
+    command -v nvidia-smi >/dev/null 2>&1 || { warn "nvidia-smi was not found"; failures=$((failures + 1)); }
+  fi
+
+  if [[ "$failures" -gt 0 ]]; then
+    die "doctor found $failures blocking problem(s) and $warnings warning(s)"
+  fi
+  say "Doctor passed with $warnings warning(s)."
+}
+
+prepare_paths() {
+  local data_root sandbox_root app_env backup_root model_cache
+  data_root="$(env_value PIXELSPACE_DATA_ROOT)"
+  sandbox_root="$(env_value SANDBOX_ROOT)"
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE)"
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
+  run mkdir -p "$data_root" "$sandbox_root" "$(dirname -- "$app_env")" "$backup_root"
+  if model_pack_enabled; then
+    model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT)"
+    run mkdir -p "$model_cache"
+  fi
+  if [[ "$DRY_RUN" -eq 0 && ! -f "$app_env" ]]; then
+    umask 077
+    : > "$app_env"
+    chmod 600 "$app_env"
+  fi
+}
+
+prepare_model_pack() {
+  model_pack_enabled || return 0
+  local image
+  image="$(env_value PIXELSPACE_MODEL_IMAGE)"
+  docker image inspect "$image" >/dev/null 2>&1 && return
+  run docker pull "$image"
+}
+
+remove_disabled_model_pack() {
+  [[ "$MODEL_PACK_DISABLE_PENDING" -eq 1 ]] || return 0
+  run_compose --profile "$BUNDLED_MODEL_PROFILE" rm -s -f model
+}
+
+refresh_stack() {
+  local mode sandbox_image
+  mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
+  sandbox_image="$(env_value SANDBOX_IMAGE || printf 'pixelspace-sandbox:1')"
+  if [[ "$mode" == "images" ]]; then
+    if ! docker image inspect "$sandbox_image" >/dev/null 2>&1; then
+      run docker pull "$sandbox_image" || return
+    fi
+    run_compose up -d --no-build --pull missing
+  else
+    run docker build -t "$sandbox_image" -f "$ROOT/apps/api/sandbox/Dockerfile" "$ROOT/apps/api/sandbox" || return
+    run_compose up -d --build
+  fi
+}
+
+bootstrap_local_admin() {
+  [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || return 0
+  unset password
+  local email status_output status password="" generated_password=0 create_status=0 xtrace_enabled=0
+  export -n password
+  # Prefer an explicit --admin-email over the stored list, matching
+  # reset_admin_password. configure() already moves the override to the front of
+  # SUPER_ADMIN_EMAILS, but reading it directly here keeps the two in step even
+  # if that order is ever disturbed.
+  email="${ADMIN_EMAIL_OVERRIDE:-$(first_admin_email)}"
+  email="$(normalize_admin_email "$email")"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    note "local administrator $email will be created after the stack starts"
+    return
+  fi
+  if status_output="$(compose run --rm --no-deps -T api bun src/cli/local-admin.ts status --email "$email" 2>&1)"; then
+    say "Local administrator $email already exists; password unchanged."
+    return
+  else
+    status=$?
+  fi
+  [[ "$status" -eq 3 ]] || die "could not inspect the local administrator: $status_output"
+  if [[ $- == *x* ]]; then
+    xtrace_enabled=1
+    set +x
+  fi
+  if [[ -n "$ADMIN_PASSWORD_FILE" ]]; then
+    password="$(read_admin_password)"
+  else
+    password="$(random_secret 24)"
+    generated_password=1
+  fi
+  if printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts create --fail-if-exists --email "$email"; then
+    create_status=0
+  else
+    create_status=$?
+  fi
+  if [[ "$create_status" -eq 0 && "$generated_password" -eq 1 ]]; then
+    say "Generated local admin password for $email: $password"
+    say "Save this password now; Pixelspace will not show it again."
+  fi
+  password=""
+  if [[ "$xtrace_enabled" -eq 1 ]]; then
+    set -x
+  fi
+  [[ "$create_status" -eq 5 ]] && return 0
+  return "$create_status"
+}
+
+reset_admin_password() {
+  doctor
+  [[ "$(runtime_env_value AUTH_MODE || true)" == "local" ]] || die "reset-admin-password requires AUTH_MODE=local"
+  unset password
+  local email password="" reset_status=0 xtrace_enabled=0
+  export -n password
+  email="${ADMIN_EMAIL_OVERRIDE:-$(first_admin_email)}"
+  email="$(normalize_admin_email "$email")"
+  if [[ $- == *x* ]]; then
+    xtrace_enabled=1
+    set +x
+  fi
+  password="$(read_admin_password)"
+  if printf '%s\n' "$password" | compose run --rm --no-deps -T api bun src/cli/local-admin.ts reset --email "$email"; then
+    reset_status=0
+  else
+    reset_status=$?
+  fi
+  password=""
+  if [[ "$xtrace_enabled" -eq 1 ]]; then
+    set -x
+  fi
+  return "$reset_status"
+}
+
+prepare_backup_helper() {
+  local mode sandbox_image
+  [[ "$BACKUP_HELPER_READY" -eq 0 ]] || return 0
+  mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
+  sandbox_image="$(env_value SANDBOX_IMAGE || printf 'pixelspace-sandbox:1')"
+  if docker image inspect "$sandbox_image" >/dev/null 2>&1; then
+    BACKUP_HELPER_READY=1
+    return
+  fi
+  if [[ "$mode" == "images" ]]; then
+    run docker pull "$sandbox_image"
+  else
+    run docker build -t "$sandbox_image" -f "$ROOT/apps/api/sandbox/Dockerfile" "$ROOT/apps/api/sandbox"
+  fi
+  BACKUP_HELPER_READY=1
+}
+
+legacy_compose_resources_exist() {
+  docker_volume_exists "$LEGACY_RUSTFS_VOLUME" ||
+    docker_volume_exists "$LEGACY_MCP_VOLUME" ||
+    docker_volume_exists "$LEGACY_VLLM_VOLUME"
+}
+
+copy_legacy_volume() {
+  local source="$1" destination="$2" helper_image="$3"
+  docker_volume_exists "$source" || return 0
+  if docker_volume_exists "$destination"; then
+    die "both legacy and Pixelspace volumes exist ($source and $destination); refusing to overwrite either"
+  fi
+  run docker volume create "$destination" >/dev/null
+  if ! run docker run --rm --network none -v "$source:/source:ro" -v "$destination:/target" \
+    "$helper_image" sh -c 'cp -a /source/. /target/'; then
+    run docker volume rm "$destination" >/dev/null || true
+    return 1
+  fi
+}
+
+validate_legacy_volume_pair() {
+  local source="$1" destination="$2"
+  if docker_volume_exists "$source" && docker_volume_exists "$destination"; then
+    die "both legacy and Pixelspace volumes exist ($source and $destination); refusing to overwrite either"
+  fi
+}
+
+resume_legacy_volume_copy() {
+  local source="$1" destination="$2" helper_image="$3" completed="$4"
+  if [[ "$completed" -eq 1 ]]; then
+    if docker_volume_exists "$source" && ! docker_volume_exists "$destination"; then
+      die "migration state records $destination as copied, but that volume is missing"
+    fi
+    return 0
+  fi
+  if docker_volume_exists "$destination"; then
+    docker_volume_exists "$source" ||
+      die "cannot resume migration for $destination because its legacy source is missing"
+    note "discarding an incomplete copy of $destination before retrying"
+    run docker volume rm "$destination" >/dev/null
+  fi
+  copy_legacy_volume "$source" "$destination" "$helper_image"
+}
+
+record_legacy_migration_progress() {
+  [[ "$DRY_RUN" -eq 1 ]] || set_env PIXELSPACE_RESOURCE_MIGRATION "$1"
+}
+
+migrate_legacy_compose_resources() {
+  legacy_compose_resources_exist || return 0
+  local migration_state completed_copies=0
+  migration_state="$(env_value PIXELSPACE_RESOURCE_MIGRATION 2>/dev/null || true)"
+  case "$migration_state" in
+    complete|pending)
+      COMPOSE_PROJECT_CACHE="$PIXELSPACE_COMPOSE_PROJECT"
+      LEGACY_RESOURCE_CLEANUP_PENDING=1
+      return 0
+      ;;
+    "")
+      validate_legacy_volume_pair "$LEGACY_RUSTFS_VOLUME" "$PIXELSPACE_RUSTFS_VOLUME"
+      validate_legacy_volume_pair "$LEGACY_MCP_VOLUME" "$PIXELSPACE_MCP_VOLUME"
+      validate_legacy_volume_pair "$LEGACY_VLLM_VOLUME" "$PIXELSPACE_VLLM_VOLUME"
+      ;;
+    copying:none) ;;
+    copying:rustfs) completed_copies=1 ;;
+    copying:mcp) completed_copies=2 ;;
+    copying:vllm) completed_copies=3 ;;
+    *) die "PIXELSPACE_RESOURCE_MIGRATION has an unsupported state: $migration_state" ;;
+  esac
+
+  local helper_image
+  helper_image="$(env_value SANDBOX_IMAGE || printf 'pixelspace-sandbox:1')"
+  prepare_backup_helper
+  note "migrating the previous Compose resources to Pixelspace names; source volumes stay intact until health checks pass"
+  resolve_compose_project
+  [[ "$COMPOSE_PROJECT_CACHE" == "$LEGACY_COMPOSE_PROJECT" ]] || run_compose down
+  run_legacy_compose down
+  record_legacy_migration_progress "copying:none"
+  resume_legacy_volume_copy "$LEGACY_RUSTFS_VOLUME" "$PIXELSPACE_RUSTFS_VOLUME" \
+    "$helper_image" "$((completed_copies >= 1))"
+  record_legacy_migration_progress "copying:rustfs"
+  resume_legacy_volume_copy "$LEGACY_MCP_VOLUME" "$PIXELSPACE_MCP_VOLUME" \
+    "$helper_image" "$((completed_copies >= 2))"
+  record_legacy_migration_progress "copying:mcp"
+  resume_legacy_volume_copy "$LEGACY_VLLM_VOLUME" "$PIXELSPACE_VLLM_VOLUME" \
+    "$helper_image" "$((completed_copies >= 3))"
+  record_legacy_migration_progress "copying:vllm"
+  COMPOSE_PROJECT_CACHE="$PIXELSPACE_COMPOSE_PROJECT"
+  [[ "$DRY_RUN" -eq 1 ]] && return 0
+  set_env PIXELSPACE_RESOURCE_MIGRATION "pending"
+  LEGACY_RESOURCE_CLEANUP_PENDING=1
+}
+
+complete_legacy_compose_migration() {
+  [[ "$DRY_RUN" -eq 0 ]] || return 0
+  [[ "$LEGACY_RESOURCE_CLEANUP_PENDING" -eq 1 ]] || return 0
+  set_env PIXELSPACE_RESOURCE_MIGRATION "complete"
+  for volume in "$LEGACY_RUSTFS_VOLUME" "$LEGACY_MCP_VOLUME" "$LEGACY_VLLM_VOLUME"; do
+    docker_volume_exists "$volume" && run docker volume rm "$volume" >/dev/null
+  done
+  if docker image inspect salurai-sandbox:1 >/dev/null 2>&1; then
+    docker image rm salurai-sandbox:1 >/dev/null 2>&1 ||
+      warn "the unused legacy sandbox image tag could not be removed"
+  fi
+  say "Legacy Compose resources were migrated to Pixelspace names."
+}
+
+validate_backup_helper_policy() {
+  local mode helper_image
+  mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
+  helper_image="$(env_value SANDBOX_IMAGE || printf 'pixelspace-sandbox:1')"
+  if [[ "$mode" == "images" ]] && ! is_digest_image "$helper_image"; then
+    die "SANDBOX_IMAGE must use an immutable @sha256 digest before it can access backups"
+  fi
+}
+
+wait_for_health() {
+  [[ "$DRY_RUN" -eq 0 ]] || { note "health check skipped during dry-run"; return; }
+  [[ "${PIXELSPACE_SKIP_HEALTHCHECK:-0}" == "1" ]] && return
+  command -v curl >/dev/null 2>&1 || die "curl is required for post-install verification"
+  local bind port probe_host attempt
+  bind="$(env_value WEB_BIND_ADDRESS || printf '127.0.0.1')"
+  port="$(env_value WEB_PORT || printf '8080')"
+  probe_host="$(http_host_for_bind "$bind")"
+  for attempt in {1..60}; do
+    if curl -fsS --max-time 3 "http://$probe_host:$port/api/meta" >/dev/null 2>&1; then
+      say "Pixelspace is healthy at http://$probe_host:$port"
+      return
+    fi
+    sleep 2
+  done
+  run_compose ps
+  die "Pixelspace did not become healthy on port $port"
+}
+
+wait_for_model() {
+  model_pack_enabled || return 0
+  [[ "$DRY_RUN" -eq 0 ]] || { note "bundled model health check skipped during dry-run"; return; }
+  [[ "${PIXELSPACE_SKIP_HEALTHCHECK:-0}" == "1" ]] && return
+  local timeout attempts attempt container_id state health status
+  timeout="$(env_value PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS)"
+  attempts=$((timeout / 5))
+  say "Waiting for the bundled Nemotron model (first start may load cached weights for several minutes)..."
+  container_id="$(compose ps -q model)"
+  if [[ -z "$container_id" ]]; then
+    compose logs --tail 80 model || true
+    die "bundled model container is not running"
+  fi
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    read -r state health <<< "$status"
+    if [[ "$state" == "running" && "$health" == "healthy" ]]; then
+      say "Bundled model is healthy."
+      return
+    fi
+    if [[ "$state" == "exited" || "$state" == "dead" ]]; then
+      compose logs --tail 80 model || true
+      die "bundled model container $state before becoming healthy"
+    fi
+    sleep 5
+  done
+  compose logs --tail 80 model || true
+  die "bundled model did not become healthy within ${timeout}s"
+}
+
+install_stack() {
+  acquire_lock
+  generate_env
+  doctor
+  remove_disabled_model_pack
+  prepare_paths
+  migrate_legacy_compose_resources
+  prepare_model_pack
+  refresh_stack
+  wait_for_model
+  wait_for_health
+  complete_legacy_compose_migration
+  bootstrap_local_admin
+  local dashboard_url bind
+  dashboard_url="$(env_value PUBLIC_URL || true)"
+  bind="$(env_value WEB_BIND_ADDRESS || printf '127.0.0.1')"
+  say ""
+  say "Pixelspace installation complete."
+  say "Dashboard URL: $dashboard_url"
+  if is_loopback_bind "$bind"; then
+    say "Dashboard is bound to this server only; use an SSH tunnel or open it locally on the server."
+  elif [[ "$(env_value PIXELSPACE_EXPOSE || printf '0')" == "1" ]]; then
+    say "WARNING: --expose is testing-only and uses HTTP password login on the private network."
+  fi
+}
+
+running_service() {
+  local output
+  if ! output="$(compose ps --status running -q "$1")"; then
+    warn "could not determine whether the $1 service is running"
+    return 2
+  fi
+  [[ -n "$output" ]]
+}
+
+backup_volume() {
+  local volume="$1" output="$2" stage="$3" helper_image="$4" volume_list candidate found=0
+  if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+    if ! volume_list="$(docker volume ls --format '{{.Name}}')"; then
+      warn "could not inspect Docker volume $volume"
+      return 1
+    fi
+    while IFS= read -r candidate; do
+      [[ "$candidate" != "$volume" ]] || found=1
+    done <<< "$volume_list"
+    if [[ "$found" -eq 1 ]]; then
+      warn "Docker reports $volume exists but it could not be inspected"
+      return 1
+    fi
+    return 0
+  fi
+  run docker run --rm --network none -v "$volume:/source:ro" -v "$stage:/backup" "$helper_image" \
+    tar -C /source -cf "/backup/$output" .
+}
+
+BACKUP_STAGE=""
+BACKUP_API_WAS_RUNNING=0
+BACKUP_RUSTFS_WAS_RUNNING=0
+BACKUP_NEEDS_RESTART=0
+BACKUP_SANDBOX_CONTAINERS=()
+
+restart_backup_services() {
+  local failed=0
+  if [[ "$BACKUP_RUSTFS_WAS_RUNNING" -eq 1 ]] && ! compose start rustfs; then
+    warn "failed to restart rustfs after backup"
+    failed=1
+  fi
+  if [[ "$BACKUP_API_WAS_RUNNING" -eq 1 ]] && ! compose start api; then
+    warn "failed to restart api after backup"
+    failed=1
+  fi
+  if [[ "${#BACKUP_SANDBOX_CONTAINERS[@]}" -gt 0 ]] && ! docker start "${BACKUP_SANDBOX_CONTAINERS[@]}"; then
+    warn "failed to restart one or more workspace sandboxes after backup"
+    failed=1
+  fi
+  return "$failed"
+}
+
+backup_cleanup() {
+  local code=$?
+  if [[ "$BACKUP_NEEDS_RESTART" -eq 1 ]]; then
+    restart_backup_services || warn "backup failed and one or more services still require manual recovery"
+  fi
+  [[ -z "$BACKUP_STAGE" ]] || rm -rf -- "$BACKUP_STAGE"
+  if [[ -n "${RESTORE_STAGE:-}" ]]; then
+    rm -rf -- "$RESTORE_STAGE"
+    RESTORE_STAGE=""
+  fi
+  rmdir "${LOCK_DIR:-}" 2>/dev/null || true
+  return "$code"
+}
+
+backup_stack() {
+  local backup_root stamp archive archive_parent helper_image app_env volume_stage state sandbox_list sandbox_id
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  archive="${1:-$backup_root/pixelspace-$stamp.tar.gz}"
+  archive_parent="$(dirname -- "$archive")"
+  helper_image="$(env_value SANDBOX_IMAGE)"
+  validate_backup_helper_policy
+  docker image inspect "$helper_image" >/dev/null 2>&1 || die "backup helper image is unavailable: $helper_image; run install or load the offline image bundle first"
+  umask 077
+  mkdir -p "$backup_root" "$archive_parent"
+  chmod 700 "$backup_root"
+  BACKUP_API_WAS_RUNNING=0
+  BACKUP_RUSTFS_WAS_RUNNING=0
+  BACKUP_NEEDS_RESTART=0
+  BACKUP_SANDBOX_CONTAINERS=()
+  BACKUP_STAGE="$(mktemp -d)"
+  volume_stage="$BACKUP_STAGE/volumes"
+  mkdir -p "$volume_stage"
+  trap backup_cleanup EXIT
+  if running_service api; then BACKUP_API_WAS_RUNNING=1; else state=$?; [[ "$state" -eq 1 ]] || return "$state"; fi
+  if running_service rustfs; then BACKUP_RUSTFS_WAS_RUNNING=1; else state=$?; [[ "$state" -eq 1 ]] || return "$state"; fi
+  BACKUP_NEEDS_RESTART=1
+  [[ "$BACKUP_API_WAS_RUNNING" -eq 0 ]] || run_compose stop api
+  sandbox_list="$(docker ps --filter label=com.pixelspace.sandbox=1 --filter status=running --format '{{.ID}}')" ||
+    die "could not list running Pixelspace workspace sandboxes"
+  while IFS= read -r sandbox_id; do
+    [[ -z "$sandbox_id" ]] || BACKUP_SANDBOX_CONTAINERS+=("$sandbox_id")
+  done <<< "$sandbox_list"
+  sandbox_list="$(docker ps --filter 'name=^/pixelspace-' --filter status=running --format '{{.ID}}')" ||
+    die "could not list legacy Pixelspace workspace sandboxes"
+  while IFS= read -r sandbox_id; do
+    [[ -z "$sandbox_id" || " ${BACKUP_SANDBOX_CONTAINERS[*]} " == *" $sandbox_id "* ]] ||
+      BACKUP_SANDBOX_CONTAINERS+=("$sandbox_id")
+  done <<< "$sandbox_list"
+  [[ "${#BACKUP_SANDBOX_CONTAINERS[@]}" -eq 0 ]] || run docker stop "${BACKUP_SANDBOX_CONTAINERS[@]}"
+  [[ "$BACKUP_RUSTFS_WAS_RUNNING" -eq 0 ]] || run_compose stop rustfs
+
+  cp "$ENV_FILE" "$BACKUP_STAGE/pixelspace.env"
+  chmod 600 "$BACKUP_STAGE/pixelspace.env"
+  printf '%s\n' pixelspace.env data.tar workspaces.tar > "$BACKUP_STAGE/payloads"
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
+  if [[ -n "$app_env" && "$app_env" != "$ENV_FILE" && -f "$app_env" ]]; then
+    cp "$app_env" "$BACKUP_STAGE/application.env"
+    chmod 600 "$BACKUP_STAGE/application.env"
+    printf '%s\n' application.env >> "$BACKUP_STAGE/payloads"
+  fi
+  printf 'created_at=%s\nsource_commit=%s\narchitecture=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unknown)" "$(host_arch)" \
+    > "$BACKUP_STAGE/metadata"
+  local data_root sandbox_root
+  data_root="$(env_value PIXELSPACE_DATA_ROOT)"
+  sandbox_root="$(env_value SANDBOX_ROOT)"
+  mkdir -p "$data_root" "$sandbox_root"
+  tar -C "$data_root" -cf "$BACKUP_STAGE/data.tar" .
+  tar -C "$sandbox_root" -cf "$BACKUP_STAGE/workspaces.tar" .
+  backup_volume "$(compose_volume_name rustfs-data)" rustfs-data.tar "$volume_stage" "$helper_image"
+  backup_volume "$(compose_volume_name mcp-cache)" mcp-cache.tar "$volume_stage" "$helper_image"
+  [[ ! -f "$volume_stage/rustfs-data.tar" ]] || printf '%s\n' volumes/rustfs-data.tar >> "$BACKUP_STAGE/payloads"
+  [[ ! -f "$volume_stage/mcp-cache.tar" ]] || printf '%s\n' volumes/mcp-cache.tar >> "$BACKUP_STAGE/payloads"
+
+  restart_backup_services
+  BACKUP_NEEDS_RESTART=0
+  tar -C "$BACKUP_STAGE" -czf "$archive" .
+  sha256sum "$archive" | awk '{ print $1 }' > "$archive.sha256"
+  chmod 600 "$archive" "$archive.sha256"
+  rm -rf -- "$BACKUP_STAGE"
+  BACKUP_STAGE=""
+  say "Backup created: $archive"
+}
+
+canonical_clear_path() {
+  local requested="$1" path canonical_home
+  [[ -n "$requested" && "$requested" == /* ]] || die "refusing to clear unsafe path: $requested"
+  path="$(realpath -m -- "$requested")"
+  canonical_home="$(realpath -m -- "$HOME")"
+  [[ "$path" != "/" && "$path" != "$canonical_home" ]] || die "refusing to clear unsafe path: $requested"
+  printf '%s' "$path"
+}
+
+clear_directory() {
+  local path
+  path="$(canonical_clear_path "$1")"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    say "+ clear directory $path"
+  else
+    mkdir -p "$path"
+    find "$path" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  fi
+}
+
+restore_volume() {
+  local volume="$1" input="$2" stage="$3" helper_image="$4"
+  docker volume create "$volume" >/dev/null || return
+  if [[ -f "$stage/$input" ]]; then
+    run docker run --rm --network none -v "$volume:/target" -v "$stage:/backup:ro" "$helper_image" \
+      sh -c "find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /target -xf /backup/$input"
+  else
+    run docker run --rm --network none -v "$volume:/target" "$helper_image" \
+      sh -c "find /target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +"
+  fi
+}
+
+merge_restored_config() {
+  local restored="$1" destination="${2:-$ENV_FILE}" key value
+  for key in CONNECTION_SECRET S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY OPENAI_API_KEY \
+    DEEPSEEK_API_KEY CUSTOM_BASE_URL CUSTOM_MODEL CUSTOM_API_KEY OPENROUTER_API_KEY \
+    HF_TOKEN PIXELSPACE_MODEL_PACK \
+    PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS SUPER_ADMIN_EMAILS ORGANIZATION_INVITE_TTL_HOURS; do
+    value="$(env_value_from "$restored" "$key" || true)"
+    [[ -z "$value" ]] || set_env_in "$destination" "$key" "$value"
+  done
+}
+
+RESTORE_STAGE=""
+RESTORE_ROLLBACK_STAGE=""
+RESTORE_CUTOVER=0
+RESTORE_SAFETY_ARCHIVE=""
+RESTORE_HELPER_IMAGE=""
+RESTORE_DATA_ROOT=""
+RESTORE_SANDBOX_ROOT=""
+RESTORE_APP_ENV=""
+
+rollback_restore() {
+  local failed=0
+  warn "restore failed during cutover; rolling back from $RESTORE_SAFETY_ARCHIVE"
+  run_compose down || failed=1
+  mkdir -p "$RESTORE_DATA_ROOT" "$RESTORE_SANDBOX_ROOT" || failed=1
+  find "$RESTORE_DATA_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || failed=1
+  find "$RESTORE_SANDBOX_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || failed=1
+  [[ ! -f "$RESTORE_ROLLBACK_STAGE/data.tar" ]] ||
+    safe_extract_archive "$RESTORE_ROLLBACK_STAGE/data.tar" "$RESTORE_DATA_ROOT" "$RESTORE_HELPER_IMAGE" || failed=1
+  [[ ! -f "$RESTORE_ROLLBACK_STAGE/workspaces.tar" ]] ||
+    safe_extract_archive "$RESTORE_ROLLBACK_STAGE/workspaces.tar" "$RESTORE_SANDBOX_ROOT" "$RESTORE_HELPER_IMAGE" || failed=1
+  restore_volume "$(compose_volume_name rustfs-data)" rustfs-data.tar "$RESTORE_ROLLBACK_STAGE/volumes" "$RESTORE_HELPER_IMAGE" || failed=1
+  restore_volume "$(compose_volume_name mcp-cache)" mcp-cache.tar "$RESTORE_ROLLBACK_STAGE/volumes" "$RESTORE_HELPER_IMAGE" || failed=1
+  if [[ -f "$RESTORE_ROLLBACK_STAGE/pixelspace.env" ]]; then
+    cp "$RESTORE_ROLLBACK_STAGE/pixelspace.env" "$ENV_FILE" && chmod 600 "$ENV_FILE" || failed=1
+  fi
+  if [[ -n "$RESTORE_APP_ENV" && -f "$RESTORE_ROLLBACK_STAGE/application.env" ]]; then
+    cp "$RESTORE_ROLLBACK_STAGE/application.env" "$RESTORE_APP_ENV" && chmod 600 "$RESTORE_APP_ENV" || failed=1
+  fi
+  refresh_stack || failed=1
+  (wait_for_model) || failed=1
+  if [[ "$failed" -eq 0 ]]; then
+    warn "restore rollback completed; the requested archive was not applied"
+  else
+    warn "automatic rollback was incomplete; keep the stack stopped and recover manually from $RESTORE_SAFETY_ARCHIVE"
+  fi
+  return "$failed"
+}
+
+restore_cleanup() {
+  local code=$?
+  trap - EXIT
+  if [[ "$code" -ne 0 && "$RESTORE_CUTOVER" -eq 1 ]]; then
+    set +e
+    rollback_restore
+  fi
+  [[ -z "$RESTORE_STAGE" ]] || rm -rf -- "$RESTORE_STAGE"
+  [[ -z "$RESTORE_ROLLBACK_STAGE" ]] || rm -rf -- "$RESTORE_ROLLBACK_STAGE"
+  rmdir "${LOCK_DIR:-}" 2>/dev/null || true
+  return "$code"
+}
+
+validate_archive() {
+  local archive="$1" helper_image="$2"
+  docker run --rm --network none \
+    -v "$(dirname -- "$archive"):/backup:ro" "$helper_image" \
+    python3 -c 'import sys, tarfile
+with tarfile.open(sys.argv[1], "r:*") as source:
+    for member in source:
+        tarfile.data_filter(member, "/validation-root")' \
+    "/backup/$(basename -- "$archive")"
+}
+
+validate_backup_payloads() {
+  local stage="$1" helper_image="$2" payload
+  local has_env=0 has_data=0 has_workspaces=0
+  [[ -f "$stage/payloads" ]] || die "backup payload manifest is missing"
+  while IFS= read -r payload; do
+    case "$payload" in
+      pixelspace.env) has_env=1 ;;
+      data.tar) has_data=1 ;;
+      workspaces.tar) has_workspaces=1 ;;
+      application.env|volumes/rustfs-data.tar|volumes/mcp-cache.tar) ;;
+      *) die "backup payload manifest contains an unsupported entry: $payload" ;;
+    esac
+    [[ -f "$stage/$payload" ]] || die "backup payload is missing: $payload"
+    [[ "$payload" != *.tar ]] || validate_archive "$stage/$payload" "$helper_image"
+  done < "$stage/payloads"
+  [[ "$has_env" -eq 1 && "$has_data" -eq 1 && "$has_workspaces" -eq 1 ]] ||
+    die "backup payload manifest is incomplete"
+}
+
+safe_extract_archive() {
+  local archive="$1" target="$2" helper_image="$3"
+  docker run --rm --network none --user "$(id -u):$(id -g)" \
+    -v "$(dirname -- "$archive"):/backup:ro" -v "$target:/target" "$helper_image" \
+    python3 -c 'import sys, tarfile
+with tarfile.open(sys.argv[1], "r:*") as source:
+    source.extractall(sys.argv[2], filter="data")' \
+    "/backup/$(basename -- "$archive")" /target
+}
+
+restore_stack() {
+  local archive="${1:-}"
+  [[ -n "$archive" && -f "$archive" ]] || die "restore requires a backup archive path"
+  [[ "$ASSUME_YES" -eq 1 ]] || die "restore replaces current state; rerun with --yes"
+  if [[ -f "$archive.sha256" ]]; then
+    local expected_digest actual_digest
+    expected_digest="$(awk 'NR == 1 { print $1 }' "$archive.sha256")"
+    [[ "$expected_digest" =~ ^[0-9a-fA-F]{64}$ ]] || die "backup checksum is malformed: $archive.sha256"
+    actual_digest="$(sha256sum "$archive" | awk '{ print $1 }')"
+    [[ "$actual_digest" == "$expected_digest" ]] || die "backup checksum does not match: $archive"
+  fi
+  local data_root sandbox_root app_env helper_image payload backup_root safety_archive
+  helper_image="$(env_value SANDBOX_IMAGE)"
+  validate_backup_helper_policy
+  docker image inspect "$helper_image" >/dev/null 2>&1 || die "restore helper image is unavailable: $helper_image; run install or load the offline image bundle first"
+  RESTORE_STAGE="$(mktemp -d)"
+  trap restore_cleanup EXIT
+  safe_extract_archive "$archive" "$RESTORE_STAGE" "$helper_image"
+  [[ -f "$RESTORE_STAGE/metadata" ]] || die "archive is not a Pixelspace backup"
+  validate_backup_payloads "$RESTORE_STAGE" "$helper_image"
+
+  data_root="$(canonical_clear_path "$(env_value PIXELSPACE_DATA_ROOT)")"
+  sandbox_root="$(canonical_clear_path "$(env_value SANDBOX_ROOT)")"
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE || true)"
+
+  note "creating a safety backup of the current state before restore cutover"
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
+  safety_archive="$backup_root/pixelspace-restore-safety-$(date -u +%Y%m%dT%H%M%SZ)-${BASHPID}.tar.gz"
+  backup_stack "$safety_archive"
+  trap restore_cleanup EXIT
+  RESTORE_ROLLBACK_STAGE="$(mktemp -d)"
+  safe_extract_archive "$safety_archive" "$RESTORE_ROLLBACK_STAGE" "$helper_image"
+  validate_backup_payloads "$RESTORE_ROLLBACK_STAGE" "$helper_image"
+  RESTORE_SAFETY_ARCHIVE="$safety_archive"
+  RESTORE_HELPER_IMAGE="$helper_image"
+  RESTORE_DATA_ROOT="$data_root"
+  RESTORE_SANDBOX_ROOT="$sandbox_root"
+  RESTORE_APP_ENV="$app_env"
+  RESTORE_CUTOVER=1
+  run_compose down
+  clear_directory "$data_root"
+  clear_directory "$sandbox_root"
+  [[ ! -f "$RESTORE_STAGE/data.tar" ]] || safe_extract_archive "$RESTORE_STAGE/data.tar" "$data_root" "$helper_image"
+  [[ ! -f "$RESTORE_STAGE/workspaces.tar" ]] || safe_extract_archive "$RESTORE_STAGE/workspaces.tar" "$sandbox_root" "$helper_image"
+  restore_volume "$(compose_volume_name rustfs-data)" rustfs-data.tar "$RESTORE_STAGE/volumes" "$helper_image"
+  restore_volume "$(compose_volume_name mcp-cache)" mcp-cache.tar "$RESTORE_STAGE/volumes" "$helper_image"
+  if [[ "$RESTORE_CONFIG" -eq 1 && -f "$RESTORE_STAGE/pixelspace.env" ]]; then
+    [[ ! -f "$ENV_FILE" ]] || run cp "$ENV_FILE" "$ENV_FILE.before-restore"
+    merge_restored_config "$RESTORE_STAGE/pixelspace.env"
+    if [[ -n "$app_env" && -f "$RESTORE_STAGE/application.env" ]]; then
+      [[ ! -f "$app_env" ]] || cp "$app_env" "$app_env.before-restore"
+      merge_restored_config "$RESTORE_STAGE/application.env" "$app_env"
+    fi
+  fi
+  doctor
+  prepare_model_pack
+  refresh_stack
+  wait_for_model
+  wait_for_health
+  RESTORE_CUTOVER=0
+  say "Restore complete. Host paths and exposure settings were preserved; stored-data secrets were restored."
+}
+
+upgrade_stack() {
+  doctor
+  prepare_backup_helper
+  migrate_legacy_compose_resources
+  prepare_model_pack
+  backup_stack
+  refresh_stack
+  wait_for_model
+  wait_for_health
+  complete_legacy_compose_migration
+  say "Upgrade complete."
+}
+
+warn_exported_pixelspace_env() {
+  # A future install reads PIXELSPACE_* overrides (and SUPER_ADMIN_EMAILS) from
+  # the environment before it reads any file, so a value exported in the
+  # operator's shell survives a purge and silently re-seeds the next install —
+  # the exact way a stale admin address kept coming back. This script is a child
+  # process and cannot unset a variable in the parent shell, so name them and
+  # hand back the command that clears them.
+  local leaked
+  leaked="$(env | grep -oE '^(PIXELSPACE_[A-Z0-9_]+|SUPER_ADMIN_EMAILS|AUTH_MODE|DEFAULT_USER_ID)=' \
+    | sed 's/=$//' | grep -vE '^PIXELSPACE_TEST' | sort -u || true)"
+  [[ -n "$leaked" ]] || return 0
+  local -a names=()
+  local name
+  while IFS= read -r name; do names+=("$name"); done <<< "$leaked"
+  warn "These Pixelspace variables are still set in your shell and would re-seed a fresh install:"
+  printf '  %s\n' "${names[@]}" >&2
+  warn "Clear them in your current shell with:"
+  printf '  unset %s\n' "${names[*]}" >&2
+}
+
+uninstall_stack() {
+  if [[ "$PURGE" -eq 0 ]]; then
+    run_compose down
+    say "Pixelspace stopped. Configuration and data were preserved."
+    return
+  fi
+  [[ "$ASSUME_YES" -eq 1 ]] || die "--purge removes Pixelspace data; rerun with --purge --yes"
+
+  # Read and canonicalise every path before tearing anything down: the env file
+  # removed at the end is where they are recorded, and canonical_clear_path must
+  # reject an unsafe root before the stack is stopped, not after.
+  local data_root sandbox_root backup_root app_env
+  data_root="$(canonical_clear_path "$(env_value PIXELSPACE_DATA_ROOT)")"
+  sandbox_root="$(canonical_clear_path "$(env_value SANDBOX_ROOT)")"
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT 2>/dev/null || true)"
+  [[ -z "$backup_root" ]] || backup_root="$(canonical_clear_path "$backup_root")"
+  app_env="$(env_value PIXELSPACE_APP_ENV_FILE 2>/dev/null || true)"
+
+  local -a app_images=(
+    "$(env_value PIXELSPACE_API_IMAGE 2>/dev/null || printf 'pixelspace-api:local')"
+    "$(env_value PIXELSPACE_WEB_IMAGE 2>/dev/null || printf 'pixelspace-web:local')"
+    "$(env_value SANDBOX_IMAGE 2>/dev/null || printf 'pixelspace-sandbox:1')"
+    "salurai-sandbox:1"
+  )
+
+  # Services, networks, and every named volume — RustFS objects, MCP cache, the
+  # model cache — under whichever project name the stack is running as, plus any
+  # legacy or renamed volume left behind by a partial migration.
+  run_compose down -v --remove-orphans
+  local volume
+  for volume in "$PIXELSPACE_RUSTFS_VOLUME" "$PIXELSPACE_MCP_VOLUME" "$PIXELSPACE_VLLM_VOLUME" \
+    "$LEGACY_RUSTFS_VOLUME" "$LEGACY_MCP_VOLUME" "$LEGACY_VLLM_VOLUME"; do
+    ! docker_volume_exists "$volume" || run docker volume rm "$volume" >/dev/null 2>&1 || true
+  done
+
+  # Locally built images, current and legacy. Upstream base images (the model
+  # runtime, RustFS) are re-pullable and shared, so they are left in place.
+  local image
+  for image in "${app_images[@]}"; do
+    ! docker image inspect "$image" >/dev/null 2>&1 || run docker image rm "$image" >/dev/null 2>&1 || true
+  done
+
+  # On-disk state: database, workspaces, backups, and the private application
+  # env whose stale values would otherwise be adopted by the next install. A
+  # developer checkout's apps/api/.env is git-ignored working config, not
+  # deployment state, so it is left alone.
+  clear_directory "$data_root"
+  clear_directory "$sandbox_root"
+  [[ -z "$backup_root" ]] || clear_directory "$backup_root"
+  if [[ -n "$app_env" && -f "$app_env" && "$app_env" != "$ROOT/apps/api/.env" ]]; then
+    run rm -f -- "$app_env"
+  fi
+
+  # The deploy env last: everything above was read from it.
+  run rm -f -- "$ENV_FILE"
+
+  say "Pixelspace services, volumes, images, data, and configuration were removed."
+  warn_exported_pixelspace_env
+}
+
+case "$COMMAND" in
+  install) install_stack ;;
+  doctor) doctor ;;
+  status) compose ps ;;
+  logs) compose logs -f "$@" ;;
+  backup) acquire_lock; backup_stack "${1:-}" ;;
+  restore) acquire_lock; restore_stack "${1:-}" ;;
+  upgrade) acquire_lock; upgrade_stack ;;
+  uninstall) acquire_lock; uninstall_stack ;;
+  reset-admin-password) acquire_lock; reset_admin_password ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; die "unknown command: $COMMAND" ;;
+esac

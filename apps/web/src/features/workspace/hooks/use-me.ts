@@ -1,48 +1,53 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { fetchMe } from '@/shared/api/api'
 import type { UserProfile } from '@/shared/lib/types'
 
 export type MeState = {
   me: UserProfile | null
   loading: boolean
+  /** Accept the profile returned by a successful local sign-in. */
+  signedIn: (profile: UserProfile) => void
   /** Re-read the profile, after settings has changed the display name. */
   refresh: () => void
 }
 
 /**
- * Who is signed in, according to the proxy in front of this app.
+ * Who is signed in, according to the deployment's configured auth mode.
  *
- * Fetched once: the identity cannot change without a new browser session,
- * because it is established before any request reaches the console. The one
- * thing that can change while the page is open is the display name, which is
- * ours rather than the provider's, and `refresh` is how settings says so.
- *
- * A failure here is not worth surfacing as an error. The console is reachable
- * at all only because the proxy already authenticated the request, so the
- * realistic causes are a dev server with no proxy in front of it or a session
- * that expired mid-page, and the next navigation lands on the login screen
- * anyway. Returning null lets the badge stay quiet rather than showing an
- * alarming error beside working software.
+ * A local sign-in can seed the profile directly. `refresh` remains available
+ * for display-name changes and session state established outside this tab.
  */
 export function useMeState(): MeState {
   const [me, setMe] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [nonce, setNonce] = useState(0)
+  const initialLoad = useRef(true)
 
   useEffect(() => {
     let live = true
-    setLoading(true)
+    if (initialLoad.current) setLoading(true)
     fetchMe()
-      .then((profile) => live && setMe(profile))
-      .catch(() => live && setMe(null))
-      .finally(() => live && setLoading(false))
+      .then((profile) => {
+        if (!live) return
+        setMe(profile)
+      })
+      .catch(() => {
+        if (!live) return
+        setMe(null)
+      })
+      .finally(() => {
+        if (!live) return
+        initialLoad.current = false
+        setLoading(false)
+      })
     return () => {
       live = false
     }
   }, [nonce])
 
   const refresh = useCallback(() => setNonce((n) => n + 1), [])
-  return { me, loading, refresh }
+  const signedIn = useCallback((profile: UserProfile) => setMe(profile), [])
+  return { me, loading, signedIn, refresh }
 }
 
 /**

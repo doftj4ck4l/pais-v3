@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   parseAgentInvocationTimeoutMs,
+  parseAuthMode,
+  parseLocalSessionTtlMs,
   parseOrganizationInviteTtlMs,
   parsePublicUrl,
 } from "./env";
@@ -26,5 +28,19 @@ describe("organization environment configuration", () => {
     expect(() => parseAgentInvocationTimeoutMs("999")).toThrow();
     expect(() => parseAgentInvocationTimeoutMs("300001")).toThrow();
     expect(() => parseAgentInvocationTimeoutMs("1.5")).toThrow();
+  });
+
+  it("accepts the three explicit authentication modes", () => {
+    expect(parseAuthMode(undefined)).toBe("proxy");
+    expect(parseAuthMode("local")).toBe("local");
+    expect(parseAuthMode("dev")).toBe("dev");
+    expect(() => parseAuthMode("basic")).toThrow();
+  });
+
+  it("bounds local browser sessions", () => {
+    expect(parseLocalSessionTtlMs(undefined)).toBe(168 * 60 * 60 * 1000);
+    expect(parseLocalSessionTtlMs("24")).toBe(24 * 60 * 60 * 1000);
+    expect(() => parseLocalSessionTtlMs("0")).toThrow();
+    expect(() => parseLocalSessionTtlMs("721")).toThrow();
   });
 });

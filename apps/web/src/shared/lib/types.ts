@@ -371,9 +371,10 @@ export type WorkspaceRow = {
 }
 
 /**
- * Who the authenticating proxy says you are. Supplied per request by the
- * identity provider, never stored by this app.
+ * Who the active authentication mode says you are.
  */
+export type AuthMode = 'proxy' | 'local' | 'dev'
+
 export type UserProfile = {
   id: string
   username?: string
@@ -390,6 +391,13 @@ export type UserProfile = {
   providerName?: string | null
   /** Derived by the API from the trusted email allowlist; presentation only. */
   canAdministerOrganizations: boolean
+  /** How this deployment authenticated the current browser. */
+  authMode: AuthMode
+}
+
+export type AuthConfig = {
+  mode: AuthMode
+  passwordLogin: boolean
 }
 
 export type Organization = {

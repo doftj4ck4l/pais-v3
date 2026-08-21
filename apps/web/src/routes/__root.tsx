@@ -3,6 +3,8 @@ import { TooltipProvider } from '@/shared/ui/tooltip'
 import { AgentBoardContext, useAgentBoard } from '@/features/agents/hooks/use-agent-board'
 import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/use-workspace'
 import { MeContext, useMeState } from '@/features/workspace/hooks/use-me'
+import { LoginPage } from '@/pages/auth/login-page'
+import { Spinner } from '@/shared/ui/spinner'
 
 /**
  * Everything every route needs, and nothing any single route owns.
@@ -24,8 +26,23 @@ export const Route = createRootRoute({
 })
 
 function RootLayout() {
-  const workspace = useWorkspaceState()
   const me = useMeState()
+
+  if (me.loading) {
+    return (
+      <div className="flex h-full items-center justify-center" role="status" aria-label="Loading Pixelspace">
+        <Spinner className="size-5" />
+      </div>
+    )
+  }
+
+  if (!me.me) return <LoginPage onSignedIn={me.signedIn} />
+
+  return <AuthenticatedRoot me={me} />
+}
+
+function AuthenticatedRoot({ me }: { me: ReturnType<typeof useMeState> }) {
+  const workspace = useWorkspaceState()
   const board = useAgentBoard(workspace.scope)
 
   return (

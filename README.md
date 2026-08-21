@@ -19,6 +19,36 @@ bun run dev            # API on :4000, web on :5173
 
 Open http://localhost:5173.
 
+For a persistent single-host installation on Linux, use the on-prem operator
+instead of the development setup:
+
+```bash
+./install.sh --admin-email operator@example.com
+scripts/pixelspace doctor
+```
+
+It generates private host configuration, builds or pulls the application and
+sandbox images, starts Compose, and verifies the public `/api/meta` path. The
+secure default listens only on `127.0.0.1:8080`. Unless a protected password
+file is supplied, installation generates a random first-administrator password
+and shows it once after account creation. LAN exposure requires TLS or the
+trusted authentication proxy described below. For trusted-network testing,
+`./install.sh --expose` opts into a private-IP HTTP endpoint. See [ON_PREM.md](ON_PREM.md) for
+DGX Spark, authentication, lifecycle, backup, restore, and upgrade instructions.
+
+For a task-oriented walkthrough from cloning the repository through first login
+and daily operation, use the [Pixelspace setup manual](SETUP_MANUAL.md).
+
+On a DGX Spark, Pixelspace can manage the supported Nemotron runtime on its
+private Compose network:
+
+```bash
+./install.sh \
+  --profile dgx-spark \
+  --model-pack nemotron-3.5-lightning \
+  --admin-email operator@example.com
+```
+
 `setup` is idempotent — re-run it any time. It installs dependencies, creates
 `apps/api/.env` from the example if missing, and builds the sandbox image. It
 finishes by listing anything it could not do rather than failing silently, so a
@@ -381,6 +411,11 @@ has no host port, because it has no authentication either.
 Ask Claude Code to **"deploy"** and the `deploy` skill in `.claude/skills/`
 runs this: tests, build, start, then verifies `/api/meta` answers through the
 proxy.
+
+The commands above remain the source-deployment path for the internal host.
+New single-host installations should use `./install.sh`, which discovers the
+host identity and Docker group, keeps state outside the checkout, defaults to
+loopback-only exposure, and provides explicit lifecycle commands.
 
 **Docker-out-of-Docker.** The API reaches the host daemon through a
 bind-mounted `/var/run/docker.sock` and starts each workspace's sandbox as a

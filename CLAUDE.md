@@ -131,7 +131,7 @@ missing directory.
 
 ## Environment files
 
-Two, and they are not interchangeable:
+The source deployment uses two files, and they are not interchangeable:
 
 - **`.env` (root)** — deployment config: `REPO_ROOT`, `SANDBOX_ROOT`, `HOST_UID`,
   `DOCKER_GID`, `WEB_PORT`. Read by docker-compose.
@@ -140,6 +140,14 @@ Two, and they are not interchangeable:
 
 Put an API key in the wrong one and it works in dev and is silently absent in
 the deployment.
+
+The on-prem operator is different. `scripts/pixelspace install` makes its
+private deployment env the runtime source of truth and points
+`PIXELSPACE_APP_ENV_FILE` at an empty private file so a checkout's
+`apps/api/.env` cannot override it. When adopting an older deployment, the
+operator preserves an existing application env path and includes that file in
+backups. Never put either generated env inside an image; `.dockerignore` must
+exclude both `.env` patterns and `app.env` at every depth.
 
 ## Who the caller is
 
@@ -155,6 +163,14 @@ Two halves make that header trustworthy, and neither works alone:
 - The deploy host drops traffic to `WEB_PORT` from anywhere but the proxy. **If
   that port is ever published more widely, the header is forgeable and the
   isolation is gone** — the firewall rule is part of this control, not separate.
+
+On-prem installs may instead use `AUTH_MODE=local`. The operator bootstraps the
+first email/password administrator after the stack becomes healthy. Passwords
+are Argon2id hashes, browser session tokens are HttpOnly/SameSite cookies stored
+only as SHA-256 digests, and password reset revokes all sessions. Local auth on
+a non-loopback bind requires an HTTPS `PUBLIC_URL`; `AUTH_MODE=dev` remains a
+loopback-only developer convenience. Never put a plaintext password in env,
+Compose arguments, logs, or the database.
 
 `/api/meta` is deliberately open: it carries no tenant data and is what the
 container healthcheck calls. Gate it and the container reports unhealthy.
@@ -510,7 +526,7 @@ change what an invisible page was showing and look like nothing happened.
 
 ## Deploying
 
-Two targets, and they are not the same machine.
+Three targets, and they are not the same machine.
 
 **This host.** Say "deploy" and use `.claude/skills/deploy/SKILL.md`. It runs
 tests, builds, starts, and verifies `/api/meta` through the proxy. `docker
@@ -524,6 +540,22 @@ Merging is a release, so treat a merge to `main` as one. The rsync runs
 *and* from deletion — that is the only thing standing between a deploy and the
 live SQLite database.
 
+**On-prem hosts and DGX Spark.** `scripts/pixelspace` is the first-party
+single-host operator; `ON_PREM.md` is its user contract. It supports Linux
+`amd64` and `arm64`, defaults to loopback plus `AUTH_MODE=local`, and bootstraps
+the first administrator from a TTY or protected password file. LAN exposure
+requires either local auth behind TLS or `AUTH_MODE=proxy` behind a trusted TLS
+proxy and firewall. Persistent data and workspaces live outside the checkout. Build mode
+builds API, web, and sandbox images locally; image mode accepts only immutable
+multi-architecture digest references and reuses images already loaded for an
+offline install. Pixelspace never installs, restarts, or reconfigures the host's
+model service; `CUSTOM_BASE_URL` points at a separately managed
+OpenAI-compatible gateway. Lifecycle operations are locked: backup captures
+SQLite, quiesced workspace sandboxes, RustFS, MCP cache, and decryption secrets;
+restore uses safe archive extraction, creates a safety backup, and attempts
+automatic rollback after a failed cutover; upgrade re-runs doctor and backs up
+before refresh; uninstall preserves data unless both `--purge --yes` are present.
+
 **CI pins bun, and the pin is in the workflow, not in a manifest.** `BUN_VERSION`
 in `deploy.yml` decides what CI runs; nothing checks it against what you have.
 Upgrading bun locally without bumping it means the suite you watched pass is not
@@ -531,29 +563,29 @@ the suite that gates the deploy. The binary comes from npm's platform package
 rather than `bun.sh/install`, because that script pulls ~35MB from github.com and
 a deploy has already died on `curl: (56)` doing it.
 
-## The old name
+## Legacy name compatibility
 
-The product was called Salur. Three things still say so, and each of them is a
-migration rather than an edit:
+Fresh deployments use Pixelspace for the Compose project, volumes, container
+names, and media bucket. The installer migrates legacy Compose volumes before
+starting the renamed stack, keeps the source volumes until the new stack passes
+health checks, then removes the old resources.
+
+Two internal compatibility values can still contain the former name:
 
 - **`SALT` in `lib/crypto.ts`** derives the key every stored secret was
   encrypted with. A new salt derives a different key, and every MCP header,
   database URL and connector token in `app.db` becomes undecryptable.
-- **`S3_BUCKET` defaults to `salur-media`** because that is where the images
-  already are. Point it somewhere new and every `/api/images/<id>` in an old
-  transcript 404s.
-- **The compose project is `name: salurai`**, which is what the running
-  containers and the `rustfs` named volume are keyed by. Renaming it starts a
-  second, empty stack beside the first.
+- Existing `.env` files can keep **`S3_BUCKET=salur-media`** so stored images
+  remain readable. New installs default to `pixelspace-media`; changing an
+  existing bucket value without copying its objects breaks old image links.
 
 `.forgejo/workflows/deploy.yml` also still deploys to `salur@/opt/salur`: that
 is a user and a directory on the deploy host, not a string in this repo.
 
 Everything else — package names, the sandbox container prefix, the sandbox
-image tag, `SANDBOX_ROOT`, the spill directory — is Pixelspace. A machine that
-ran the old build keeps its old workspace directory and image tag, so a dev box
-wants `mv ~/salurai-workspaces ~/pixelspace-workspaces` and a
-`docker tag salurai-sandbox:1 pixelspace-sandbox:1` once.
+image tag, `SANDBOX_ROOT`, and the spill directory — is Pixelspace. The on-prem
+installer also removes the unused legacy sandbox image tag after a successful
+resource migration.
 
 ## Conventions
 
