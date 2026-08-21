@@ -23,8 +23,14 @@
 # 3.13. Node 24 is the Active LTS; 22 has been security-only since Oct 2025.
 FROM node:24-trixie-slim
 
+# bash: the `bash` tool runs `bash -lc`, so pin it rather than leaning on the
+#   Debian base shipping it — the model writes here-strings and `[[ ]]` that dash
+#   rejects.
+# curl: the model reaches for it to fetch URLs from bash; without it every such
+#   command died code 127 (measured).
+# ghostscript: `ps2pdf` and PDF post-processing — another 127 in the traces.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-pip imagemagick \
+ && apt-get install -y --no-install-recommends bash curl ghostscript python3 python3-pip imagemagick \
  && rm -rf /var/lib/apt/lists/*
 
 # Debian marks its Python as externally managed; these are the only packages in
@@ -39,6 +45,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       python-docx==1.2.0 \
       python-pptx==1.0.2 \
       pypdf==6.16.1 \
+      `# reportlab for generating PDFs from scratch — the model tried reportlab` \
+      `# and fpdf and found neither, then thrashed for a PDF path (measured)` \
+      reportlab==4.2.5 \
       `# images — pillow for scripted edits, opencv headless because the plain` \
       `# wheel drags in an X11/libGL chain for a GUI nothing here can show` \
       pillow==12.3.0 \
@@ -62,6 +71,15 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # from an arbitrary cwd, so NODE_PATH makes them importable from the workspace.
 RUN npm install -g exceljs@4.4.0 docx@9.0.2 pdf-lib@1.17.1
 ENV NODE_PATH=/usr/local/lib/node_modules
+
+# When the preinstalled set misses something, the agent should be able to
+# `pip install` it for the life of the container instead of dead-ending on
+# Debian's PEP 668 "externally-managed-environment" (measured: the model tried
+# `pip install fpdf2` and was refused, with no way forward). There is no system
+# Python here to protect, so let runtime installs land in site-packages too.
+ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Skills are bind-mounted read-only here at run time; the directory exists so a
 # container started without the mount fails on a missing skill, not a missing path.

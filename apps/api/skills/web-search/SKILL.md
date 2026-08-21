@@ -1,6 +1,7 @@
 ---
 name: web-search
 description: Search the web (DuckDuckGo, no API key) and return a list of result titles and URLs. Use when you need live, current, or factual information from the open web.
+usage: a plain-text search query (optionally end with -n <count> to cap results, default 8)
 ---
 
 # web-search

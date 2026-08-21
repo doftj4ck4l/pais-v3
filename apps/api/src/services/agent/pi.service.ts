@@ -171,7 +171,23 @@ export async function runPiAgent(opts: {
       containerId: sandbox.containerId,
       cwd: sandbox.workspacePath,
     });
-    releaseSandbox = () => sandboxService.release(workspaceId);
+    // Keep the sandbox marked in-use for the life of the run. lastUsedAt is
+    // otherwise written only at acquire and release, so a run whose work — or
+    // the model's own thinking between tool calls — outlasts SANDBOX_IDLE_MS had
+    // its container reaped from under it, and the next tool call died with
+    // "No such container" (measured in the DGX traces). A heartbeat at half the
+    // idle window keeps the reaper away while the run is active.
+    const heartbeat = setInterval(
+      () => {
+        void sandboxService.keepAlive(workspaceId);
+      },
+      Math.max(1_000, Math.floor(appEnv.sandboxIdleMs / 2)),
+    );
+    heartbeat.unref?.();
+    releaseSandbox = async () => {
+      clearInterval(heartbeat);
+      await sandboxService.release(workspaceId);
+    };
     execCwd = sandbox.workspacePath;
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
@@ -203,7 +219,7 @@ export async function runPiAgent(opts: {
   // parallel MCP writes from replacing each other's approval prompt, and also
   // prevents a model-authored ask_user call from racing an enforced approval.
   const requestUserInput = !chatOnly && conversationId
-    ? createUserInputRequester(conversationId, emit)
+    ? createUserInputRequester(conversationId, emit, appEnv.userPromptTimeoutMs)
     : undefined;
 
   // --- long-term memory tools (remember/recall), scoped to the workspace ---
@@ -379,7 +395,7 @@ export async function runPiAgent(opts: {
           }),
         requestApproval: requestUserInput
           ? async (request, toolSignal) => {
-              const answer = await requestUserInput(
+              const outcome = await requestUserInput(
                 {
                   question: request.question,
                   options: [...APPROVAL_OPTIONS],
@@ -387,7 +403,7 @@ export async function runPiAgent(opts: {
                 },
                 toolSignal ?? signal,
               );
-              const approved = approvalGranted(answer);
+              const approved = approvalGranted(outcome);
               emit({
                 type: "trace",
                 step: "mcp.approval",
@@ -396,6 +412,9 @@ export async function runPiAgent(opts: {
                   tool: request.tool,
                   destructive: request.destructive,
                   approved,
+                  // A timeout denies too, but for a different reason than the
+                  // user clicking Deny — record which so the trace isn't a lie.
+                  outcome: outcome.status,
                 },
               });
               return approved;
@@ -462,14 +481,21 @@ export async function runPiAgent(opts: {
   }
 
   // --- pi-native skills (SKILL.md) loaded from apps/api/skills ---
-  const skills = chatOnly ? [] : (await getSkills()).skills;
+  const skillCatalog = chatOnly ? null : await getSkills();
+  const skills = skillCatalog?.skills ?? [];
   if (!chatOnly) {
     agentTools.push({
       name: "call_skill",
       description:
-        "Invoke a loaded skill by running its command. Skills available: " +
-        skills.map((s) => s.name).join(", ") +
-        ". Pass the query or URL as 'query'.",
+        "Invoke a loaded skill by running its command. Pass the query or arguments as 'query'. " +
+        "Skills available (with the arguments they expect, where declared): " +
+        skills
+          .map((s) => {
+            const usage = skillCatalog!.usage.get(s.name);
+            return usage ? `${s.name} — ${usage}` : s.name;
+          })
+          .join("; ") +
+        ".",
       parameters: Type.Object({
         skill: Type.String(),
         query: Type.String(),
@@ -480,6 +506,25 @@ export async function runPiAgent(opts: {
         return { content: [{ type: "text" as const, text: out }], details: { output: out } };
       },
     });
+
+    // web_search is a skill, but the model reaches for it as a bare tool and
+    // burns a turn discovering it isn't one ("Tool web-search not found",
+    // measured in the DGX traces). Surface it as a first-class tool that runs
+    // the exact same skill, so the capability is findable where it's looked for.
+    if (skills.some((s) => s.name === "web-search")) {
+      agentTools.push({
+        name: "web_search",
+        description:
+          "Search the web and return result titles, snippets, and URLs. Use this for " +
+          "current or external information, then read a promising result with fetch_url.",
+        parameters: Type.Object({ query: Type.String() }),
+        label: "web_search",
+        execute: async (_id: string, params: any) => {
+          const out = await invokeSkill("web-search", String(params?.query ?? ""), execEnv);
+          return { content: [{ type: "text" as const, text: out }], details: { output: out } };
+        },
+      });
+    }
   }
 
   // --- prompt templates loaded from apps/api/prompts/*.md ---
@@ -710,6 +755,41 @@ export async function runPiAgent(opts: {
    * its own writes. This array is the same data, already in hand.
    */
   const toolLog: ToolCallRecord[] = [];
+
+  // Live thrash guard. A tool called several times with nothing to show for it —
+  // empty output or "no results" — is the shape of a hunt for something that
+  // isn't there (six fruitless web_search queries in a row, measured). Count
+  // barren results per tool and, once, append a note telling the model to stop
+  // and change tack, so a run doesn't burn its budget reformulating the same
+  // dead query. A useful result resets that tool's streak.
+  const barrenByTool = new Map<string, number>();
+  let thrashNudged = false;
+  const THRASH_LIMIT = 3;
+
+  harness.on("tool_result", (event: any) => {
+    if (thrashNudged) return undefined;
+    const resultText = (Array.isArray(event?.content) ? event.content : [])
+      .map((part: any) => (typeof part?.text === "string" ? part.text : ""))
+      .join(" ")
+      .toLowerCase();
+    const barren =
+      resultText.trim() === "" ||
+      /\bno results?\b|not found|0 results|could ?n.?t find|nothing found/.test(resultText);
+    if (!barren) {
+      barrenByTool.delete(event?.toolName);
+      return undefined;
+    }
+    const seen = (barrenByTool.get(event?.toolName) ?? 0) + 1;
+    barrenByTool.set(event?.toolName, seen);
+    if (seen < THRASH_LIMIT) return undefined;
+    thrashNudged = true;
+    emit({ type: "trace", step: "run.thrash_nudge", fields: { tool: event?.toolName, barren: seen } });
+    const note =
+      `\n\n[note] "${event?.toolName}" has returned nothing useful ${seen} times. Stop retrying it: ` +
+      `ask the user for what's missing, try a different tool or a specific URL with fetch_url, or ` +
+      `continue with what you already have and say plainly what you could not find.`;
+    return { content: [...(event?.content ?? []), { type: "text" as const, text: note }] };
+  });
 
   harness.subscribe((event: AgentHarnessEvent) => {
     try {

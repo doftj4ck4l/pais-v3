@@ -36,6 +36,20 @@ export function parseAgentInvocationTimeoutMs(raw: string | undefined): number {
   return milliseconds;
 }
 
+export function parseUserPromptTimeoutMs(raw: string | undefined): number {
+  // 10 minutes: long enough for a user to think, bounded enough that one who
+  // walked away does not wedge the run (an approval was measured waiting ~24
+  // min). 0 disables the bound; otherwise 30s–1h.
+  const milliseconds = raw === undefined || raw.trim() === "" ? 600_000 : Number(raw);
+  if (
+    !Number.isInteger(milliseconds) ||
+    (milliseconds !== 0 && (milliseconds < 30_000 || milliseconds > 3_600_000))
+  ) {
+    throw new Error("USER_PROMPT_TIMEOUT_MS must be 0 (disabled) or an integer from 30000 to 3600000.");
+  }
+  return milliseconds;
+}
+
 export type AuthMode = "proxy" | "dev" | "local";
 
 export function parseAuthMode(raw: string | undefined): AuthMode {
@@ -74,6 +88,9 @@ export const env = {
   agentInvocationTimeoutMs: parseAgentInvocationTimeoutMs(
     process.env.AGENT_INVOCATION_TIMEOUT_MS,
   ),
+
+  /** Auto-cancel an unanswered ask_user / approval prompt after this long. */
+  userPromptTimeoutMs: parseUserPromptTimeoutMs(process.env.USER_PROMPT_TIMEOUT_MS),
 
   /** Browser-session lifetime for AUTH_MODE=local. */
   localSessionTtlMs: parseLocalSessionTtlMs(process.env.LOCAL_SESSION_TTL_HOURS),

@@ -98,6 +98,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY package.json bun.lock ./
 COPY apps/api ./apps/api
+# The version travels with the image, so a running container can report what it
+# is (GET /api/meta) without any external env — see src/lib/version.ts.
+COPY VERSION ./VERSION
 
 # The API resolves its SQLite file as `cwd/data/app.db`, so cwd is part of the
 # contract, not a convenience.

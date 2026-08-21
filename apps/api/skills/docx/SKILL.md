@@ -1,6 +1,7 @@
 ---
 name: docx
 description: Create .docx Word documents with headings, paragraphs, bullet lists and tables. Use when the user wants a Word document, a report, a letter or a formatted write-up. Pass a JSON argument describing the blocks.
+usage: a JSON object; required "path" (e.g. "report.docx") and "blocks" (array of heading/paragraph/bullets/table/pagebreak); optional "title"
 run: python3 $SKILL_DIR/docx_skill.py
 ---
 

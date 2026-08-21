@@ -35,13 +35,24 @@ export type AskUserTool = {
 type AskUserEvent = Extract<AgentEvent, { type: "ask_user" }>;
 export type UserInputRequest = Pick<AskUserEvent, "question" | "options" | "kind">;
 
+/**
+ * Why a prompt ended. `timeout` is distinct from `aborted` on purpose: an abort
+ * ends the run, but a timeout leaves it running, so the model must be told to
+ * carry on rather than that it was stopped.
+ */
+export type UserInputOutcome =
+  | { status: "answered"; answer: string }
+  | { status: "aborted" }
+  | { status: "timeout" };
+
 export type UserInputRequester = (
   request: UserInputRequest,
   signal?: AbortSignal,
-) => Promise<string | null>;
+) => Promise<UserInputOutcome>;
 
 export const APPROVAL_OPTIONS = ["Allow once", "Deny"] as const;
-export const approvalGranted = (answer: string | null): boolean => answer === APPROVAL_OPTIONS[0];
+export const approvalGranted = (outcome: UserInputOutcome): boolean =>
+  outcome.status === "answered" && outcome.answer === APPROVAL_OPTIONS[0];
 
 let counter = 0;
 /** Unique per question. Not crypto — it only has to be distinct within a run. */
@@ -61,6 +72,12 @@ function newQuestionId(): string {
 export function createUserInputRequester(
   conversationId: string,
   emit: (event: AgentEvent) => void,
+  /**
+   * Auto-cancel a prompt left unanswered this long, so a user who walked away
+   * cannot wedge the run indefinitely (an approval was measured waiting ~24
+   * minutes). 0 or undefined disables the bound. See USER_PROMPT_TIMEOUT_MS.
+   */
+  timeoutMs?: number,
 ): UserInputRequester {
   let active = false;
   const waiting: (() => void)[] = [];
@@ -81,14 +98,14 @@ export function createUserInputRequester(
         waiting.push(enter);
         signal?.addEventListener("abort", onAbort, { once: true });
       });
-      if (!entered) return null;
+      if (!entered) return { status: "aborted" };
     } else {
       // Keep the first emission synchronous. Existing callers start execute(),
       // then immediately inspect the emitted event before awaiting the result.
       active = true;
     }
     try {
-      if (signal?.aborted) return null;
+      if (signal?.aborted) return { status: "aborted" };
 
       const questionId = newQuestionId();
       emit({
@@ -99,17 +116,31 @@ export function createUserInputRequester(
         kind: request.kind,
       });
 
-      return await new Promise<string | null>((resolve) => {
-        const finish = (answer: string | null) => {
+      return await new Promise<UserInputOutcome>((resolve) => {
+        // Timeout and abort both resolve the *active* prompt so the finally
+        // below runs and releases the next queued prompt — a timeout that
+        // stranded the queue would be a worse hang than the one it fixes.
+        const timer =
+          timeoutMs && timeoutMs > 0
+            ? setTimeout(() => {
+                cancelQuestion(questionId);
+                finish({ status: "timeout" });
+              }, timeoutMs)
+            : undefined;
+        (timer as any)?.unref?.();
+        const finish = (outcome: UserInputOutcome) => {
+          if (timer) clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
-          resolve(answer);
+          resolve(outcome);
         };
         const onAbort = () => {
           cancelQuestion(questionId);
-          finish(null);
+          finish({ status: "aborted" });
         };
 
-        registerQuestion(questionId, conversationId, (answer) => finish(answer));
+        registerQuestion(questionId, conversationId, (answer) =>
+          finish({ status: "answered", answer }),
+        );
         if (signal?.aborted) return onAbort();
         signal?.addEventListener("abort", onAbort, { once: true });
       });
@@ -153,9 +184,18 @@ export function createAskUserTool(
         ? params.options.map((o: unknown) => String(o)).filter((o: string) => o.length > 0)
         : [];
 
-      const answer = await requestInput({ question, options, kind: "question" }, signal);
-      if (answer !== null) {
-        return text(`The user answered: ${JSON.stringify(answer)}`);
+      const outcome = await requestInput({ question, options, kind: "question" }, signal);
+      if (outcome.status === "answered") {
+        return text(`The user answered: ${JSON.stringify(outcome.answer)}`);
+      }
+
+      // A timeout leaves the run going, so tell the model to continue rather
+      // than that it was stopped — and not to just re-ask the same thing.
+      if (outcome.status === "timeout") {
+        return text(
+          "No answer — the prompt timed out and the user did not respond. The run is still going: " +
+            "continue with a reasonable assumption or a different approach, and do not repeat the same question.",
+        );
       }
 
       // The run was stopped (or the tab closed, which aborts it) before the

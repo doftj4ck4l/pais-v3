@@ -32,6 +32,12 @@ describe("api auth wiring", () => {
     expect(res.status).toBe(200);
   });
 
+  it("reports the build version on /api/meta", async () => {
+    const meta = (await (await createApp().request("/api/meta")).json()) as { version?: string };
+    expect(typeof meta.version).toBe("string");
+    expect(meta.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it("leaves agent invocation open for bearer-key callers", async () => {
     const res = await createApp().request("/api/agents/invoke", {
       method: "POST",

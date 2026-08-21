@@ -47,6 +47,15 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     `tool, which returns a URL; give them that URL and never a bare path. Images come back as ` +
     `a link to embed as markdown so the picture shows in your reply.`;
 
+  // The shell and the platform are two different places, and the model conflates
+  // them: a run tried to pipe `fetch_url`'s output through a bash command, and
+  // `fetch_url` is not a program in this filesystem. Name the boundary so tools
+  // are called as tools.
+  out +=
+    ` "bash" runs commands in this filesystem; the other tools — "fetch_url", "web_search", ` +
+    `"search_docs", "read_image", and any skill — run in the platform, not the shell. Call ` +
+    `them as tools; do not invoke them inside a bash command.`;
+
   // A model that cannot see an installed package assumes an empty box.
   //
   // Asked to edit an image, a run spent its first minutes on `pip install`
@@ -67,11 +76,14 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     out +=
       ` The container already has a working toolchain: Python 3 with pillow and opencv for ` +
       `images, numpy, pandas, scipy and scikit-learn for data, matplotlib, seaborn and plotly ` +
-      `for charts, openpyxl, python-docx, python-pptx and pypdf for documents, requests, ` +
-      `beautifulsoup4 and lxml for fetching and parsing; ImageMagick ("magick") on the shell; ` +
-      `and Node with exceljs, docx and pdf-lib. Assume a common library is present and just ` +
-      `import it. If you are unsure, check ("pip show <name>", "which <cmd>") before installing ` +
-      `— installing something that is already there wastes most of a turn.`;
+      `for charts, openpyxl, python-docx, python-pptx, pypdf and reportlab for documents (read ` +
+      `and write, including PDFs from scratch), requests, beautifulsoup4 and lxml for fetching ` +
+      `and parsing; ImageMagick ("magick"), curl and ghostscript ("ps2pdf") on the shell; and ` +
+      `Node with exceljs, docx and pdf-lib. Assume a common library is present and just import ` +
+      `it. If you are unsure, check ("pip show <name>", "which <cmd>") before installing — ` +
+      `installing something that is already there wastes most of a turn. If something genuinely ` +
+      `is missing, "pip install <name>" works here and lasts for this container, so install it ` +
+      `and move on rather than hunting for a workaround.`;
   }
 
   // Only worth saying when there is something to confuse it with. A workspace

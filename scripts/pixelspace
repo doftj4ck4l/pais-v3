@@ -63,7 +63,7 @@ Commands:
   logs        Follow service logs
   backup      Stop stateful services briefly and create a consistent archive
   restore     Restore an archive (requires --yes)
-  upgrade     Back up, refresh images/builds, recreate, and verify
+  upgrade     Back up, refresh images/builds, recreate, and verify (--dry-run to preview)
   uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
   reset-admin-password  Reset a local admin password and revoke its sessions
   help        Show this help
@@ -118,8 +118,8 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}"
 
-if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" ]]; then
-  die "--dry-run is supported only for install"
+if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" && "$COMMAND" != "upgrade" ]]; then
+  die "--dry-run is supported only for install and upgrade"
 fi
 
 env_value_from_allow_empty() {
@@ -200,6 +200,36 @@ runtime_env_value() {
 
 is_digest_image() {
   [[ "$1" =~ @sha256:[0-9a-fA-F]{64}$ ]]
+}
+
+# The app version, from the repo-root VERSION file (the same file baked into the
+# API image). A missing or malformed file reads as 0.0.0-dev so a partial
+# checkout still installs; the app itself falls back the same way.
+read_app_version() {
+  local raw
+  raw="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || true)"
+  if [[ "$raw" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+-].*)?$ ]]; then
+    printf '%s' "$raw"
+  else
+    printf '0.0.0-dev'
+  fi
+}
+
+# Compare the X.Y.Z cores of two versions (pre-release/build suffixes ignored).
+# Prints -1 if the first is older, 0 if equal, 1 if newer.
+semver_compare() {
+  local a="${1%%[-+]*}" b="${2%%[-+]*}" i x y
+  local -a A B
+  IFS=. read -r -a A <<< "$a"
+  IFS=. read -r -a B <<< "$b"
+  for i in 0 1 2; do
+    x="${A[i]:-0}"; y="${B[i]:-0}"
+    [[ "$x" =~ ^[0-9]+$ ]] || x=0
+    [[ "$y" =~ ^[0-9]+$ ]] || y=0
+    if ((10#$x < 10#$y)); then printf -- '-1'; return; fi
+    if ((10#$x > 10#$y)); then printf '1'; return; fi
+  done
+  printf '0'
 }
 
 is_ipv6_loopback_literal() {
@@ -511,6 +541,10 @@ generate_env() {
   fi
   ensure_env S3_ACCESS_KEY "rustfsadmin"
   env_value S3_SECRET_KEY >/dev/null 2>&1 || set_env S3_SECRET_KEY "$(random_secret 24)"
+  # The installed version, tracked here for the CLI (status/doctor/upgrade). The
+  # app reports its own version from the VERSION baked into its image, so this is
+  # only the operator's record of what was last installed, not what the app reads.
+  ensure_env PIXELSPACE_VERSION "$(read_app_version)"
   ensure_env PIXELSPACE_DEPLOY_MODE "${DEPLOY_MODE_OVERRIDE:-build}"
   ensure_env PIXELSPACE_API_IMAGE "pixelspace-api:local"
   ensure_env PIXELSPACE_WEB_IMAGE "pixelspace-web:local"
@@ -585,6 +619,7 @@ doctor() {
   local connection_secret effective_profile model_pack model_image model_cache model_timeout
   local docker_installed=0 docker_reachable=0
   say "Pixelspace host doctor"
+  say "Version: installed $(env_value PIXELSPACE_VERSION 2>/dev/null || printf 'unknown'), checkout $(read_app_version)"
   arch="$(host_arch)"
   case "$arch" in
     amd64|arm64) say "  ok  architecture: $arch" ;;
@@ -1365,6 +1400,27 @@ restore_stack() {
 
 upgrade_stack() {
   doctor
+  local current new
+  current="$(env_value PIXELSPACE_VERSION 2>/dev/null || printf '0.0.0-dev')"
+  new="$(read_app_version)"
+  if [[ "$(semver_compare "$new" "$current")" == "-1" ]]; then
+    die "refusing to downgrade: installed $current, this checkout is $new. Check out $current or newer before upgrading."
+  fi
+  if [[ "$current" == "$new" ]]; then
+    say "Re-applying version $new."
+  else
+    say "Upgrading Pixelspace $current -> $new."
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    local mode plan
+    mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
+    if [[ "$mode" == "images" ]]; then plan="pull the pinned images"; else plan="rebuild api, web and sandbox"; fi
+    note "dry-run: no changes made. A real upgrade would:"
+    say "  1. back up SQLite, quiesced workspaces, RustFS, MCP cache and secrets"
+    say "  2. ${mode} mode — ${plan}, then recreate the stack"
+    say "  3. wait for health, then record version $new"
+    return 0
+  fi
   prepare_backup_helper
   migrate_legacy_compose_resources
   prepare_model_pack
@@ -1373,7 +1429,10 @@ upgrade_stack() {
   wait_for_model
   wait_for_health
   complete_legacy_compose_migration
-  say "Upgrade complete."
+  # Record the new version only now that refresh + health have passed, so a
+  # failed upgrade leaves the tracked version matching what is actually running.
+  set_env PIXELSPACE_VERSION "$new"
+  say "Upgrade complete (now at $new)."
 }
 
 warn_exported_pixelspace_env() {
@@ -1456,10 +1515,21 @@ uninstall_stack() {
   warn_exported_pixelspace_env
 }
 
+status_stack() {
+  local installed checkout
+  installed="$(env_value PIXELSPACE_VERSION 2>/dev/null || printf 'unknown')"
+  checkout="$(read_app_version)"
+  say "Pixelspace version: $installed"
+  if [[ "$checkout" != "0.0.0-dev" && "$checkout" != "$installed" ]]; then
+    note "this checkout provides $checkout — run 'pixelspace upgrade' to apply it"
+  fi
+  compose ps
+}
+
 case "$COMMAND" in
   install) install_stack ;;
   doctor) doctor ;;
-  status) compose ps ;;
+  status) status_stack ;;
   logs) compose logs -f "$@" ;;
   backup) acquire_lock; backup_stack "${1:-}" ;;
   restore) acquire_lock; restore_stack "${1:-}" ;;

@@ -177,6 +177,10 @@ export function execInContainer(
   for (const [key, value] of Object.entries(options.env ?? {})) {
     args.push("-e", `${key}=${value}`);
   }
-  args.push(containerId, "sh", "-lc", command);
+  // The tool is named "bash", so run bash: on Debian `/bin/sh` is dash, and the
+  // model writes bashisms (here-strings, `[[ ]]`) that dash rejects with an
+  // opaque "Syntax error" (measured in the DGX traces). bash ships in the
+  // sandbox image; falls through to sh only if it were ever absent.
+  args.push(containerId, "bash", "-lc", command);
   return docker(args, options);
 }

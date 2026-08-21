@@ -14,7 +14,13 @@ import { logger } from "../../lib/logger";
 /** Placeholder a skill's `run` command uses to locate its own directory. */
 const SKILL_DIR = "$SKILL_DIR";
 
-let cached: { env: ExecutionEnv; skills: Skill[]; commands: Map<string, string> } | null = null;
+let cached: {
+  env: ExecutionEnv;
+  skills: Skill[];
+  commands: Map<string, string>;
+  /** Optional per-skill `usage:` line advertising the arguments it expects. */
+  usage: Map<string, string>;
+} | null = null;
 
 /**
  * Load pi-native SKILL.md skills from apps/api/skills (recursively) using the
@@ -28,9 +34,14 @@ export async function getSkills() {
   for (const d of diagnostics) logger.warn("skill.load", { code: d.code, message: d.message, path: d.path });
 
   const commands = new Map<string, string>();
-  for (const skill of skills) commands.set(skill.name, runCommandFor(skill, skillsDir));
+  const usage = new Map<string, string>();
+  for (const skill of skills) {
+    commands.set(skill.name, runCommandFor(skill, skillsDir));
+    const u = readFrontmatterField(skill.filePath, "usage");
+    if (u) usage.set(skill.name, u);
+  }
 
-  cached = { env, skills, commands };
+  cached = { env, skills, commands, usage };
   logger.info("skills.ready", { count: skills.length, names: skills.map((s) => s.name) });
   return cached;
 }
@@ -44,7 +55,7 @@ export async function getSkills() {
  * convention, so the existing web-fetch and web-search skills are unaffected.
  */
 function runCommandFor(skill: Skill, skillsDir: string): string {
-  const template = readRunDirective(skill.filePath) ?? `node ${SKILL_DIR}/${skill.name}.cjs`;
+  const template = readFrontmatterField(skill.filePath, "run") ?? `node ${SKILL_DIR}/${skill.name}.cjs`;
   // Skills are mounted at a fixed path, so the container-side directory is the
   // skill's location relative to the skills root — never the host path.
   const relative = path.relative(skillsDir, path.dirname(skill.filePath));
@@ -52,8 +63,14 @@ function runCommandFor(skill: Skill, skillsDir: string): string {
   return template.split(SKILL_DIR).join(containerDir);
 }
 
-/** Read `run:` out of a SKILL.md frontmatter block. */
-function readRunDirective(filePath: string): string | null {
+/**
+ * Read one single-line field out of a SKILL.md frontmatter block.
+ *
+ * pi's `Skill` type carries no custom frontmatter, so fields like `run:` and
+ * `usage:` are read from the file directly. A missing field returns null and
+ * the caller keeps its default.
+ */
+function readFrontmatterField(filePath: string, field: string): string | null {
   let raw: string;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -62,14 +79,25 @@ function readRunDirective(filePath: string): string | null {
   }
   const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!frontmatter) return null;
-  const run = frontmatter[1]!.match(/^run:\s*(.+?)\s*$/m);
-  return run ? run[1]! : null;
+  const match = frontmatter[1]!.match(new RegExp(`^${field}:\\s*(.+?)\\s*$`, "m"));
+  return match ? match[1]! : null;
 }
 
 /** XML-formatted skill listing injected into the system prompt (agentskills.io spec). */
 export async function skillsBlock() {
-  const { skills } = await getSkills();
-  return formatSkillsForSystemPrompt(skills);
+  const { skills, usage } = await getSkills();
+  let block = formatSkillsForSystemPrompt(skills);
+  // The external formatter emits name + description + location only. Append the
+  // declared arguments so the model sees a skill's required args before calling
+  // it, instead of learning them from a failed first call (measured: docx
+  // failed once on a missing "path" before the model added it).
+  const documented = skills.filter((s) => usage.has(s.name));
+  if (documented.length) {
+    block +=
+      "\n\nSkill arguments (pass as the call_skill \"query\"):\n" +
+      documented.map((s) => `- ${s.name}: ${usage.get(s.name)}`).join("\n");
+  }
+  return block;
 }
 
 /** Single-quote a value for `sh -lc`, so an argument can never become syntax. */
