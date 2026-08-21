@@ -1,3 +1,5 @@
+import { validateUiSpec } from "../services/agent/ui-catalog";
+
 export type Tool = {
   name: string;
   description: string;
@@ -117,6 +119,46 @@ export const TOOLS: Tool[] = [
       } catch (e) {
         return `error fetching ${url}: ${(e as Error).message}`;
       }
+    },
+  },
+  {
+    name: "render_ui",
+    description:
+      "Render a rich UI component inline in your answer to the user: a chart, a sortable table, a KPI stat tile, or a titled card. " +
+      "Call this whenever a visual communicates better than prose — the user asks to chart, compare, tabulate, or summarise data, or you have numbers worth showing. " +
+      "The component is validated here before it is shown; on success it is already visible to the user, so do not also paste its JSON into your reply. " +
+      "On failure this returns the exact problems — fix the props and call render_ui again. You may call it several times for several components.\n\n" +
+      "Component props:\n" +
+      "- chart: type ('bar'|'line'|'area'|'pie'|'scatter'), data (array of row objects), x (category key on every row), y (one metric key or an array of keys), title? \n" +
+      "- table: columns (array of { key, label?, align? } where align is 'left'|'right'|'center'), rows (array of row objects keyed by column key), caption? \n" +
+      "- stat: label, value, delta?, trend? ('up'|'down'|'flat'), help? \n" +
+      "- card: title?, body? (markdown), fields? (array of { label, value }), accent? ('default'|'primary'|'success'|'warning'|'destructive')",
+    parameters: {
+      type: "object",
+      properties: {
+        component: {
+          type: "string",
+          enum: ["chart", "table", "stat", "card"],
+          description: "which catalog component to render",
+        },
+        props: {
+          type: "object",
+          description: "the component's props (see the tool description for each component's shape)",
+        },
+      },
+      required: ["component", "props"],
+    },
+    run: (args) => {
+      const result = validateUiSpec(args.component, args.props);
+      if (!result.ok) {
+        // The model reads this and retries — the whole point of validating here
+        // rather than letting the block fail silently in the browser.
+        return `render_ui rejected this ${String(args.component)}:\n- ${result.errors.join("\n- ")}\nFix these and call render_ui again.`;
+      }
+      // The console renders the component from this call's arguments; the tool
+      // only has to confirm it validated. Kept short so it costs little when the
+      // transcript replays it on the next turn.
+      return `Rendered the ${String(args.component)}. It is now visible to the user — do not repeat its data as text.`;
     },
   },
 ];

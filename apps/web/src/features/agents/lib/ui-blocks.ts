@@ -61,34 +61,46 @@ export type CardProps = {
   accent?: 'default' | 'primary' | 'success' | 'warning' | 'destructive'
 }
 
-// A closed ui fence: ```ui\n<json>\n```. JSON never contains a fence of its own,
-// so a non-greedy match to the next ``` is safe and keeps the split O(n).
-const UI_BLOCK = /```ui[ \t]*\r?\n([\s\S]*?)```/g
+// Every catalog spec carries this key, so its presence is the cheap gate that
+// decides whether a message needs the fuller parse at all. A prose mention of
+// the word is a false positive that costs one no-op parse and renders the same.
+const SPEC_MARKER = '"component"'
 
-// A fence that has opened but not closed — only meaningful at the very end of a
-// message while it streams. Rendering the raw ```ui as markdown would flash a
-// code block that becomes a chart a token later, so it gets a placeholder.
-const UI_BLOCK_OPEN = /```ui[ \t]*\r?\n([\s\S]*)$/
+// A fenced code block, tag captured. We accept a spec whichever tag the model
+// reaches for — ```ui, ```json, or a bare ``` — because models do not emit an
+// exact fence reliably; what makes a block a component is that it *validates*,
+// not how it was tagged. A closing ``` cannot appear inside JSON, so the
+// non-greedy match to the next fence is safe.
+const FENCE = /```([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*?)```/g
+
+// The same fence still open at end of message — only meaningful mid-stream.
+const FENCE_OPEN = /```([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*)$/
 
 export function parseMessage(text: string): Segment[] {
   const segments: Segment[] = []
   let last = 0
 
-  for (const match of text.matchAll(UI_BLOCK)) {
+  for (const match of text.matchAll(FENCE)) {
     const start = match.index ?? 0
-    if (start > last) pushMarkdown(segments, text.slice(last, start))
-    segments.push(toUiSegment(match[1]))
+    // Text before the fence can itself carry a bare (unfenced) spec.
+    if (start > last) scanBare(text.slice(last, start), segments)
+    segments.push(...fenceSegment(match[1].toLowerCase(), match[2], match[0]))
     last = start + match[0].length
   }
 
   const rest = text.slice(last)
-  const open = rest.match(UI_BLOCK_OPEN)
+  const open = rest.match(FENCE_OPEN)
   if (open) {
     const before = rest.slice(0, open.index ?? 0)
-    if (before.trim()) pushMarkdown(segments, before)
-    segments.push({ kind: 'ui-pending' })
+    if (before.trim()) scanBare(before, segments)
+    const lang = open[1].toLowerCase()
+    // A ```ui fence, or any fence already carrying a spec marker, is a block
+    // still arriving — show a placeholder rather than flash its raw JSON. A
+    // plain code fence still streaming is just markdown.
+    if (lang === 'ui' || open[2].includes(SPEC_MARKER)) segments.push({ kind: 'ui-pending' })
+    else pushMarkdown(segments, rest)
   } else if (rest) {
-    pushMarkdown(segments, rest)
+    scanBare(rest, segments)
   }
 
   // A message with no blocks stays a single markdown segment — the common case,
@@ -96,25 +108,89 @@ export function parseMessage(text: string): Segment[] {
   return segments.length ? segments : [{ kind: 'markdown', text }]
 }
 
-/** True when a message carries at least one ui block — lets callers skip the split. */
+/** Cheap gate: only a message that could contain a spec takes the fuller parse. */
 export function hasUiBlock(text: string): boolean {
-  UI_BLOCK.lastIndex = 0
-  return UI_BLOCK.test(text) || UI_BLOCK_OPEN.test(text)
+  return text.includes(SPEC_MARKER)
+}
+
+/**
+ * A fenced block becomes a component when its body validates, whatever the tag.
+ * A block tagged `ui` that does *not* validate is surfaced as an error so a
+ * malformed spec is visible rather than shown as a code listing; any other tag
+ * that does not validate is left exactly as the model wrote it — a real code
+ * block the user wanted to read.
+ */
+function fenceSegment(lang: string, body: string, whole: string): Segment[] {
+  const trimmed = body.trim()
+  if (trimmed.startsWith('{')) {
+    try {
+      const spec = validateSpec(JSON.parse(trimmed))
+      if (spec) return [{ kind: 'ui', spec }]
+    } catch {
+      // falls through to the tag-based handling below
+    }
+  }
+  if (lang === 'ui') return [{ kind: 'ui-error', raw: body, reason: 'malformed component' }]
+  return [{ kind: 'markdown', text: whole }]
+}
+
+/**
+ * Pull bare (unfenced) specs out of a run of text. A model often emits the JSON
+ * object on its own line with no fence at all, so a balanced-brace scan finds
+ * each `{…}` that both mentions the marker and validates, and leaves everything
+ * around it as markdown. Only a validated object is lifted out — ordinary prose
+ * and non-spec JSON stay untouched.
+ */
+function scanBare(text: string, segments: Segment[]) {
+  let i = 0
+  let cut = 0
+  while (i < text.length) {
+    if (text[i] !== '{') {
+      i++
+      continue
+    }
+    const end = balancedEnd(text, i)
+    if (end === null) break // an unterminated object — leave the rest to markdown
+    const candidate = text.slice(i, end)
+    if (candidate.includes(SPEC_MARKER)) {
+      try {
+        const spec = validateSpec(JSON.parse(candidate))
+        if (spec) {
+          pushMarkdown(segments, text.slice(cut, i))
+          segments.push({ kind: 'ui', spec })
+          cut = end
+        }
+      } catch {
+        // not a spec after all — treated as ordinary text
+      }
+    }
+    i = end // skip the whole object either way, so nested braces are not rescanned
+  }
+  pushMarkdown(segments, text.slice(cut))
+}
+
+/** Index just past the `}` that closes the object opened at `start`, respecting strings. */
+function balancedEnd(text: string, start: number): number | null {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return i + 1
+  }
+  return null
 }
 
 function pushMarkdown(segments: Segment[], text: string) {
   if (text.trim()) segments.push({ kind: 'markdown', text })
-}
-
-function toUiSegment(raw: string): Segment {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return { kind: 'ui-error', raw, reason: 'not valid JSON' }
-  }
-  const spec = validateSpec(parsed)
-  return spec ? { kind: 'ui', spec } : { kind: 'ui-error', raw, reason: 'unknown or malformed component' }
 }
 
 export function validateSpec(value: unknown): UiSpec | null {
