@@ -70,7 +70,7 @@ describe("user input requester", () => {
     expect(events.filter((event) => event.type === "ask_user")).toHaveLength(1);
 
     expect(answerQuestion("conv1", firstEvent.id, "Allow once")).toBe(true);
-    expect(await first).toBe("Allow once");
+    expect(await first).toEqual({ status: "answered", answer: "Allow once" });
 
     await Promise.resolve();
     const questions = events.filter((event) => event.type === "ask_user");
@@ -80,7 +80,27 @@ describe("user input requester", () => {
     expect(secondEvent.question).toBe("Allow the second change?");
 
     expect(answerQuestion("conv1", secondEvent.id, "Deny")).toBe(true);
-    expect(await second).toBe("Deny");
+    expect(await second).toEqual({ status: "answered", answer: "Deny" });
+  });
+
+  it("times out an unanswered prompt and reports it distinctly from an abort", async () => {
+    const events: AgentEvent[] = [];
+    const request = createUserInputRequester("convTimeout", (event) => events.push(event), 20);
+
+    const outcome = await request({ question: "Still there?", options: [], kind: "question" });
+    expect(outcome).toEqual({ status: "timeout" });
+
+    // The prompt was cancelled on timeout, so a late answer finds nothing.
+    const asked = events.find((event) => event.type === "ask_user");
+    if (asked?.type !== "ask_user") throw new Error("no ask_user event");
+    expect(answerQuestion("convTimeout", asked.id, "late")).toBe(false);
+  });
+
+  it("surfaces a timeout to the ask_user tool as a continue-anyway result", async () => {
+    const tool = createAskUserTool(createUserInputRequester("convToolTimeout", () => {}, 20));
+    const result = await tool.execute("callTimeout", { question: "Which one?" });
+    expect(result.details.output).toContain("timed out");
+    expect(result.details.output).not.toContain("was stopped");
   });
 
   it("removes an aborted prompt while it is waiting in the queue", async () => {
@@ -95,12 +115,12 @@ describe("user input requester", () => {
     );
     controller.abort();
 
-    expect(await queued).toBeNull();
+    expect(await queued).toEqual({ status: "aborted" });
     expect(events.filter((event) => event.type === "ask_user")).toHaveLength(1);
     const firstEvent = events[0];
     if (firstEvent?.type !== "ask_user") throw new Error("first prompt was not emitted");
     answerQuestion("conv1", firstEvent.id, "done");
-    expect(await first).toBe("done");
+    expect(await first).toEqual({ status: "answered", answer: "done" });
     expect(events.filter((event) => event.type === "ask_user")).toHaveLength(1);
   });
 });

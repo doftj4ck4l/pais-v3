@@ -1,12 +1,10 @@
 # Agent capability-discovery improvements (from DGX Spark traces)
 
-Status: **first cut done** on branch `feat/agent-capability-discovery` —
-#1, #2, #3, #5, #7 implemented and verified (API tests 784 pass; sandbox image
-rebuilt and smoke-tested: bash/curl/ps2pdf/reportlab present, runtime
-`pip install` works). **Remaining: #4 (skill arg schemas), #6 (search-thrash
-nudge).** Source: `app.db` on the DGX Spark box (`pixelspace-api-1`),
-2026-08-21 — 9 runs, 375 traces, 57 tool calls. Read from the `traces` table
-(`step='tool'`, `fields` JSON: name/ok/args/result).
+Status: **all 8 done** on branch `feat/agent-capability-discovery` (API tests
+786 pass; sandbox image rebuilt and smoke-tested: bash/curl/ps2pdf/reportlab
+present, runtime `pip install` works). Source: `app.db` on the DGX Spark box
+(`pixelspace-api-1`), 2026-08-21 — 9 runs, 375 traces, 57 tool calls. Read from
+the `traces` table (`step='tool'`, `fields` JSON: name/ok/args/result).
 
 ## The core problem
 
@@ -56,6 +54,16 @@ The model tried to call `fetch_url` (an API-side tool) *inside* bash, and tried
 to `write` to `/tmp/q4_2025_report.pdf` → rejected ("outside the sandbox
 workspace"). It doesn't have a clear model of what runs where.
 
+### 8. Approvals / `ask_user` block the run and look like hangs
+An `nc_share_create_public_link` approval waited **1,420,255 ms (~24 min)** for a
+user to finally deny it; `ask_user` averages **13.7 min**. The whole run blocks
+for that entire time, and that idle stretch is exactly what used to trip the #6
+reaper. The heartbeat (fix #5) stops the *crash*, but a walked-away user still
+leaves the run wedged. Need a timeout / auto-cancel on interactive prompts:
+after a bounded wait, resolve with a safe default (deny an approval; return a
+"no answer — timed out" result for `ask_user`) so the run continues and the
+model is told the prompt expired rather than hanging indefinitely.
+
 ## Proposed fixes (ranked by impact ÷ effort)
 
 | # | Fix | Addresses | Status / location |
@@ -63,10 +71,11 @@ workspace"). It doesn't have a clear model of what runs where.
 | 1 | **Make `web_search` a first-class tool** (wraps the existing skill via `invokeSkill`) | #1 | **DONE** — `pi.service.ts` (registered beside `call_skill`) |
 | 2 | **Bake tooling into the sandbox image + allow installs**: added `bash`, `curl`, `ghostscript`, `reportlab`; set `PIP_BREAK_SYSTEM_PACKAGES=1` so runtime `pip install` works | #2 | **DONE** — `apps/api/sandbox/Dockerfile` |
 | 3 | **Run the `bash` tool under real bash** | #3 | **DONE** — `services/sandbox/docker.ts` (`sh -lc` → `bash -lc`) |
-| 4 | **Advertise skill input schemas** (required args) in `call_skill` / the skill catalog, or return a structured "missing arg" before executing | #4 | **TODO** — skill frontmatter parsing (`skill.service.ts`) has no arg schema today; would extend `readRunDirective` + `skillsBlock` + `call_skill` description |
+| 4 | **Advertise skill input schemas** — optional `usage:` frontmatter field, surfaced in both the `call_skill` tool description and the skills prompt block | #4 | **DONE** — `skill.service.ts` (`readFrontmatterField` + `usage` map) + `pi.service.ts`; `usage:` added to docx/xlsx/web-search SKILL.md |
 | 5 | **Don't reap a sandbox with an active run** — heartbeat refreshes `lastUsedAt` at half the idle window for the life of the run | #6 | **DONE** — `pi.service.ts` heartbeat + `sandbox.service.ts` `keepAlive` |
-| 6 | **Runtime nudge on search thrash**: after N empty/near-duplicate searches, tell the model to stop and ask the user or use a URL. The `searching` signal in `playbook/signals.ts` already detects this — surface it mid-run, not only to the reflector | #5 | **TODO** — `playbook/signals` + run loop (`pi.service.ts`) |
+| 6 | **Runtime nudge on search thrash**: a `tool_result` hook counts barren results (empty / "no results") per tool and, once, appends a note telling the model to stop and change tack | #5 | **DONE** — `pi.service.ts` (`harness.on("tool_result")`, THRASH_LIMIT=3) |
 | 7 | **System-prompt clarifications**: bash = in the sandbox, `fetch_url`/`web_search`/`search_docs`/skills = platform-side; plus the extended sandbox inventory (curl, ghostscript, reportlab) and that `pip install` works | #2/#3/#7 | **DONE** — `environment-prompt.ts` |
+| 8 | **Timeout / auto-cancel on interactive prompts** — one bound on the shared prompt requester; on expiry resolve with a safe default (approval → deny; `ask_user` → a "timed out, continue anyway" result). `USER_PROMPT_TIMEOUT_MS`, default 10 min | #8 | **DONE** — `ask-user-tool.ts` (`UserInputOutcome` + timer) + `env.ts` + `pi.service.ts` |
 
 ## Suggested first cut
 

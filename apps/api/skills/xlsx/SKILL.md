@@ -1,6 +1,7 @@
 ---
 name: xlsx
 description: Create or read .xlsx spreadsheets. Use when the user wants a spreadsheet, an Excel file, a table exported to Excel, or wants to know what is inside an existing .xlsx. Pass a JSON argument describing the operation.
+usage: a JSON object; required "op" ("create" or "read") and "path" (e.g. "sales.xlsx"); "create" also needs "sheets" (array)
 run: python3 $SKILL_DIR/xlsx.py
 ---
 
