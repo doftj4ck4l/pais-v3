@@ -1393,6 +1393,30 @@ describe("Pixelspace on-prem operator", () => {
     expect(readFileSync(fx.envFile, "utf8")).toContain(`PIXELSPACE_VERSION="${version}"`);
   });
 
+  test("upgrade --dry-run previews the transition without changing anything", () => {
+    const fx = fixture();
+    const version = readFileSync(path.join(root, "VERSION"), "utf8").trim();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const digest = "b".repeat(64);
+    setEnvValue(fx.envFile, "PIXELSPACE_DEPLOY_MODE", "images");
+    setEnvValue(fx.envFile, "PIXELSPACE_API_IMAGE", `registry/api@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_WEB_IMAGE", `registry/web@sha256:${digest}`);
+    setEnvValue(fx.envFile, "SANDBOX_IMAGE", `registry/sandbox@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_VERSION", "0.1.0");
+    writeFileSync(fx.dockerLog, "");
+
+    const result = run(
+      ["upgrade", "--dry-run"],
+      { ...fx.env, PIXELSPACE_TEST_MISSING_IMAGES: "1", PIXELSPACE_TEST_RUNNING_SERVICES: "1" },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain(`Upgrading Pixelspace 0.1.0 -> ${version}`);
+    expect(result.stdout.toString()).toContain("dry-run: no changes made");
+    // Nothing was recreated and the recorded version was not advanced.
+    expect(readFileSync(fx.dockerLog, "utf8")).not.toContain("up -d");
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_VERSION="0.1.0"');
+  });
+
   test("upgrade prepares and verifies the bundled model lifecycle", () => {
     const fx = fixture();
     const env = {

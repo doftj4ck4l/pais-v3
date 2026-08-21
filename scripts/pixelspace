@@ -63,7 +63,7 @@ Commands:
   logs        Follow service logs
   backup      Stop stateful services briefly and create a consistent archive
   restore     Restore an archive (requires --yes)
-  upgrade     Back up, refresh images/builds, recreate, and verify
+  upgrade     Back up, refresh images/builds, recreate, and verify (--dry-run to preview)
   uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
   reset-admin-password  Reset a local admin password and revoke its sessions
   help        Show this help
@@ -118,8 +118,8 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}"
 
-if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" ]]; then
-  die "--dry-run is supported only for install"
+if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" && "$COMMAND" != "upgrade" ]]; then
+  die "--dry-run is supported only for install and upgrade"
 fi
 
 env_value_from_allow_empty() {
@@ -1410,6 +1410,16 @@ upgrade_stack() {
     say "Re-applying version $new."
   else
     say "Upgrading Pixelspace $current -> $new."
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    local mode plan
+    mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
+    if [[ "$mode" == "images" ]]; then plan="pull the pinned images"; else plan="rebuild api, web and sandbox"; fi
+    note "dry-run: no changes made. A real upgrade would:"
+    say "  1. back up SQLite, quiesced workspaces, RustFS, MCP cache and secrets"
+    say "  2. ${mode} mode — ${plan}, then recreate the stack"
+    say "  3. wait for health, then record version $new"
+    return 0
   fi
   prepare_backup_helper
   migrate_legacy_compose_resources
