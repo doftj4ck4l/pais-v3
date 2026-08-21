@@ -24,7 +24,8 @@ The file is the single source, read two ways:
 
 ## Done (this branch)
 
-- `VERSION` file (`1.0.0`), baked into the API image, reported at `/api/meta`.
+- `VERSION` file (`0.1.0`; MAJOR stays `0` until the product is declared
+  stable), baked into the API image, reported at `/api/meta`.
 - `pixelspace status` / `doctor` print the installed version and flag when the
   checkout provides a newer one.
 - `pixelspace upgrade` prints the `X -> Y` transition, **refuses a downgrade**,
