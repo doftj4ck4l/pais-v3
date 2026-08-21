@@ -1350,6 +1350,49 @@ describe("Pixelspace on-prem operator", () => {
     expect(log.indexOf("pull registry/sandbox")).toBeLessThan(log.indexOf(" stop "));
   });
 
+  test("records the app version on install, surfaces it, and refuses a downgrade", () => {
+    const fx = fixture();
+    const version = readFileSync(path.join(root, "VERSION"), "utf8").trim();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    expect(readFileSync(fx.envFile, "utf8")).toContain(`PIXELSPACE_VERSION="${version}"`);
+
+    const status = run(["status"], fx.env);
+    expect(status.stdout.toString()).toContain(`Pixelspace version: ${version}`);
+
+    // A checkout older than what is installed must not silently downgrade.
+    const digest = "b".repeat(64);
+    setEnvValue(fx.envFile, "PIXELSPACE_DEPLOY_MODE", "images");
+    setEnvValue(fx.envFile, "PIXELSPACE_API_IMAGE", `registry/api@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_WEB_IMAGE", `registry/web@sha256:${digest}`);
+    setEnvValue(fx.envFile, "SANDBOX_IMAGE", `registry/sandbox@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_VERSION", "99.0.0");
+    const downgrade = run(
+      ["upgrade"],
+      { ...fx.env, PIXELSPACE_TEST_MISSING_IMAGES: "1", PIXELSPACE_TEST_RUNNING_SERVICES: "1" },
+    );
+    expect(downgrade.exitCode).toBe(1);
+    expect(downgrade.stderr.toString()).toContain("refusing to downgrade");
+  });
+
+  test("upgrade prints the version transition and records the new version", () => {
+    const fx = fixture();
+    const version = readFileSync(path.join(root, "VERSION"), "utf8").trim();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const digest = "b".repeat(64);
+    setEnvValue(fx.envFile, "PIXELSPACE_DEPLOY_MODE", "images");
+    setEnvValue(fx.envFile, "PIXELSPACE_API_IMAGE", `registry/api@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_WEB_IMAGE", `registry/web@sha256:${digest}`);
+    setEnvValue(fx.envFile, "SANDBOX_IMAGE", `registry/sandbox@sha256:${digest}`);
+    setEnvValue(fx.envFile, "PIXELSPACE_VERSION", "0.0.1");
+    const result = run(
+      ["upgrade"],
+      { ...fx.env, PIXELSPACE_TEST_MISSING_IMAGES: "1", PIXELSPACE_TEST_RUNNING_SERVICES: "1" },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain(`Upgrading Pixelspace 0.0.1 -> ${version}`);
+    expect(readFileSync(fx.envFile, "utf8")).toContain(`PIXELSPACE_VERSION="${version}"`);
+  });
+
   test("upgrade prepares and verifies the bundled model lifecycle", () => {
     const fx = fixture();
     const env = {

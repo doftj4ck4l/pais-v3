@@ -229,6 +229,12 @@ a backup before pulling/building and recreating the stack. In build mode, update
 the checkout to the intended release before running it. In image mode, update
 the digest-pinned image references in `.env`.
 
+Every release carries a version (SemVer, in the repo-root `VERSION` file, baked
+into the API image). `status` and `doctor` print the installed version and note
+when the checkout provides a newer one; `upgrade` prints the `X -> Y` transition
+and **refuses a downgrade** (check out the installed release or newer first).
+The running app reports its own version at `GET /api/meta`.
+
 `uninstall` stops services but preserves configuration and data. Permanent data
 removal requires both flags:
 
