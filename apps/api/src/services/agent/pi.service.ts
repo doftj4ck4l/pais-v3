@@ -53,6 +53,7 @@ import { renderPlaybook } from "../playbook/prompt";
 import { reflect } from "../playbook/reflector";
 import type { ToolCallRecord } from "../playbook/signals";
 import { describeEnvironment } from "./environment-prompt";
+import { GEN_UI_PROMPT } from "./gen-ui-prompt";
 import { usableWindow } from "../context/context-window.service";
 import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
@@ -622,6 +623,9 @@ export async function runPiAgent(opts: {
       cwd: execCwd,
       hasExternalServices: Boolean(mcp?.systemPromptBlock),
     });
+    // How the console can render this run's answer, not what it can reach — so
+    // it sits with the environment, before the corpora and connected services.
+    out += GEN_UI_PROMPT;
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
     if (calendarPrompt) out += calendarPrompt;

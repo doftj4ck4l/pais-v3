@@ -4,6 +4,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui
 import { Spinner } from '@/shared/ui/spinner'
 import { describeTool, thoughtLabel } from '@/features/agents/lib/tool-summary'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
+import { parseMessage, hasUiBlock } from '@/features/agents/lib/ui-blocks'
+import { SegmentView } from '@/features/agents/components/ui-blocks'
 import { cn } from '@/shared/lib/utils'
 import type { ReactNode } from 'react'
 import type { Item } from '@/shared/lib/types'
@@ -100,11 +102,46 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
   if (item.kind === 'thinking') return <ThinkingLine item={item} streaming={streaming} />
   if (item.kind === 'tool') return <ToolLine item={item} />
 
+  return <AssistantMessage text={item.text} streaming={streaming} />
+}
+
+/**
+ * The agent's answer. Almost always one markdown blob, rendered exactly as
+ * before — the fast path skips the segment split entirely. When the model has
+ * emitted a ```ui block, the message becomes a sequence of prose and rendered
+ * components instead, and the `caret` (streaming cursor) rides the last
+ * markdown segment so it still trails the text rather than a chart.
+ */
+function AssistantMessage({ text, streaming }: { text: string; streaming: boolean }) {
+  if (!hasUiBlock(text)) {
+    return (
+      <div
+        className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+      />
+    )
+  }
+
+  const segments = parseMessage(text)
+  const lastMarkdown = segments.reduce((at, s, i) => (s.kind === 'markdown' ? i : at), -1)
+
   return (
-    <div
-      className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-    />
+    <div className="mt-2 mb-6">
+      {segments.map((segment, i) =>
+        segment.kind === 'markdown' ? (
+          <div
+            key={i}
+            className={cn(
+              'prose-agent max-w-none break-words',
+              streaming && i === lastMarkdown && 'caret',
+            )}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(segment.text) }}
+          />
+        ) : (
+          <SegmentView key={i} segment={segment} />
+        ),
+      )}
+    </div>
   )
 }
 
