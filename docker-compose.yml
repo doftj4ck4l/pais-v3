@@ -13,7 +13,14 @@
 # Socket access is root-equivalent on the host. This is a deliberate trade for
 # real per-workspace isolation; see README under "Deploying".
 
-name: pixelspace
+# Project name = the named-volume prefix, so it is identity, not cosmetics.
+# Renaming it in place strands an existing stack's data (RustFS media, the MCP
+# and vLLM caches) under the old prefix, so it is env-driven rather than hard
+# renamed: the internal box carries `COMPOSE_PROJECT_NAME=pixelspace` in its
+# `.env` (its legacy `salurai_*` volumes were migrated to `pixelspace_*`), and
+# the on-prem installer passes `-p pixelspace`, which overrides this anyway.
+# The default below is the value a fresh checkout with no override resolves to.
+name: ${COMPOSE_PROJECT_NAME:-pixelspace}
 
 services:
   api:
