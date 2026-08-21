@@ -100,11 +100,21 @@ jobs:
         run: |
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH/apps/api/data"
 
-      # --build is not optional: without it compose reuses the previous image
-      # and "deployed" silently means "restarted the old code".
+      # Two builds, because the sandbox image is not a Compose service — it is
+      # built out-of-band (the installer's refresh_stack does the same). Without
+      # this, `compose up --build` refreshes api/web but the sandbox keeps its
+      # old image, so sandbox-side changes (its toolchain: bash, curl,
+      # ghostscript, PDF libs, pip) silently never ship on a CI deploy.
+      #
+      # --build on the compose step is not optional either: without it compose
+      # reuses the previous image and "deployed" silently means "restarted the
+      # old code".
       - name: Build and restart
         run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker compose up -d --build"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
+            img=\$(grep -m1 '^SANDBOX_IMAGE=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"') && \
+            docker build -t \"\${img:-pixelspace-sandbox:1}\" -f apps/api/sandbox/Dockerfile apps/api/sandbox && \
+            docker compose up -d --build"
 
       # /api/meta proves three things at once: Caddy is up, the proxy reaches
       # the API, and the API finished ensureSchema().
