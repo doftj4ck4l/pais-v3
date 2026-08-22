@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
-import { CopyIcon, MoreHorizontalIcon, PlusIcon, RefreshCwIcon, UserPlusIcon } from 'lucide-react'
+import {
+  Building2Icon,
+  CopyIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  UserPlusIcon,
+} from 'lucide-react'
 import {
   createOrganization,
   createOrganizationInvitation,
@@ -32,6 +39,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Spinner } from '@/shared/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { ItemCard, PanelEmpty, PanelGrid } from '@/features/resources/components/panel-kit'
 import { cn } from '@/shared/lib/utils'
 import type {
   OrganizationDetail,
@@ -121,133 +129,98 @@ export function OrganizationsPage() {
 
   return (
     <>
-      <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-        <div className="grid w-full gap-5 lg:grid-cols-[19rem_minmax(0,1fr)]">
-          <section className="overflow-hidden rounded-lg border bg-card">
-            <div className="flex items-center gap-2.5 border-b px-4 py-3">
-              <h2 className="text-base font-semibold">Organizations</h2>
-              <span className="text-sm text-muted-foreground">{organizations.length}</span>
-              <Button size="icon-sm" className="ml-auto" aria-label="Create organization" onClick={() => setForm('create')}>
-                <PlusIcon />
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="grid w-full gap-6 p-5 md:p-8">
+          <header className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="readout text-xs font-medium tracking-[0.16em] uppercase text-muted-foreground">
+                Access
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Organizations</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+                Group people without sharing their private workspaces. Membership never grants access
+                to another person&apos;s workspace.
+              </p>
+            </div>
+            {organizations.length ? (
+              <Button size="sm" onClick={() => setForm('create')}>
+                <PlusIcon data-icon="inline-start" /> New organization
+              </Button>
+            ) : null}
+          </header>
+
+          {error ? (
+            <div
+              role="alert"
+              className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+            >
+              <span className="min-w-0 flex-1">{error}</span>
+              <Button variant="outline" size="sm" onClick={() => void refreshSelected()}>
+                Retry
               </Button>
             </div>
+          ) : null}
 
-            {loading ? (
-              <p className="flex items-center gap-2 p-5 text-sm text-muted-foreground"><Spinner /> Loading…</p>
-            ) : organizations.length === 0 ? (
-              <div className="grid justify-items-start gap-3 p-4">
-                <div>
-                  <p className="text-base font-medium">No organizations yet</p>
-                  <p className="mt-1 text-sm text-muted-foreground">Create the first group, then invite people with a secure link.</p>
-                </div>
-                <Button size="sm" onClick={() => setForm('create')}><PlusIcon /> Create organization</Button>
-              </div>
-            ) : (
-              <div className="grid max-h-64 overflow-y-auto lg:max-h-[calc(100vh-10rem)]">
-                {organizations.map((organization) => (
-                  <button
-                    key={organization.id}
-                    type="button"
-                    onClick={() => setSelectedId(organization.id)}
-                    aria-pressed={selectedId === organization.id}
-                    className={cn(
-                      'grid gap-1 border-b px-4 py-3 text-left last:border-b-0 hover:bg-accent',
-                      selectedId === organization.id && 'bg-accent',
-                    )}
-                  >
-                    <span className="truncate text-base font-medium">{organization.name}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {organization.memberCount} members · {organization.pendingInvitationCount} pending
+          {loading ? (
+            <p className="flex items-center gap-2 py-16 text-sm text-muted-foreground">
+              <Spinner /> Loading…
+            </p>
+          ) : organizations.length === 0 ? (
+            <PanelEmpty
+              icon={Building2Icon}
+              title="No organizations yet"
+              description="Create the first group, then invite people with a secure one-time link. Membership groups accounts without sharing anyone's private workspace."
+              action={
+                <Button size="sm" onClick={() => setForm('create')}>
+                  <PlusIcon data-icon="inline-start" /> New organization
+                </Button>
+              }
+            />
+          ) : (
+            <PanelGrid>
+              {organizations.map((organization) => (
+                <ItemCard
+                  key={organization.id}
+                  onSelect={() => setSelectedId(organization.id)}
+                  label={`Open ${organization.name}`}
+                  leading={
+                    <span
+                      aria-hidden
+                      className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground"
+                    >
+                      <Building2Icon className="size-4" />
                     </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="min-w-0 overflow-hidden rounded-lg border bg-card">
-            {error ? (
-              <div role="alert" className="flex items-center gap-3 border-b bg-destructive/5 p-4 text-sm text-destructive">
-                <span className="min-w-0 flex-1">{error}</span>
-                <Button variant="outline" size="sm" onClick={() => void refreshSelected()}>Retry</Button>
-              </div>
-            ) : null}
-
-            {!selected ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">Create an organization to begin.</div>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-center gap-3 border-b p-4">
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate text-xl font-semibold">{selected.name}</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">Membership never grants access to another person&apos;s workspace.</p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setForm('rename')}>Rename</Button>
-                  <Button size="sm" onClick={() => setForm('invite')}><UserPlusIcon /> Invite member</Button>
-                  <Button variant="ghost" size="icon-sm" aria-label="Refresh organization" onClick={() => void refreshSelected()}>
-                    {detailLoading ? <Spinner /> : <RefreshCwIcon />}
-                  </Button>
-                </div>
-
-                <div className="grid gap-5 p-4 xl:grid-cols-2 xl:items-start">
-                  {detailLoading && !visibleDetail ? (
-                    <div className="flex items-center gap-2 rounded-lg border p-5 text-sm text-muted-foreground xl:col-span-2">
-                      <Spinner /> Loading organization details…
-                    </div>
-                  ) : visibleDetail ? (
-                    <>
-                  <DataSection title="Members" count={visibleDetail.members.length}>
-                    {visibleDetail.members.length === 0 ? (
-                      <EmptyRows icon={<UserPlusIcon />} text="No members yet. Create an invitation to add someone." />
-                    ) : (
-                      <Table>
-                        <TableHeader><TableRow><TableHead>Email</TableHead><TableHead className="hidden sm:table-cell">Joined</TableHead><TableHead className="w-10"><span className="sr-only">Actions</span></TableHead></TableRow></TableHeader>
-                        <TableBody>
-                          {visibleDetail.members.map((member) => (
-                            <TableRow key={member.id}>
-                              <TableCell className="max-w-48 truncate font-medium sm:max-w-none">{member.email}</TableCell>
-                              <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">{when(member.joinedAt)}</TableCell>
-                              <TableCell>
-                                <Button variant="ghost" size="icon-sm" aria-label={`Remove ${member.email}`} onClick={() => setDanger({ kind: 'member', row: member })}><MoreHorizontalIcon /></Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </DataSection>
-
-                  <DataSection title="Invitations" count={visibleDetail.invitations.length}>
-                    {visibleDetail.invitations.length === 0 ? (
-                      <EmptyRows icon={<UserPlusIcon />} text="No invitations yet." />
-                    ) : (
-                      <Table>
-                        <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Status</TableHead><TableHead className="hidden md:table-cell">Expires</TableHead><TableHead className="w-10"><span className="sr-only">Actions</span></TableHead></TableRow></TableHeader>
-                        <TableBody>
-                          {visibleDetail.invitations.map((invitation) => (
-                            <TableRow key={invitation.id}>
-                              <TableCell className="max-w-40 truncate font-medium sm:max-w-none">{invitation.email}</TableCell>
-                              <TableCell><Status state={invitation.state} /></TableCell>
-                              <TableCell className="hidden text-xs text-muted-foreground md:table-cell">{when(invitation.expiresAt)}</TableCell>
-                              <TableCell>
-                                {invitation.state === 'actionable' ? (
-                                  <Button variant="ghost" size="icon-sm" aria-label={`Revoke invitation for ${invitation.email}`} onClick={() => setDanger({ kind: 'invitation', row: invitation })}><MoreHorizontalIcon /></Button>
-                                ) : null}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </DataSection>
-                    </>
-                  ) : null}
-                </div>
-              </>
-            )}
-          </section>
+                  }
+                  title={organization.name}
+                  meta={
+                    <span className="flex flex-wrap gap-x-2">
+                      <span>
+                        {organization.memberCount} member{organization.memberCount === 1 ? '' : 's'}
+                      </span>
+                      {organization.pendingInvitationCount ? (
+                        <span>{organization.pendingInvitationCount} pending</span>
+                      ) : null}
+                    </span>
+                  }
+                />
+              ))}
+            </PanelGrid>
+          )}
         </div>
       </main>
+
+      <OrganizationDetailDialog
+        open={selectedId !== null}
+        organization={selected}
+        detail={visibleDetail}
+        loading={detailLoading}
+        onOpenChange={(open) => !open && setSelectedId(null)}
+        onRename={() => setForm('rename')}
+        onInvite={() => setForm('invite')}
+        onRefresh={() => void refreshSelected()}
+        onRemoveMember={(row) => setDanger({ kind: 'member', row })}
+        onRevokeInvitation={(row) => setDanger({ kind: 'invitation', row })}
+      />
 
       <OrganizationForm
         mode={form}
@@ -309,6 +282,163 @@ export function OrganizationsPage() {
         }}
       />
     </>
+  )
+}
+
+/**
+ * One organization, opened from its card: who is in it and who is invited, with
+ * the actions that change that. The list stays a plain grid of cards; the detail
+ * that used to fill a second column now lives here, so the page reads the same
+ * as every other resource page and the membership tables get the room they need.
+ */
+function OrganizationDetailDialog({
+  open,
+  organization,
+  detail,
+  loading,
+  onOpenChange,
+  onRename,
+  onInvite,
+  onRefresh,
+  onRemoveMember,
+  onRevokeInvitation,
+}: {
+  open: boolean
+  organization: OrganizationSummary | null
+  detail: OrganizationDetail | null
+  loading: boolean
+  onOpenChange: (open: boolean) => void
+  onRename: () => void
+  onInvite: () => void
+  onRefresh: () => void
+  onRemoveMember: (row: OrganizationMember) => void
+  onRevokeInvitation: (row: OrganizationInvitation) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-2xl">
+        <DialogHeader className="px-5 pt-5 pb-0">
+          <DialogTitle className="truncate">{organization?.name ?? 'Organization'}</DialogTitle>
+          <DialogDescription>
+            Membership never grants access to another person&apos;s private workspace.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center gap-2 px-5 py-4">
+          <Button variant="outline" size="sm" onClick={onRename}>
+            Rename
+          </Button>
+          <Button size="sm" onClick={onInvite}>
+            <UserPlusIcon data-icon="inline-start" /> Invite member
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto"
+            aria-label="Refresh organization"
+            onClick={onRefresh}
+          >
+            {loading ? <Spinner /> : <RefreshCwIcon />}
+          </Button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto border-t px-5 py-4">
+          {loading && !detail ? (
+            <div className="flex items-center gap-2 rounded-lg border p-5 text-sm text-muted-foreground">
+              <Spinner /> Loading organization details…
+            </div>
+          ) : detail ? (
+            <>
+              <DataSection title="Members" count={detail.members.length}>
+                {detail.members.length === 0 ? (
+                  <EmptyRows icon={<UserPlusIcon />} text="No members yet. Create an invitation to add someone." />
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead className="hidden sm:table-cell">Joined</TableHead>
+                        <TableHead className="w-10">
+                          <span className="sr-only">Actions</span>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {detail.members.map((member) => (
+                        <TableRow key={member.id}>
+                          <TableCell className="max-w-48 truncate font-medium sm:max-w-none">
+                            {member.email}
+                          </TableCell>
+                          <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
+                            {when(member.joinedAt)}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Remove ${member.email}`}
+                              onClick={() => onRemoveMember(member)}
+                            >
+                              <MoreHorizontalIcon />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </DataSection>
+
+              <DataSection title="Invitations" count={detail.invitations.length}>
+                {detail.invitations.length === 0 ? (
+                  <EmptyRows icon={<UserPlusIcon />} text="No invitations yet." />
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="hidden md:table-cell">Expires</TableHead>
+                        <TableHead className="w-10">
+                          <span className="sr-only">Actions</span>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {detail.invitations.map((invitation) => (
+                        <TableRow key={invitation.id}>
+                          <TableCell className="max-w-40 truncate font-medium sm:max-w-none">
+                            {invitation.email}
+                          </TableCell>
+                          <TableCell>
+                            <Status state={invitation.state} />
+                          </TableCell>
+                          <TableCell className="hidden text-xs text-muted-foreground md:table-cell">
+                            {when(invitation.expiresAt)}
+                          </TableCell>
+                          <TableCell>
+                            {invitation.state === 'actionable' ? (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={`Revoke invitation for ${invitation.email}`}
+                                onClick={() => onRevokeInvitation(invitation)}
+                              >
+                                <MoreHorizontalIcon />
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </DataSection>
+            </>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

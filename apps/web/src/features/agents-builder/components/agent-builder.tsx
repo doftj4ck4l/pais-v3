@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   BotIcon,
   CheckIcon,
@@ -25,121 +25,76 @@ import type { AgentDefinition, Meta, Model } from '@/shared/lib/types'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/shared/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select'
 import { Textarea } from '@/shared/ui/textarea'
 import { Spinner } from '@/shared/ui/spinner'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui/dialog'
 import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { ModelLogo } from '@/shared/components/model-logo'
-import { cn } from '@/shared/lib/utils'
+import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resources/components/panel-kit'
+
+/**
+ * The agents a workspace can call from the outside.
+ *
+ * This is the same grid every resource page is: a header with a count and one
+ * button, then a card per thing. A card opens the agent in a dialog where it is
+ * viewed, edited, tested and connected — creating a new one opens the same
+ * dialog empty, so there is one place an agent is shaped rather than a
+ * master-detail split beside the list.
+ *
+ * Switching workspace remounts this whole tree (`ResourcePage` keys on the
+ * workspace), so the in-flight-request bookkeeping the old split needed is
+ * gone: a stale response lands in a component that no longer exists.
+ */
 
 const STARTER_PROMPT =
   'You are a helpful assistant. Give clear, practical answers and ask one short question when important context is missing.'
 
-const initialDraft = (modelId = ''): AgentDefinitionInput => ({
-  name: '',
-  systemPrompt: STARTER_PROMPT,
-  modelId,
-})
+const draftFor = (agent: AgentDefinition | null, fallbackModelId = ''): AgentDefinitionInput =>
+  agent
+    ? { name: agent.name, systemPrompt: agent.systemPrompt, modelId: agent.modelId }
+    : { name: '', systemPrompt: STARTER_PROMPT, modelId: fallbackModelId }
 
 const time = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
-type RequestTicket = {
-  generation: number
-  workspaceId: string | null
-  selectedId: string | null
-}
+/** The agent open in the dialog: an existing row, `'new'` for the empty form, or nothing. */
+type Editing = AgentDefinition | 'new' | null
 
 export function AgentBuilder() {
   const scope = useScope()
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [meta, setMeta] = useState<Meta>({ harnesses: [], models: [] })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<AgentDefinitionInput>(initialDraft())
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [secret, setSecret] = useState<{ agentId: string; token: string } | null>(null)
-  const [copied, setCopied] = useState<'key' | 'curl' | null>(null)
-  const [previewInput, setPreviewInput] = useState('')
-  const [previewReply, setPreviewReply] = useState<string | null>(null)
-  const [previewing, setPreviewing] = useState(false)
-  const [confirm, setConfirm] = useState<'delete' | 'rotate' | null>(null)
-  const agentsRef = useRef<AgentDefinition[]>([])
-  const generationRef = useRef(0)
-  const mountedRef = useRef(false)
-  const workspaceIdRef = useRef(scope.workspaceId)
-  const selectedIdRef = useRef<string | null>(null)
+  const [editing, setEditing] = useState<Editing>(null)
+  // Shown once, right after a create or a rotate — the plaintext key never
+  // comes back from the server again.
+  const [freshToken, setFreshToken] = useState<{ agentId: string; token: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<AgentDefinition | null>(null)
 
-  const captureRequest = useCallback(
-    (): RequestTicket => ({
-      generation: generationRef.current,
-      workspaceId: workspaceIdRef.current,
-      selectedId: selectedIdRef.current,
-    }),
-    [],
+  const models = meta.models
+  const defaultModelId = useMemo(
+    () => models.find((model) => model.ready)?.id ?? models[0]?.id ?? '',
+    [models],
   )
-
-  const requestMatchesScope = useCallback(
-    (ticket: RequestTicket) =>
-      mountedRef.current && workspaceIdRef.current === ticket.workspaceId,
-    [],
-  )
-
-  const requestMatchesSelection = useCallback(
-    (ticket: RequestTicket) =>
-      requestMatchesScope(ticket) &&
-      generationRef.current === ticket.generation &&
-      selectedIdRef.current === ticket.selectedId,
-    [requestMatchesScope],
-  )
-
-  const mutateAgents = useCallback((update: (rows: AgentDefinition[]) => AgentDefinition[]) => {
-    const next = update(agentsRef.current)
-    agentsRef.current = next
-    setAgents(next)
-  }, [])
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      generationRef.current += 1
-    }
-  }, [])
 
   useEffect(() => {
     let live = true
-    generationRef.current += 1
-    workspaceIdRef.current = scope.workspaceId
-    selectedIdRef.current = null
     setLoading(true)
-    setAgents([])
-    agentsRef.current = []
-    setSelectedId(null)
-    setSecret(null)
-    setBusy(false)
-    setPreviewing(false)
     setError(null)
+    setEditing(null)
+    setFreshToken(null)
     void Promise.all([listAgentDefinitions(scope), fetchMeta()])
       .then(([rows, catalog]) => {
         if (!live) return
         setAgents(rows)
-        agentsRef.current = rows
         setMeta(catalog)
-        const nextId = rows[0]?.id ?? null
-        selectedIdRef.current = nextId
-        setSelectedId(nextId)
-        if (rows[0]) {
-          setDraft({ name: rows[0].name, systemPrompt: rows[0].systemPrompt, modelId: rows[0].modelId })
-        } else {
-          setDraft(initialDraft(catalog.models.find((model) => model.ready)?.id ?? catalog.models[0]?.id))
-        }
       })
       .catch((cause: unknown) => {
         if (live) setError(cause instanceof Error ? cause.message : 'Could not load agents')
@@ -149,292 +104,328 @@ export function AgentBuilder() {
       })
     return () => {
       live = false
-      generationRef.current += 1
     }
   }, [scope])
 
-  const current = agents.find((agent) => agent.id === selectedId) ?? null
-  const creating = selectedId === null
-  const models = meta.models
+  // The agent currently open, resolved fresh from the list each render so an
+  // edit reflects immediately without threading the updated row through state.
+  const openAgent = editing && editing !== 'new'
+    ? (agents.find((agent) => agent.id === editing.id) ?? editing)
+    : null
 
-  const selectAgent = useCallback((agent: AgentDefinition) => {
-    if (selectedIdRef.current !== agent.id) {
-      generationRef.current += 1
-      setSecret(null)
+  async function save(draft: AgentDefinitionInput) {
+    if (editing === 'new') {
+      const { agent, token } = await createAgentDefinition(scope, draft)
+      setAgents((rows) => [agent, ...rows])
+      setFreshToken({ agentId: agent.id, token })
+      // Keep the dialog open on the created agent so its endpoint, one-time key
+      // and preview are right there rather than a second click away.
+      setEditing(agent)
+    } else if (openAgent) {
+      const updated = await updateAgentDefinition(scope, openAgent.id, draft)
+      setAgents((rows) => rows.map((agent) => (agent.id === updated.id ? updated : agent)))
+      setEditing(updated)
     }
-    selectedIdRef.current = agent.id
-    setSelectedId(agent.id)
-    setDraft({ name: agent.name, systemPrompt: agent.systemPrompt, modelId: agent.modelId })
-    setBusy(false)
-    setPreviewing(false)
-    setError(null)
-    setPreviewReply(null)
-    setPreviewInput('')
-    setCopied(null)
-  }, [])
+  }
 
-  const startNew = useCallback(() => {
-    generationRef.current += 1
-    selectedIdRef.current = null
-    setSelectedId(null)
-    setDraft(initialDraft(models.find((model) => model.ready)?.id ?? models[0]?.id))
-    setSecret(null)
-    setError(null)
-    setBusy(false)
-    setPreviewing(false)
-    setPreviewReply(null)
-    setPreviewInput('')
-  }, [models])
+  async function rotate(agent: AgentDefinition) {
+    const { agent: updated, token } = await rotateAgentToken(scope, agent.id)
+    setAgents((rows) => rows.map((row) => (row.id === updated.id ? updated : row)))
+    setFreshToken({ agentId: updated.id, token })
+  }
 
-  const save = useCallback(async () => {
-    const ticket = captureRequest()
+  async function remove(agent: AgentDefinition) {
+    await deleteAgentDefinition(scope, agent.id)
+    setAgents((rows) => rows.filter((row) => row.id !== agent.id))
+    if (editing !== 'new' && editing?.id === agent.id) setEditing(null)
+  }
+
+  const newButton = (
+    <Button size="sm" onClick={() => setEditing('new')} disabled={!defaultModelId}>
+      <PlusIcon data-icon="inline-start" /> New agent
+    </Button>
+  )
+
+  return (
+    <div className="flex flex-col">
+      <PanelHeader
+        summary={agents.length ? `${agents.length} configured` : null}
+        busy={loading}
+        action={agents.length ? newButton : null}
+      />
+
+      {loading ? null : agents.length === 0 ? (
+        <PanelEmpty
+          icon={BotIcon}
+          title="No agents yet"
+          description="Shape a text agent with a standing prompt, try it here, then call it from Telegram or any service over a simple HTTP endpoint."
+          action={newButton}
+        />
+      ) : (
+        <PanelGrid>
+          {agents.map((agent) => (
+            <ItemCard
+              key={agent.id}
+              onSelect={() => setEditing(agent)}
+              label={`Edit ${agent.name}`}
+              leading={
+                <ModelLogo
+                  model={models.find((model) => model.id === agent.modelId)}
+                  size={30}
+                  className="mt-0.5 rounded-md"
+                />
+              }
+              title={agent.name || 'Untitled agent'}
+              meta={
+                <span className="flex flex-wrap gap-x-2">
+                  <span>{models.find((model) => model.id === agent.modelId)?.label ?? agent.modelId}</span>
+                  <span>{agent.lastUsedAt ? `used ${time.format(agent.lastUsedAt)}` : 'not called yet'}</span>
+                </span>
+              }
+              actions={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Delete ${agent.name}`}
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => setConfirmDelete(agent)}
+                >
+                  <Trash2Icon />
+                </Button>
+              }
+            />
+          ))}
+        </PanelGrid>
+      )}
+
+      {error ? <p className="readout mt-3 whitespace-pre-wrap text-destructive">{error}</p> : null}
+
+      <AgentDialog
+        key={editing === 'new' ? 'new' : (openAgent?.id ?? 'closed')}
+        open={editing !== null}
+        agent={openAgent}
+        models={models}
+        defaultModelId={defaultModelId}
+        token={freshToken && openAgent && freshToken.agentId === openAgent.id ? freshToken.token : null}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSave={save}
+        onRotate={rotate}
+        onRequestDelete={setConfirmDelete}
+      />
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        onOpenChange={(open) => !open && setConfirmDelete(null)}
+        title="Delete this agent?"
+        description={`"${confirmDelete?.name || 'Untitled agent'}" and its API key will stop working immediately. This cannot be undone.`}
+        confirmLabel="Delete agent"
+        onConfirm={() => confirmDelete && void remove(confirmDelete)}
+      />
+    </div>
+  )
+}
+
+function AgentDialog({
+  open,
+  agent,
+  models,
+  defaultModelId,
+  token,
+  onOpenChange,
+  onSave,
+  onRotate,
+  onRequestDelete,
+}: {
+  open: boolean
+  /** The agent being edited, or null while creating a new one. */
+  agent: AgentDefinition | null
+  models: Model[]
+  defaultModelId: string
+  /** A just-minted plaintext key to reveal once, or null. */
+  token: string | null
+  onOpenChange: (open: boolean) => void
+  onSave: (draft: AgentDefinitionInput) => Promise<void>
+  onRotate: (agent: AgentDefinition) => Promise<void>
+  onRequestDelete: (agent: AgentDefinition) => void
+}) {
+  const creating = agent === null
+  const [draft, setDraft] = useState<AgentDefinitionInput>(() => draftFor(agent, defaultModelId))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState<'key' | 'curl' | null>(null)
+  const [previewInput, setPreviewInput] = useState('')
+  const [previewReply, setPreviewReply] = useState<string | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+
+  // Reset the form whenever the dialog is (re)opened on a different agent. The
+  // key on <AgentDialog> already remounts across agents, so this mostly covers
+  // the create → created transition, where the same instance gains an agent.
+  useEffect(() => {
+    if (open) {
+      setDraft(draftFor(agent, defaultModelId))
+      setError(null)
+      setPreviewReply(null)
+      setPreviewInput('')
+    }
+  }, [open, agent, defaultModelId])
+
+  const scope = useScope()
+
+  const submit = async () => {
+    if (busy || !draft.modelId) return
     setBusy(true)
     setError(null)
     try {
-      if (creating) {
-        const result = await createAgentDefinition(scope, draft)
-        if (!requestMatchesScope(ticket)) return
-        mutateAgents((rows) => [result.agent, ...rows])
-        if (!requestMatchesSelection(ticket)) return
-        setBusy(false)
-        generationRef.current += 1
-        selectedIdRef.current = result.agent.id
-        setSelectedId(result.agent.id)
-        setSecret({ agentId: result.agent.id, token: result.token })
-      } else if (current) {
-        const updated = await updateAgentDefinition(scope, current.id, draft)
-        if (!requestMatchesSelection(ticket)) return
-        mutateAgents((rows) => rows.map((agent) => (agent.id === updated.id ? updated : agent)))
-      }
+      await onSave(draft)
     } catch (cause) {
-      if (requestMatchesSelection(ticket)) {
-        setError(cause instanceof Error ? cause.message : 'Could not save agent')
-      }
+      setError(cause instanceof Error ? cause.message : 'Could not save agent')
     } finally {
-      if (requestMatchesSelection(ticket)) setBusy(false)
+      setBusy(false)
     }
-  }, [captureRequest, creating, current, draft, mutateAgents, requestMatchesScope, requestMatchesSelection, scope])
+  }
 
-  const rotate = useCallback(async () => {
-    if (!current) return
-    const ticket = captureRequest()
+  const rotate = async () => {
+    if (!agent || busy) return
     setBusy(true)
     setError(null)
     try {
-      const result = await rotateAgentToken(scope, current.id)
-      if (!requestMatchesSelection(ticket)) return
-      mutateAgents((rows) => rows.map((agent) => (agent.id === result.agent.id ? result.agent : agent)))
-      setSecret({ agentId: result.agent.id, token: result.token })
+      await onRotate(agent)
     } catch (cause) {
-      if (requestMatchesSelection(ticket)) {
-        setError(cause instanceof Error ? cause.message : 'Could not rotate API key')
-      }
+      setError(cause instanceof Error ? cause.message : 'Could not rotate API key')
     } finally {
-      if (requestMatchesSelection(ticket)) setBusy(false)
+      setBusy(false)
     }
-  }, [captureRequest, current, mutateAgents, requestMatchesSelection, scope])
+  }
 
-  const remove = useCallback(async () => {
-    if (!current) return
-    const ticket = captureRequest()
-    const deletedId = current.id
-    setBusy(true)
-    setError(null)
-    try {
-      await deleteAgentDefinition(scope, deletedId)
-      if (!requestMatchesScope(ticket)) return
-      const remaining = agentsRef.current.filter((agent) => agent.id !== deletedId)
-      mutateAgents((rows) => rows.filter((agent) => agent.id !== deletedId))
-      if (requestMatchesSelection(ticket)) {
-        const next = remaining[0] ?? null
-        setBusy(false)
-        generationRef.current += 1
-        selectedIdRef.current = next?.id ?? null
-        setSelectedId(next?.id ?? null)
-        setSecret(null)
-        setDraft(
-          next
-            ? { name: next.name, systemPrompt: next.systemPrompt, modelId: next.modelId }
-            : initialDraft(models.find((model) => model.ready)?.id ?? models[0]?.id),
-        )
-      }
-    } catch (cause) {
-      if (requestMatchesSelection(ticket)) {
-        setError(cause instanceof Error ? cause.message : 'Could not delete agent')
-      }
-    } finally {
-      if (requestMatchesSelection(ticket)) setBusy(false)
-    }
-  }, [captureRequest, current, models, mutateAgents, requestMatchesScope, requestMatchesSelection, scope])
-
-  const runPreview = useCallback(async () => {
-    if (previewing || !current || !previewInput.trim()) return
-    const ticket = captureRequest()
+  const runPreview = async () => {
+    if (previewing || !agent || !previewInput.trim()) return
     setPreviewing(true)
     setPreviewReply(null)
     setError(null)
     try {
-      const result = await previewAgent(scope, current.id, previewInput)
-      if (requestMatchesSelection(ticket)) setPreviewReply(result.reply)
+      const result = await previewAgent(scope, agent.id, previewInput)
+      setPreviewReply(result.reply)
     } catch (cause) {
-      if (requestMatchesSelection(ticket)) {
-        setError(cause instanceof Error ? cause.message : 'The agent could not answer')
-      }
+      setError(cause instanceof Error ? cause.message : 'The agent could not answer')
     } finally {
-      if (requestMatchesSelection(ticket)) setPreviewing(false)
+      setPreviewing(false)
     }
-  }, [captureRequest, current, previewInput, previewing, requestMatchesSelection, scope])
+  }
 
-  const visibleSecret = secret && secret.agentId === current?.id ? secret.token : null
-  const endpoint = current
-    ? `${window.location.origin}${current.endpoint}`
+  const endpoint = agent
+    ? `${window.location.origin}${agent.endpoint}`
     : `${window.location.origin}/api/agents/invoke`
   const curl = useMemo(
     () =>
       [
         `curl -X POST '${endpoint}' \\`,
-        `  -H 'Authorization: Bearer ${visibleSecret ?? 'YOUR_AGENT_API_KEY'}' \\`,
+        `  -H 'Authorization: Bearer ${token ?? 'YOUR_AGENT_API_KEY'}' \\`,
         "  -H 'Content-Type: application/json' \\",
         `  -d '{"message":"Hello from Telegram"}'`,
       ].join('\n'),
-    [endpoint, visibleSecret],
+    [endpoint, token],
   )
 
-  const copy = useCallback(async (value: string, kind: 'key' | 'curl') => {
+  const copy = async (value: string, kind: 'key' | 'curl') => {
     await navigator.clipboard.writeText(value)
     setCopied(kind)
     window.setTimeout(() => setCopied((active) => (active === kind ? null : active)), 1600)
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="flex min-h-64 items-center justify-center gap-2 text-muted-foreground">
-        <Spinner className="size-4" />
-        <span>Loading agent builder…</span>
-      </div>
-    )
   }
 
   return (
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(15rem,0.7fr)_minmax(0,1.8fr)] xl:gap-7">
-      <aside className="min-w-0 lg:sticky lg:top-0">
-        <div className="mb-3 flex flex-col items-stretch gap-3 min-[28rem]:flex-row min-[28rem]:items-center">
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold">Your agents</h2>
-            <p className="text-sm text-muted-foreground">
-              {agents.length} configured in this workspace
-            </p>
-          </div>
-          <Button size="sm" className="w-full min-[28rem]:w-auto" onClick={startNew}>
-            <PlusIcon /> New agent
-          </Button>
-        </div>
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-2xl">
+        <DialogHeader className="px-5 pt-5 pb-0">
+          <DialogTitle>{creating ? 'New agent' : agent?.name || 'Agent'}</DialogTitle>
+          <DialogDescription>
+            {creating
+              ? 'Give this agent a standing instruction and a model. You can test and connect it after creating.'
+              : 'Edit the prompt, test it privately, and connect it to an external service.'}
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-          {agents.map((agent) => (
-            <AgentListItem
-              key={agent.id}
-              agent={agent}
-              model={models.find((model) => model.id === agent.modelId)}
-              active={!creating && agent.id === selectedId}
-              onSelect={() => selectAgent(agent)}
-            />
-          ))}
-        </div>
-      </aside>
-
-      {creating || current ? (
-        <section className="min-w-0 space-y-5">
-          <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="label mb-1 text-muted-foreground">
-                {creating ? 'New prompt agent' : 'Agent definition'}
-              </p>
-              <h2 className="text-xl font-semibold tracking-tight">
-                {creating ? 'Give this agent a job' : current?.name}
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              {!creating && current ? (
-                <Button variant="ghost" size="sm" onClick={() => setConfirm('delete')} disabled={busy}>
-                  <Trash2Icon /> Delete
-                </Button>
-              ) : null}
-              <Button size="sm" onClick={() => void save()} disabled={busy || !draft.modelId}>
-                {busy ? <Spinner /> : <CheckIcon />}
-                {creating ? 'Create agent' : 'Save changes'}
-              </Button>
-            </div>
-          </header>
-
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {error ? (
-            <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+            >
               {error}
             </div>
           ) : null}
 
-          <div className="rounded-xl border bg-card p-4 sm:p-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="agent-name">Name</Label>
-                <Input
-                  id="agent-name"
-                  value={draft.name}
-                  maxLength={80}
-                  placeholder="Customer support"
-                  onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="agent-model">Model</Label>
-                <Select
-                  value={draft.modelId}
-                  onValueChange={(modelId) => setDraft((value) => ({ ...value, modelId }))}
-                >
-                  <SelectTrigger id="agent-model" className="w-full">
-                    <SelectValue placeholder="Choose a model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((model) => (
-                      <SelectItem key={model.id} value={model.id} disabled={!model.ready}>
-                        {model.label}{!model.ready ? ' · not configured' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <div className="flex items-baseline justify-between gap-3">
-                  <Label htmlFor="agent-prompt">System prompt</Label>
-                  <span className="readout text-muted-foreground">{draft.systemPrompt.length.toLocaleString()} / 12,000</span>
-                </div>
-                <Textarea
-                  id="agent-prompt"
-                  value={draft.systemPrompt}
-                  maxLength={12_000}
-                  className="min-h-52 resize-y leading-relaxed"
-                  onChange={(event) =>
-                    setDraft((value) => ({ ...value, systemPrompt: event.target.value }))
-                  }
-                />
-                <p className="text-sm text-muted-foreground">
-                  This is the agent’s standing instruction. API calls send this prompt, optional chat history, and the new message—no workspace tools or documents yet.
-                </p>
-              </div>
+          <form
+            id="agent-form"
+            className="grid gap-4 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submit()
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-name">Name</Label>
+              <Input
+                id="agent-name"
+                value={draft.name}
+                maxLength={80}
+                autoFocus={creating}
+                placeholder="Customer support"
+                onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
+              />
             </div>
-          </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-model">Model</Label>
+              <Select
+                value={draft.modelId}
+                onValueChange={(modelId) => setDraft((value) => ({ ...value, modelId }))}
+              >
+                <SelectTrigger id="agent-model" className="w-full">
+                  <SelectValue placeholder="Choose a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id} disabled={!model.ready}>
+                      {model.label}
+                      {!model.ready ? ' · not configured' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <Label htmlFor="agent-prompt">System prompt</Label>
+                <span className="readout text-muted-foreground">
+                  {draft.systemPrompt.length.toLocaleString()} / 12,000
+                </span>
+              </div>
+              <Textarea
+                id="agent-prompt"
+                value={draft.systemPrompt}
+                maxLength={12_000}
+                className="min-h-40 resize-y leading-relaxed"
+                onChange={(event) =>
+                  setDraft((value) => ({ ...value, systemPrompt: event.target.value }))
+                }
+              />
+              <p className="text-sm text-muted-foreground">
+                The agent&apos;s standing instruction. API calls send this prompt, optional chat
+                history, and the new message — no workspace tools or documents yet.
+              </p>
+            </div>
+          </form>
 
-          {!creating && current ? (
+          {agent ? (
             <>
               <ApiCard
-                agent={current}
+                agent={agent}
                 endpoint={endpoint}
-                token={visibleSecret}
+                token={token}
                 curl={curl}
                 copied={copied}
                 busy={busy}
                 onCopy={copy}
-                onRotate={() => setConfirm('rotate')}
+                onRotate={() => void rotate()}
               />
               <PreviewCard
                 value={previewInput}
@@ -444,67 +435,38 @@ export function AgentBuilder() {
                 onSend={() => void runPreview()}
               />
             </>
-          ) : (
-            <div className="rounded-xl border border-dashed px-5 py-8 text-center text-sm text-muted-foreground">
-              Create the agent to reveal its API endpoint and open the preview chat.
-            </div>
-          )}
-        </section>
-      ) : (
-        <div className="hidden min-h-96 items-center justify-center rounded-xl border border-dashed text-muted-foreground lg:flex">
-          Choose an agent or create a new one.
+          ) : null}
         </div>
-      )}
 
-      <ConfirmDialog
-        open={confirm !== null}
-        onOpenChange={(open) => !open && setConfirm(null)}
-        title={confirm === 'delete' ? 'Delete this agent?' : 'Rotate this API key?'}
-        description={
-          confirm === 'delete'
-            ? 'Its current API key will stop working immediately. This cannot be undone.'
-            : 'The current key will stop working immediately. Update every bot or service that uses it.'
-        }
-        confirmLabel={confirm === 'delete' ? 'Delete agent' : 'Rotate key'}
-        onConfirm={() => void (confirm === 'delete' ? remove() : rotate())}
-      />
-    </div>
-  )
-}
-
-function AgentListItem({
-  agent,
-  model,
-  active,
-  onSelect,
-}: {
-  agent: AgentDefinition
-  model?: Model
-  active: boolean
-  onSelect: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={active}
-      className={cn(
-        'flex min-w-0 items-start gap-3 rounded-xl border p-3.5 text-left transition-colors',
-        'hover:border-foreground/25 hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
-        active && 'border-foreground/30 bg-muted/50',
-      )}
-    >
-      <ModelLogo model={model} size={32} className="rounded-lg" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-semibold">{agent.name}</span>
-        <span className="mt-1 block truncate text-sm text-muted-foreground">
-          {model?.label ?? agent.modelId}
-        </span>
-        <span className="readout mt-2 block text-muted-foreground">
-          {agent.lastUsedAt ? `used ${time.format(agent.lastUsedAt)}` : 'not called yet'}
-        </span>
-      </span>
-    </button>
+        <div className="flex items-center gap-2 border-t px-5 py-4">
+          {agent ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-destructive"
+              disabled={busy}
+              onClick={() => onRequestDelete(agent)}
+            >
+              <Trash2Icon data-icon="inline-start" /> Delete
+            </Button>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onOpenChange(false)}>
+              {agent ? 'Close' : 'Cancel'}
+            </Button>
+            <Button
+              type="submit"
+              form="agent-form"
+              size="sm"
+              disabled={busy || !draft.modelId}
+            >
+              {busy ? <Spinner /> : <CheckIcon />}
+              {creating ? 'Create agent' : 'Save changes'}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -529,19 +491,19 @@ function ApiCard({
 }) {
   return (
     <section className="overflow-hidden rounded-xl bg-foreground text-background">
-      <div className="flex flex-col gap-3 border-b border-background/15 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+      <div className="flex flex-col gap-3 border-b border-background/15 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="label flex items-center gap-1.5 text-background/60">
             <TerminalIcon className="size-3.5" /> External API
           </p>
-          <h3 className="mt-1 text-lg font-semibold">Connect the agent</h3>
+          <h3 className="mt-1 text-base font-semibold">Connect the agent</h3>
         </div>
         <div className="readout rounded-full border border-background/20 px-2.5 py-1 text-background/70">
           text only · stateless
         </div>
       </div>
 
-      <div className="space-y-4 p-4 sm:p-5">
+      <div className="space-y-4 p-4">
         <div>
           <p className="label mb-1.5 text-background/55">POST endpoint</p>
           <div className="readout overflow-x-auto rounded-lg border border-background/15 bg-background/5 px-3 py-2.5 text-background/90">
@@ -553,12 +515,8 @@ function ApiCard({
           <div className="rounded-lg border border-background/25 bg-background/10 p-3">
             <div className="flex items-center gap-2">
               <KeyRoundIcon className="size-4 shrink-0" />
-              <p className="min-w-0 flex-1 text-sm font-semibold">Copy this key now—it is shown once.</p>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void onCopy(token, 'key')}
-              >
+              <p className="min-w-0 flex-1 text-sm font-semibold">Copy this key now — it is shown once.</p>
+              <Button variant="secondary" size="sm" onClick={() => void onCopy(token, 'key')}>
                 {copied === 'key' ? <CheckIcon /> : <CopyIcon />}
                 {copied === 'key' ? 'Copied' : 'Copy key'}
               </Button>
@@ -568,7 +526,8 @@ function ApiCard({
         ) : (
           <div className="flex flex-col gap-2 rounded-lg border border-background/15 px-3 py-2.5 sm:flex-row sm:items-center">
             <p className="min-w-0 flex-1 text-sm text-background/70">
-              Active key ends in <span className="readout text-background">{agent.tokenHint}</span>. The full key is hidden.
+              Active key ends in <span className="readout text-background">{agent.tokenHint}</span>. The
+              full key is hidden.
             </p>
             <Button variant="secondary" size="sm" onClick={onRotate} disabled={busy}>
               <RefreshCwIcon /> Generate new key
@@ -581,7 +540,7 @@ function ApiCard({
             <p className="label text-background/55">Quick test</p>
             <button
               type="button"
-              className="flex items-center gap-1 text-xs text-background/65 hover:text-background focus-visible:outline-none focus-visible:underline"
+              className="flex items-center gap-1 text-xs text-background/65 hover:text-background focus-visible:underline focus-visible:outline-none"
               onClick={() => void onCopy(curl, 'curl')}
             >
               {copied === 'curl' ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
@@ -611,7 +570,7 @@ function PreviewCard({
   onSend: () => void
 }) {
   return (
-    <section className="rounded-xl border bg-card p-4 sm:p-5">
+    <section className="rounded-xl border bg-card p-4">
       <div className="mb-4 flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40">
           <BotIcon className="size-4" />
@@ -623,7 +582,10 @@ function PreviewCard({
       </div>
 
       {reply ? (
-        <div aria-live="polite" className="mb-4 rounded-lg bg-muted/60 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
+        <div
+          aria-live="polite"
+          className="mb-4 rounded-lg bg-muted/60 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
+        >
           {reply}
         </div>
       ) : null}
