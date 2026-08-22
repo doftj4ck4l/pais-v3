@@ -32,6 +32,16 @@ const PALETTE = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7
 
 const AXIS = { stroke: 'currentColor', tick: { fill: 'currentColor', fontSize: 12 }, opacity: 0.55 }
 
+// A little breathing room on every side so the outermost axis labels are never
+// clipped by the ResponsiveContainer's edge.
+const MARGIN = { top: 8, right: 16, bottom: 4, left: 8 }
+
+// Large values ("1240", "3200000") are what push the Y axis wide enough to clip.
+// Compacting the ticks ("1.2k", "3.2M") keeps the axis narrow *and* readable;
+// non-numeric ticks (a category axis) pass through untouched.
+const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+const formatTick = (v: unknown) => (typeof v === 'number' ? compact.format(v) : String(v ?? ''))
+
 export function Chart({ type, data, x, y, title }: ChartProps) {
   const series = Array.isArray(y) ? y : [y]
 
@@ -52,14 +62,16 @@ export function Chart({ type, data, x, y, title }: ChartProps) {
 function renderChart(type: ChartProps['type'], data: ChartProps['data'], x: string, series: string[]) {
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.12} />
   const xa = <XAxis dataKey={x} {...AXIS} />
-  const ya = <YAxis {...AXIS} width={40} />
+  // The compact formatter caps a tick at ~6 chars ("999.9k"), so a fixed width
+  // that fits that never clips — no fragile auto-measuring needed.
+  const ya = <YAxis {...AXIS} width={52} tickFormatter={formatTick} />
   const tip = <Tooltip contentStyle={TOOLTIP} cursor={{ opacity: 0.1 }} />
   const legend = series.length > 1 ? <Legend wrapperStyle={{ fontSize: 12 }} /> : null
 
   switch (type) {
     case 'bar':
       return (
-        <BarChart data={data}>
+        <BarChart data={data} margin={MARGIN}>
           {grid}
           {xa}
           {ya}
@@ -72,7 +84,7 @@ function renderChart(type: ChartProps['type'], data: ChartProps['data'], x: stri
       )
     case 'line':
       return (
-        <LineChart data={data}>
+        <LineChart data={data} margin={MARGIN}>
           {grid}
           {xa}
           {ya}
@@ -85,7 +97,7 @@ function renderChart(type: ChartProps['type'], data: ChartProps['data'], x: stri
       )
     case 'area':
       return (
-        <AreaChart data={data}>
+        <AreaChart data={data} margin={MARGIN}>
           {grid}
           {xa}
           {ya}
@@ -106,7 +118,7 @@ function renderChart(type: ChartProps['type'], data: ChartProps['data'], x: stri
       )
     case 'scatter':
       return (
-        <ScatterChart>
+        <ScatterChart margin={MARGIN}>
           {grid}
           <XAxis dataKey={x} {...AXIS} />
           {ya}
