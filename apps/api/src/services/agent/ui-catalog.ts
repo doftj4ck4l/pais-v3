@@ -52,6 +52,12 @@ function validateChart(p: Record<string, unknown>): UiValidation {
   const yOk =
     typeof y === 'string' || (Array.isArray(y) && y.length > 0 && y.every((k) => typeof k === 'string'))
   if (!yOk) errors.push('chart.y must be a metric key, or a non-empty array of metric keys')
+  if (p.color !== undefined && !isSafeColor(p.color)) {
+    errors.push('chart.color must be a hex (#f80), an rgb()/hsl() value, or a CSS colour name like "orange"')
+  }
+  if (p.colors !== undefined && (!Array.isArray(p.colors) || !p.colors.every(isSafeColor))) {
+    errors.push('chart.colors must be an array of colours (hex, rgb()/hsl(), or CSS names)')
+  }
   // Catch the common mistake of naming a key nothing in the data actually has.
   if (isRowArray(p.data) && typeof p.x === 'string' && yOk) {
     const keys = new Set(Object.keys(p.data[0] ?? {}))
@@ -95,6 +101,16 @@ function validateCard(p: Record<string, unknown>): UiValidation {
     errors.push('a card needs at least one of: title, body, fields')
   }
   return done(errors)
+}
+
+// A colour is written into an SVG `fill`, so only shapes that cannot carry
+// anything else are allowed: a hex, an rgb()/hsl() function, or a bare CSS name.
+// Kept identical to the web catalog's `isSafeColor`.
+const HEX = /^#[0-9a-f]{3,8}$/i
+const COLOR_FUNC = /^(rgb|hsl)a?\([\d.,%\s/]+\)$/i
+const COLOR_NAME = /^[a-z]+$/i
+function isSafeColor(v: unknown): boolean {
+  return typeof v === 'string' && (HEX.test(v) || COLOR_FUNC.test(v) || COLOR_NAME.test(v))
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

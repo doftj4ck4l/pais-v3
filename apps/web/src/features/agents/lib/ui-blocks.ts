@@ -36,6 +36,10 @@ export type ChartProps = {
   /** One numeric key, or several for a multi-series chart. */
   y: string | string[]
   title?: string
+  /** Single colour override for the whole chart (hex, rgb()/hsl(), or a CSS name). */
+  color?: string
+  /** Per-series (or per-slice) colour overrides; wraps if shorter than the data. */
+  colors?: string[]
 }
 
 export type TableProps = {
@@ -221,7 +225,19 @@ function validateChart(p: Record<string, unknown>): p is ChartProps {
   const yOk = typeof y === 'string' || (Array.isArray(y) && y.length > 0 && y.every((k) => typeof k === 'string'))
   if (!yOk) return false
   if (p.title !== undefined && typeof p.title !== 'string') return false
+  if (p.color !== undefined && !isSafeColor(p.color)) return false
+  if (p.colors !== undefined && (!Array.isArray(p.colors) || !p.colors.every(isSafeColor))) return false
   return true
+}
+
+// A colour goes straight into an SVG `fill`, so only shapes that cannot smuggle
+// anything else through are allowed: a hex, an rgb()/hsl() function, or a bare
+// CSS colour name. This is the same allowlist the API validator enforces.
+const HEX = /^#[0-9a-f]{3,8}$/i
+const FUNC = /^(rgb|hsl)a?\([\d.,%\s/]+\)$/i
+const NAME = /^[a-z]+$/i
+export function isSafeColor(v: unknown): v is string {
+  return typeof v === 'string' && (HEX.test(v) || FUNC.test(v) || NAME.test(v))
 }
 
 function validateTable(p: Record<string, unknown>): p is TableProps {

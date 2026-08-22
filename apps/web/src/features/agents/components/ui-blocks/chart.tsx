@@ -42,8 +42,13 @@ const MARGIN = { top: 8, right: 16, bottom: 4, left: 8 }
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 const formatTick = (v: unknown) => (typeof v === 'number' ? compact.format(v) : String(v ?? ''))
 
-export function Chart({ type, data, x, y, title }: ChartProps) {
+export function Chart({ type, data, x, y, title, color, colors }: ChartProps) {
   const series = Array.isArray(y) ? y : [y]
+  // The model can override the palette: `colors` sets it series-by-series (or
+  // slice-by-slice for a pie), `color` is the single-colour shorthand. Anything
+  // not overridden falls back to the default categorical palette.
+  const chosen = colors?.length ? colors : color ? [color] : PALETTE
+  const palette = (i: number) => chosen[i % chosen.length]
 
   return (
     <figure className="my-4 rounded-lg border bg-card p-3 text-card-foreground">
@@ -52,14 +57,20 @@ export function Chart({ type, data, x, y, title }: ChartProps) {
       ) : null}
       <div className="text-muted-foreground/70">
         <ResponsiveContainer width="100%" height={260}>
-          {renderChart(type, data, x, series)}
+          {renderChart(type, data, x, series, palette)}
         </ResponsiveContainer>
       </div>
     </figure>
   )
 }
 
-function renderChart(type: ChartProps['type'], data: ChartProps['data'], x: string, series: string[]) {
+function renderChart(
+  type: ChartProps['type'],
+  data: ChartProps['data'],
+  x: string,
+  series: string[],
+  color: (i: number) => string,
+) {
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="currentColor" opacity={0.12} />
   const xa = <XAxis dataKey={x} {...AXIS} />
   // The compact formatter caps a tick at ~6 chars ("999.9k"), so a fixed width
@@ -150,7 +161,3 @@ const TOOLTIP = {
   color: 'var(--popover-foreground)',
   fontSize: 12,
 } as const
-
-function color(i: number) {
-  return PALETTE[i % PALETTE.length]
-}

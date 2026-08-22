@@ -129,7 +129,7 @@ export const TOOLS: Tool[] = [
       "The component is validated here before it is shown; on success it is already visible to the user, so do not also paste its JSON into your reply. " +
       "On failure this returns the exact problems — fix the props and call render_ui again. You may call it several times for several components.\n\n" +
       "Component props:\n" +
-      "- chart: type ('bar'|'line'|'area'|'pie'|'scatter'), data (array of row objects), x (category key on every row), y (one metric key or an array of keys), title? \n" +
+      "- chart: type ('bar'|'line'|'area'|'pie'|'scatter'), data (array of row objects), x (category key on every row), y (one metric key or an array of keys), title?, color? (single colour for the whole chart — hex, rgb()/hsl(), or a CSS name like 'orange'), colors? (array of colours, one per series or pie slice) \n" +
       "- table: columns (array of { key, label?, align? } where align is 'left'|'right'|'center'), rows (array of row objects keyed by column key), caption? \n" +
       "- stat: label, value, delta?, trend? ('up'|'down'|'flat'), help? \n" +
       "- card: title?, body? (markdown), fields? (array of { label, value }), accent? ('default'|'primary'|'success'|'warning'|'destructive')",
