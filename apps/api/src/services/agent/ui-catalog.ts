@@ -16,12 +16,19 @@ export type UiValidation = { ok: true } | { ok: false; errors: string[] }
 
 const CHART_TYPES = ['bar', 'line', 'area', 'pie', 'scatter'] as const
 
-export function validateUiSpec(component: unknown, props: unknown): UiValidation {
+export function validateUiSpec(componentIn: unknown, propsIn: unknown): UiValidation {
+  // Weaker models routinely serialise nested arguments: `props` arrives as a
+  // JSON *string*, `component` as `'["chart"]'`. The content is usually right,
+  // so we coerce these back rather than reject — a rejection they cannot
+  // diagnose just makes them retry the same mistake.
+  const component = coerceComponent(componentIn)
+  const props = coerceProps(propsIn)
+
   if (typeof component !== 'string') {
     return fail('`component` is required and must be a string')
   }
   if (!isRecord(props)) {
-    return fail('`props` is required and must be an object')
+    return fail('`props` must be an object with the component\'s fields')
   }
   switch (component) {
     case 'chart':
@@ -111,6 +118,27 @@ const COLOR_FUNC = /^(rgb|hsl)a?\([\d.,%\s/]+\)$/i
 const COLOR_NAME = /^[a-z]+$/i
 function isSafeColor(v: unknown): boolean {
   return typeof v === 'string' && (HEX.test(v) || COLOR_FUNC.test(v) || COLOR_NAME.test(v))
+}
+
+/** A `props` sent as a JSON string is parsed back to the object it encodes. */
+function coerceProps(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return v
+  }
+}
+
+/** `component` sent as `'["chart"]'` or `'"chart"'` is unwrapped to the name. */
+function coerceComponent(v: unknown): unknown {
+  if (typeof v !== 'string' || (v[0] !== '[' && v[0] !== '"')) return v
+  try {
+    const parsed = JSON.parse(v)
+    return Array.isArray(parsed) ? parsed[0] : parsed
+  } catch {
+    return v
+  }
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -136,14 +136,16 @@ export const TOOLS: Tool[] = [
     parameters: {
       type: "object",
       properties: {
+        // Deliberately loose (no enum, no nested object schema): a strict schema
+        // makes pi reject a weak model's stringified argument with an opaque
+        // "must be equal to constant" the model cannot act on. render_ui's own
+        // validator coerces and returns a fixable error instead.
         component: {
           type: "string",
-          enum: ["chart", "table", "stat", "card"],
-          description: "which catalog component to render",
+          description: "which catalog component to render: chart, table, stat, or card",
         },
         props: {
-          type: "object",
-          description: "the component's props (see the tool description for each component's shape)",
+          description: "the component's fields as a JSON object (see the tool description for each component's shape)",
         },
       },
       required: ["component", "props"],

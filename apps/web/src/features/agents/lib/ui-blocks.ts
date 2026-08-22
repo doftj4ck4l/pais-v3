@@ -199,9 +199,13 @@ function pushMarkdown(segments: Segment[], text: string) {
 
 export function validateSpec(value: unknown): UiSpec | null {
   if (!isRecord(value)) return null
-  const props = value.props
+  // Weaker models serialise nested arguments — `props` as a JSON string,
+  // `component` as `'["chart"]'`. Coerce them back so a spec whose content is
+  // right still renders, matching what the API's render_ui validator accepts.
+  const component = coerceComponent(value.component)
+  const props = coerceProps(value.props)
   if (!isRecord(props)) return null
-  switch (value.component) {
+  switch (component) {
     case 'chart':
       return validateChart(props) ? { component: 'chart', props } : null
     case 'table':
@@ -264,6 +268,27 @@ function validateCard(p: Record<string, unknown>): p is CardProps {
   }
   // A card with nothing in it is not worth a box.
   return Boolean(p.title || p.body || (Array.isArray(p.fields) && p.fields.length))
+}
+
+/** A `props` sent as a JSON string is parsed back to the object it encodes. */
+function coerceProps(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return v
+  }
+}
+
+/** `component` sent as `'["chart"]'` or `'"chart"'` is unwrapped to the name. */
+function coerceComponent(v: unknown): unknown {
+  if (typeof v !== 'string' || (v[0] !== '[' && v[0] !== '"')) return v
+  try {
+    const parsed = JSON.parse(v)
+    return Array.isArray(parsed) ? parsed[0] : parsed
+  } catch {
+    return v
+  }
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
