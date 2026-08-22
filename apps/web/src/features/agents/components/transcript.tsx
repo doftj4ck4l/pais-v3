@@ -4,6 +4,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui
 import { Spinner } from '@/shared/ui/spinner'
 import { describeTool, thoughtLabel } from '@/features/agents/lib/tool-summary'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
+import { parseMessage, hasUiBlock, validateSpec } from '@/features/agents/lib/ui-blocks'
+import { SegmentView } from '@/features/agents/components/ui-blocks'
 import { cn } from '@/shared/lib/utils'
 import type { ReactNode } from 'react'
 import type { Item } from '@/shared/lib/types'
@@ -98,13 +100,52 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
   if (item.kind === 'iteration') return null
 
   if (item.kind === 'thinking') return <ThinkingLine item={item} streaming={streaming} />
+  // `render_ui` is the one tool whose whole purpose is to draw something in the
+  // answer, so it is not collapsed into an activity line like every other tool —
+  // its call arguments *are* the component, and they are rendered inline here.
+  if (item.kind === 'tool' && item.name === 'render_ui') return <RenderUiLine item={item} />
   if (item.kind === 'tool') return <ToolLine item={item} />
 
+  return <AssistantMessage text={item.text} streaming={streaming} />
+}
+
+/**
+ * The agent's answer. Almost always one markdown blob, rendered exactly as
+ * before — the fast path skips the segment split entirely. When the model has
+ * emitted a ```ui block, the message becomes a sequence of prose and rendered
+ * components instead, and the `caret` (streaming cursor) rides the last
+ * markdown segment so it still trails the text rather than a chart.
+ */
+function AssistantMessage({ text, streaming }: { text: string; streaming: boolean }) {
+  if (!hasUiBlock(text)) {
+    return (
+      <div
+        className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+      />
+    )
+  }
+
+  const segments = parseMessage(text)
+  const lastMarkdown = segments.reduce((at, s, i) => (s.kind === 'markdown' ? i : at), -1)
+
   return (
-    <div
-      className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }}
-    />
+    <div className="mt-2 mb-6">
+      {segments.map((segment, i) =>
+        segment.kind === 'markdown' ? (
+          <div
+            key={i}
+            className={cn(
+              'prose-agent max-w-none break-words',
+              streaming && i === lastMarkdown && 'caret',
+            )}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(segment.text) }}
+          />
+        ) : (
+          <SegmentView key={i} segment={segment} />
+        ),
+      )}
+    </div>
   )
 }
 
@@ -231,6 +272,39 @@ function ToolLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
       </Collapsible>
     </ActivityLine>
   )
+}
+
+/**
+ * A `render_ui` call, drawn as the component it describes rather than as a tool
+ * line. The spec rides in the call arguments, so it renders the moment the call
+ * is seen — the tool result only confirms server-side validation. A call the
+ * server rejected (`ok === false`) means the model is about to retry with fixed
+ * props; its failed attempt collapses to a quiet note rather than a broken box.
+ */
+function RenderUiLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
+  const spec = parseSpecFromArgs(item.args)
+
+  if (item.ok === false || !spec) {
+    // Pending (no result yet) with a valid-looking spec still shows the chart —
+    // only a spec that will not parse waits. This keeps the common path instant.
+    if (item.result === undefined && spec) return <SegmentView segment={{ kind: 'ui', spec }} />
+    if (item.result === undefined) {
+      return <div className="my-4 h-[260px] animate-pulse rounded-lg border bg-muted/30" aria-label="Preparing…" />
+    }
+    return (
+      <p className="my-2 text-xs text-muted-foreground/70 italic">Adjusting the component…</p>
+    )
+  }
+
+  return <SegmentView segment={{ kind: 'ui', spec }} />
+}
+
+function parseSpecFromArgs(args: string) {
+  try {
+    return validateSpec(JSON.parse(args))
+  } catch {
+    return null
+  }
 }
 
 /** The clickable sentence: `Used tool: Searched "moai statues"` and a chevron. */
