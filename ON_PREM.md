@@ -34,6 +34,12 @@ From a release checkout:
   --model-id my-model
 ```
 
+On a terminal, running `./install.sh` with any of these values omitted starts a
+short guided wizard that collects the host profile, model backend, administrator
+email, and dashboard exposure, then confirms before proceeding. Every value can
+still be passed as a flag; add `--no-interactive` (or `--yes`) to skip the wizard
+for CI and scripted installs.
+
 The default `local` authentication mode generates a strong random password for
 the first administrator and prints it once after the account is created. Save
 it immediately and treat captured installer output as sensitive. The password
@@ -182,6 +188,36 @@ Release automation must publish one manifest containing `linux/amd64` and
 `linux/arm64` for each image. The operator rejects mutable image-mode tags.
 RustFS is pinned to a verified multi-architecture manifest instead of a
 floating `latest` tag.
+
+## Offline install bundle
+
+To install on a host without cloning the repository, build a self-contained
+bundle from a full checkout and copy the single archive to the target:
+
+```bash
+scripts/pixelspace package                 # bundle operator, Compose, skills, images
+scripts/pixelspace package --with-model    # also include the large DGX model image
+scripts/pixelspace package --skip-images   # operator + Compose + skills only
+```
+
+`package` builds the API, web, and sandbox images, saves them alongside the
+operator, the Compose file, and the read-only skills directory Compose mounts,
+and writes `pixelspace-<version>-<arch>.tar.gz`. Because saved images are
+architecture-specific, build the bundle on the same CPU architecture as the
+target (for a DGX Spark, on an `arm64` host).
+
+On the target host:
+
+```bash
+tar xzf pixelspace-<version>-<arch>.tar.gz
+cd pixelspace-<version>
+./install.sh --admin-email operator@example.com   # guided wizard fills the rest
+```
+
+The installer loads the bundled images, pins the stack to them, and runs in
+image mode. A bundle's images come from exact saved bytes, so the operator
+accepts their local tags without a registry `@sha256` digest — the archive is
+itself the immutability guarantee.
 
 ## Operate
 
