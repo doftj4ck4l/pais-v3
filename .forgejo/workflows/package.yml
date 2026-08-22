@@ -1,20 +1,20 @@
 name: package
 
-# Build a self-contained offline install bundle and attach it to a Forgejo
-# release, so an operator installs on a fresh host by downloading one archive —
-# no repository clone. See `scripts/pixelspace package` and ON_PREM.md.
+# Build self-contained offline install bundles for every supported architecture
+# and attach them to a Forgejo release — so an operator installs on a fresh host
+# by downloading one archive, no repository clone. See `scripts/pixelspace
+# package` and ON_PREM.md.
 #
-# Trigger by pushing a version tag (`v0.4.0`) or running it by hand and naming a
-# tag. The build runs `scripts/pixelspace package`, which builds the API, web,
-# and sandbox images with Docker and saves them into the archive — so the runner
-# needs a working Docker daemon.
+# The git tag is the single source of the version: it names the release, and it
+# is stamped into the VERSION file before the images are built, so nobody edits
+# VERSION by hand for a release. Push a tag (`v0.5.0`) or run this by hand naming
+# one.
 #
-# ARCHITECTURE: saved images are architecture-specific, so this produces a
-# bundle for the runner's own CPU architecture only. `ubuntu-latest` here is
-# amd64. A DGX Spark (arm64) bundle must be built on an arm64 host — either add a
-# runner that reports `arch: arm64` and a matching matrix entry, or run
-# `scripts/pixelspace package` on the Spark itself (which is supported and
-# needs no CI).
+# Both bundles are built on one amd64 runner; the arm64 build runs under QEMU
+# emulation, which needs a runner that permits binfmt/buildx. If arm64 builds are
+# slow or unavailable there, register the DGX Spark (or any arm64 host) as a
+# runner and give the arm64 matrix leg `runs-on: arm64` instead — the steps are
+# identical.
 
 on:
   push:
@@ -22,75 +22,103 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish the bundle under (e.g. v0.4.0)"
+        description: "Release tag (e.g. v0.5.0)"
         required: true
       with_model:
-        description: "Include the large DGX model image in the bundle"
+        description: "Include the large DGX model image"
         type: boolean
         default: false
 
 jobs:
-  bundle:
+  # One release for the tag, created once so the per-arch jobs only upload.
+  release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
-      # The tag drives both the release and the bundle's version stamp: on a tag
-      # push it is the ref; on a manual run it is the typed input.
-      - name: Resolve the release tag
-        id: release
+      - name: Resolve the tag
+        id: tag
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           [ -n "$tag" ] || { echo "no tag to release"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Docker is available
+      - name: Create the release if it does not exist
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="$SERVER/api/v1/repos/$REPO"; auth="Authorization: token $TOKEN"
+          if ! curl -fsS -H "$auth" "$api/releases/tags/$TAG" >/dev/null 2>&1; then
+            curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' "$api/releases" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Offline install bundles. See ON_PREM.md.\"}" >/dev/null
+          fi
+
+  bundle:
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      # binfmt so this amd64 runner can build the arm64 image. No-op for amd64.
+      - name: Enable cross-architecture builds
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Verify Docker
         run: docker version
+
+      # The tag is the version: stamp it into VERSION before building so the
+      # images and the bundle carry it, with no manual edit.
+      - name: Stamp the version from the tag
+        run: |
+          v="${{ needs.release.outputs.tag }}"; v="${v#v}"
+          printf '%s\n' "$v" > VERSION
+          echo "building version $v for ${{ matrix.arch }}"
 
       - name: Build the offline bundle
         id: build
+        env:
+          # host_arch() honours this for the bundle name; DOCKER_DEFAULT_PLATFORM
+          # makes `docker build` emit that architecture (native or emulated).
+          PIXELSPACE_ARCH_OVERRIDE: ${{ matrix.arch }}
+          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
         run: |
           args=(package --output "$PWD/dist")
           [ "${{ github.event.inputs.with_model }}" = "true" ] && args+=(--with-model)
           mkdir -p dist
           scripts/pixelspace "${args[@]}"
-          archive="$(ls dist/pixelspace-*.tar.gz | head -1)"
-          [ -n "$archive" ] || { echo "no bundle was produced"; exit 1; }
+          archive="$(ls dist/pixelspace-*-${{ matrix.arch }}.tar.gz | head -1)"
+          [ -n "$archive" ] || { echo "no ${{ matrix.arch }} bundle produced"; exit 1; }
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -lh "$archive"
 
-      # Forgejo release attachments over its API. The auto token that Actions
-      # injects is scoped to this repo; no PAT is needed.
-      - name: Publish the bundle as a release attachment
+      - name: Attach the bundle to the release
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SERVER: ${{ github.server_url }}
           REPO: ${{ github.repository }}
-          TAG: ${{ steps.release.outputs.tag }}
+          TAG: ${{ needs.release.outputs.tag }}
           ARCHIVE: ${{ steps.build.outputs.archive }}
           NAME: ${{ steps.build.outputs.name }}
         run: |
           set -euo pipefail
-          api="$SERVER/api/v1/repos/$REPO"
-          auth="Authorization: token $TOKEN"
-
-          # Reuse the release for this tag if it already exists; otherwise make one.
-          id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" 2>/dev/null | jq -r '.id // empty' || true)"
-          if [ -z "$id" ]; then
-            id="$(curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
-              "$api/releases" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Offline install bundle. See ON_PREM.md.\"}" \
-              | jq -r '.id')"
-          fi
-          [ -n "$id" ] && [ "$id" != "null" ] || { echo "could not resolve a release id"; exit 1; }
-
-          # Replace an attachment of the same name so re-runs are idempotent.
-          existing="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
+          api="$SERVER/api/v1/repos/$REPO"; auth="Authorization: token $TOKEN"
+          id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" | jq -r '.id')"
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "release $TAG not found"; exit 1; }
+          # Idempotent: replace a same-named asset so re-runs overwrite.
+          old="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
             | jq -r --arg n "$NAME" '.[] | select(.name==$n) | .id')"
-          [ -z "$existing" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$existing"
-
+          [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$old"
           curl -fsS -X POST -H "$auth" \
             -F "attachment=@$ARCHIVE;type=application/gzip" \
             "$api/releases/$id/assets?name=$NAME"
-          echo "Attached $NAME to release $TAG."
+          echo "Attached $NAME to $TAG."
