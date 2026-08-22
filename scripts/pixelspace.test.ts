@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1567,5 +1567,55 @@ describe("Pixelspace on-prem operator", () => {
   test("Docker build context excludes generated application env files", () => {
     const patterns = readFileSync(path.join(root, ".dockerignore"), "utf8").split("\n");
     expect(patterns).toContain("**/app.env");
+  });
+
+  test("package --skip-images writes a runnable bundle without a repo clone", () => {
+    const fx = fixture();
+    const outDir = path.join(fx.home, "out");
+    mkdirSync(outDir);
+
+    const result = run(["package", "--skip-images", "--output", outDir], fx.env);
+    expect(result.exitCode).toBe(0);
+
+    const archive = readdirSync(outDir).find((name) => name.endsWith(".tar.gz"));
+    expect(archive).toBeDefined();
+
+    const listing = Bun.spawnSync(["tar", "tzf", path.join(outDir, archive!)]).stdout.toString();
+    for (const entry of [
+      "scripts/pixelspace",
+      "docker-compose.yml",
+      "images/manifest.env",
+      "apps/api/skills/",
+      ".pixelspace-bundle",
+    ]) {
+      expect(listing).toContain(entry);
+    }
+  });
+
+  test("installing from an offline bundle uses image mode without a registry digest", () => {
+    const fx = fixture();
+    const outDir = path.join(fx.home, "out");
+    mkdirSync(outDir);
+    expect(run(["package", "--skip-images", "--output", outDir], fx.env).exitCode).toBe(0);
+
+    const archive = readdirSync(outDir).find((name) => name.endsWith(".tar.gz"))!;
+    Bun.spawnSync(["tar", "xzf", path.join(outDir, archive), "-C", outDir]);
+    const bundleDir = readdirSync(outDir)
+      .map((name) => path.join(outDir, name))
+      .find((entry) => statSync(entry).isDirectory())!;
+
+    // Install with ROOT pointed at the extracted bundle — the same thing that
+    // happens when an operator runs ./install.sh inside it on a fresh host.
+    const result = run(["install", "--admin-email", "a@b.com"], {
+      ...fx.env,
+      PIXELSPACE_ROOT_OVERRIDE: bundleDir,
+    });
+    expect(result.exitCode).toBe(0);
+
+    const env = readFileSync(fx.envFile, "utf8");
+    expect(env).toContain('PIXELSPACE_DEPLOY_MODE="images"');
+    expect(env).toContain('PIXELSPACE_OFFLINE_BUNDLE="1"');
+    // A loaded local tag is accepted; doctor did not demand an @sha256 digest.
+    expect(env).toContain('PIXELSPACE_API_IMAGE="pixelspace-api:');
   });
 });

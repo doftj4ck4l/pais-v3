@@ -42,6 +42,9 @@ DEPLOY_MODE_OVERRIDE=""
 ADMIN_EMAIL_OVERRIDE="${PIXELSPACE_ADMIN_EMAIL:-}"
 ADMIN_PASSWORD_FILE="${PIXELSPACE_ADMIN_PASSWORD_FILE:-}"
 PURGE=0
+PACKAGE_OUTPUT=""
+PACKAGE_SKIP_IMAGES=0
+PACKAGE_WITH_MODEL=0
 POSITIONAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -67,6 +70,7 @@ Commands:
   upgrade     Back up, refresh images/builds, recreate, and verify (--dry-run to preview)
   uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
   reset-admin-password  Reset a local admin password and revoke its sessions
+  package     Build a self-contained offline install bundle (no per-host clone)
   help        Show this help
 
 Install options:
@@ -87,6 +91,15 @@ Install options:
   --env-file PATH
   --no-interactive             skip the guided prompts; use flags/defaults only
   --dry-run
+
+Package options (package):
+  --output PATH                where to write the bundle (default: current dir)
+  --skip-images                bundle operator + compose + skills only, no images
+  --with-model                 also save the large bundled model image (DGX)
+
+A bundle installs on another host without a repository clone: copy the tarball,
+extract it, and run ./install.sh inside. Build it on the same CPU architecture
+as the target — saved images are architecture-specific.
 
 On a fresh install with a terminal, missing options are collected through a
 short guided wizard. Pass every value as a flag, or --no-interactive (or --yes),
@@ -113,6 +126,9 @@ while [[ $# -gt 0 ]]; do
     --deploy-mode) DEPLOY_MODE_OVERRIDE="${2:?missing deploy mode}"; shift 2 ;;
     --env-file) ENV_FILE="${2:?missing env file}"; shift 2 ;;
     --no-interactive) NONINTERACTIVE=1; shift ;;
+    --output) PACKAGE_OUTPUT="${2:?missing output path}"; shift 2 ;;
+    --skip-images) PACKAGE_SKIP_IMAGES=1; shift ;;
+    --with-model) PACKAGE_WITH_MODEL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --yes) ASSUME_YES=1; shift ;;
     --purge) PURGE=1; shift ;;
@@ -681,7 +697,12 @@ doctor() {
       fi
     fi
     [[ "$deploy_mode" == "build" || "$deploy_mode" == "images" ]] || { warn "PIXELSPACE_DEPLOY_MODE must be build or images"; failures=$((failures + 1)); }
-    if [[ "$deploy_mode" == "images" ]]; then
+    local offline_bundle
+    offline_bundle="$(env_value PIXELSPACE_OFFLINE_BUNDLE 2>/dev/null || printf '0')"
+    if [[ "$deploy_mode" == "images" && "$offline_bundle" != "1" ]]; then
+      # An offline bundle loads images from exact tar bytes, so the digest
+      # requirement — which guards against a mutable *registry* tag drifting —
+      # does not apply and its local tags are accepted as-is.
       local image_key image_ref
       for image_key in PIXELSPACE_API_IMAGE PIXELSPACE_WEB_IMAGE SANDBOX_IMAGE RUSTFS_IMAGE; do
         image_ref="$(env_value "$image_key" || true)"
@@ -706,7 +727,9 @@ doctor() {
         [[ "$(runtime_env_value CUSTOM_BASE_URL || true)" == "$BUNDLED_MODEL_URL" ]] || { warn "the bundled model URL must be $BUNDLED_MODEL_URL"; failures=$((failures + 1)); }
         [[ "$(runtime_env_value CUSTOM_MODEL || true)" == "$BUNDLED_MODEL_PACK" ]] || { warn "the bundled model ID must be $BUNDLED_MODEL_PACK"; failures=$((failures + 1)); }
         model_image="$(env_value PIXELSPACE_MODEL_IMAGE || true)"
-        is_digest_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest"; failures=$((failures + 1)); }
+        if [[ "$offline_bundle" != "1" ]]; then
+          is_digest_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest"; failures=$((failures + 1)); }
+        fi
         model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT || true)"
         [[ "$model_cache" == /* ]] || { warn "PIXELSPACE_MODEL_CACHE_ROOT must be an absolute path"; failures=$((failures + 1)); }
         model_timeout="$(env_value PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS || true)"
@@ -1045,6 +1068,119 @@ wait_for_model() {
   die "bundled model did not become healthy within ${timeout}s"
 }
 
+# --- offline install bundle --------------------------------------------------
+#
+# The bundle exists so a host installs without cloning the repository. Running
+# (as opposed to building) needs only the operator, the Compose file, the skills
+# directory Compose bind-mounts read-only, and the images — so that is exactly
+# what `package` collects, and what the installer loads back.
+
+readonly RUSTFS_BUNDLE_IMAGE="rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21"
+
+package_bundle() {
+  [[ -f "$ROOT/docker-compose.yml" && -d "$ROOT/apps/api/skills" ]] ||
+    die "package must run from a full Pixelspace checkout (needs docker-compose.yml and apps/api/skills)"
+  command -v docker >/dev/null 2>&1 || die "docker is required to build and save images"
+
+  local version arch out stage bundle
+  version="$(read_app_version)"
+  [[ "$version" != "0.0.0-dev" ]] || version="dev"
+  arch="$(host_arch)"
+  out="${PACKAGE_OUTPUT:-$PWD}"
+  [[ -d "$out" ]] && out="$out/pixelspace-${version}-${arch}.tar.gz"
+  [[ "$out" == /* ]] || out="$PWD/$out"
+  stage="$(mktemp -d)"
+  trap 'rm -rf "$stage"' EXIT
+  bundle="$stage/pixelspace-${version}"
+  mkdir -p "$bundle/images" "$bundle/scripts" "$bundle/apps/api"
+
+  local api_img web_img sandbox_img rustfs_img model_img
+  api_img="pixelspace-api:${version}"
+  web_img="pixelspace-web:${version}"
+  sandbox_img="pixelspace-sandbox:1"
+  rustfs_img="$RUSTFS_BUNDLE_IMAGE"
+  model_img="$BUNDLED_MODEL_IMAGE"
+
+  if [[ "$PACKAGE_SKIP_IMAGES" -ne 1 ]]; then
+    say "Building images for $arch (this can take several minutes)…"
+    run docker build -t "$api_img" -f "$ROOT/apps/api/Dockerfile" "$ROOT" || die "api image build failed"
+    run docker build -t "$web_img" -f "$ROOT/apps/web/Dockerfile" "$ROOT" || die "web image build failed"
+    run docker build -t "$sandbox_img" -f "$ROOT/apps/api/sandbox/Dockerfile" "$ROOT/apps/api/sandbox" ||
+      die "sandbox image build failed"
+    run docker pull "$rustfs_img" || die "could not pull the rustfs image"
+    say "Saving images…"
+    run docker save "$api_img" -o "$bundle/images/api.tar" || die "could not save the api image"
+    run docker save "$web_img" -o "$bundle/images/web.tar" || die "could not save the web image"
+    run docker save "$sandbox_img" -o "$bundle/images/sandbox.tar" || die "could not save the sandbox image"
+    run docker save "$rustfs_img" -o "$bundle/images/rustfs.tar" || die "could not save the rustfs image"
+    if [[ "$PACKAGE_WITH_MODEL" -eq 1 ]]; then
+      run docker pull "$model_img" || die "could not pull the model image"
+      run docker save "$model_img" -o "$bundle/images/model.tar" || die "could not save the model image"
+      say "Included the bundled model image (large)."
+    else
+      note "model image excluded; pass --with-model to bundle it, or the DGX pack pulls it on first start"
+    fi
+  else
+    note "skipping images (--skip-images): the target host must obtain them separately"
+  fi
+
+  # The image references the installer pins in image mode, loaded or not.
+  {
+    printf 'PIXELSPACE_API_IMAGE=%s\n' "$api_img"
+    printf 'PIXELSPACE_WEB_IMAGE=%s\n' "$web_img"
+    printf 'SANDBOX_IMAGE=%s\n' "$sandbox_img"
+    printf 'RUSTFS_IMAGE=%s\n' "$rustfs_img"
+    printf 'PIXELSPACE_MODEL_IMAGE=%s\n' "$model_img"
+  } > "$bundle/images/manifest.env"
+
+  cp "$ROOT/scripts/pixelspace" "$bundle/scripts/pixelspace"
+  if [[ -f "$ROOT/install.sh" ]]; then
+    cp "$ROOT/install.sh" "$bundle/install.sh"
+  else
+    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec "$ROOT/scripts/pixelspace" install "$@"\n' \
+      > "$bundle/install.sh"
+  fi
+  chmod +x "$bundle/install.sh" "$bundle/scripts/pixelspace"
+  cp "$ROOT/docker-compose.yml" "$bundle/docker-compose.yml"
+  if [[ -f "$ROOT/VERSION" ]]; then cp "$ROOT/VERSION" "$bundle/VERSION"; else printf '%s\n' "$version" > "$bundle/VERSION"; fi
+  cp -R "$ROOT/apps/api/skills" "$bundle/apps/api/skills"
+  # The marker the installer keys on to load images and switch to image mode.
+  printf 'version=%s\narch=%s\nimages=%s\n' "$version" "$arch" \
+    "$([[ "$PACKAGE_SKIP_IMAGES" -eq 1 ]] && printf 'none' || printf 'included')" > "$bundle/.pixelspace-bundle"
+
+  mkdir -p "$(dirname -- "$out")"
+  run tar -C "$stage" -czf "$out" "pixelspace-${version}" || die "could not write the bundle archive"
+  rm -rf "$stage"
+  trap - EXIT
+  say ""
+  say "Wrote $out"
+  say "On the target host: extract it, then run  cd pixelspace-${version} && ./install.sh"
+}
+
+# Load a bundle's images and pin the stack to them, in image mode. Safe on a
+# normal checkout: it returns immediately when no bundle marker is present.
+apply_offline_bundle() {
+  [[ -f "$ROOT/.pixelspace-bundle" ]] || return 0
+  if compgen -G "$ROOT/images/*.tar" >/dev/null 2>&1; then
+    local tar
+    say "Loading bundled images…"
+    for tar in "$ROOT"/images/*.tar; do
+      run docker load -i "$tar" || die "could not load bundled image $tar"
+    done
+  fi
+  set_env PIXELSPACE_DEPLOY_MODE images
+  if [[ -f "$ROOT/images/manifest.env" ]]; then
+    local key val
+    while IFS='=' read -r key val; do
+      [[ -n "$key" && "$key" != \#* ]] || continue
+      set_env "$key" "$val"
+    done < "$ROOT/images/manifest.env"
+  fi
+  # The loaded tars are the immutability guarantee, so doctor accepts these
+  # image tags without an @sha256 digest — see the image-mode check.
+  set_env PIXELSPACE_OFFLINE_BUNDLE 1
+}
+
 # --- interactive install wizard ---------------------------------------------
 #
 # The flag interface is the source of truth; the wizard only fills what a flag
@@ -1204,6 +1340,7 @@ install_stack() {
   acquire_lock
   run_install_wizard
   generate_env
+  apply_offline_bundle
   doctor
   remove_disabled_model_pack
   prepare_paths
@@ -1699,6 +1836,7 @@ case "$COMMAND" in
   upgrade) acquire_lock; upgrade_stack ;;
   uninstall) acquire_lock; uninstall_stack ;;
   reset-admin-password) acquire_lock; reset_admin_password ;;
+  package) package_bundle ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "unknown command: $COMMAND" ;;
 esac
