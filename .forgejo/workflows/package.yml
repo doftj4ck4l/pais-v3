@@ -1,0 +1,96 @@
+name: package
+
+# Build a self-contained offline install bundle and attach it to a Forgejo
+# release, so an operator installs on a fresh host by downloading one archive —
+# no repository clone. See `scripts/pixelspace package` and ON_PREM.md.
+#
+# Trigger by pushing a version tag (`v0.4.0`) or running it by hand and naming a
+# tag. The build runs `scripts/pixelspace package`, which builds the API, web,
+# and sandbox images with Docker and saves them into the archive — so the runner
+# needs a working Docker daemon.
+#
+# ARCHITECTURE: saved images are architecture-specific, so this produces a
+# bundle for the runner's own CPU architecture only. `ubuntu-latest` here is
+# amd64. A DGX Spark (arm64) bundle must be built on an arm64 host — either add a
+# runner that reports `arch: arm64` and a matching matrix entry, or run
+# `scripts/pixelspace package` on the Spark itself (which is supported and
+# needs no CI).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish the bundle under (e.g. v0.4.0)"
+        required: true
+      with_model:
+        description: "Include the large DGX model image in the bundle"
+        type: boolean
+        default: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag drives both the release and the bundle's version stamp: on a tag
+      # push it is the ref; on a manual run it is the typed input.
+      - name: Resolve the release tag
+        id: release
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          [ -n "$tag" ] || { echo "no tag to release"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Docker is available
+        run: docker version
+
+      - name: Build the offline bundle
+        id: build
+        run: |
+          args=(package --output "$PWD/dist")
+          [ "${{ github.event.inputs.with_model }}" = "true" ] && args+=(--with-model)
+          mkdir -p dist
+          scripts/pixelspace "${args[@]}"
+          archive="$(ls dist/pixelspace-*.tar.gz | head -1)"
+          [ -n "$archive" ] || { echo "no bundle was produced"; exit 1; }
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$archive")" >> "$GITHUB_OUTPUT"
+          ls -lh "$archive"
+
+      # Forgejo release attachments over its API. The auto token that Actions
+      # injects is scoped to this repo; no PAT is needed.
+      - name: Publish the bundle as a release attachment
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+          ARCHIVE: ${{ steps.build.outputs.archive }}
+          NAME: ${{ steps.build.outputs.name }}
+        run: |
+          set -euo pipefail
+          api="$SERVER/api/v1/repos/$REPO"
+          auth="Authorization: token $TOKEN"
+
+          # Reuse the release for this tag if it already exists; otherwise make one.
+          id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" 2>/dev/null | jq -r '.id // empty' || true)"
+          if [ -z "$id" ]; then
+            id="$(curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+              "$api/releases" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Offline install bundle. See ON_PREM.md.\"}" \
+              | jq -r '.id')"
+          fi
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "could not resolve a release id"; exit 1; }
+
+          # Replace an attachment of the same name so re-runs are idempotent.
+          existing="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
+            | jq -r --arg n "$NAME" '.[] | select(.name==$n) | .id')"
+          [ -z "$existing" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$existing"
+
+          curl -fsS -X POST -H "$auth" \
+            -F "attachment=@$ARCHIVE;type=application/gzip" \
+            "$api/releases/$id/assets?name=$NAME"
+          echo "Attached $NAME to release $TAG."
