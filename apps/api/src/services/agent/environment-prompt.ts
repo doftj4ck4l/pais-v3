@@ -13,8 +13,8 @@
  */
 
 export type EnvironmentDescription = {
-  /** "docker" gives the workspace its own container; "node" runs on the API host. */
-  backend: "docker" | "node";
+  /** "pixelbox" gives the workspace its own remote sandbox; "node" runs on the API host. */
+  backend: "pixelbox" | "node";
   /** The working directory the file and shell tools resolve against. */
   cwd: string;
   /** Whether any MCP server is connected, which is what makes "here" ambiguous. */
@@ -23,8 +23,8 @@ export type EnvironmentDescription = {
 
 export function describeEnvironment(env: EnvironmentDescription): string {
   const place =
-    env.backend === "docker"
-      ? `a Linux container dedicated to this workspace`
+    env.backend === "pixelbox"
+      ? `a Linux sandbox dedicated to this workspace`
       : `the API host`;
 
   let out =
@@ -45,7 +45,9 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     ` The user cannot see this filesystem and cannot open a path on it. Any file you want ` +
     `them to have — an image, a document, a spreadsheet — has to go through the "share_file" ` +
     `tool, which returns a URL; give them that URL and never a bare path. Images come back as ` +
-    `a link to embed as markdown so the picture shows in your reply.`;
+    `a link to embed as markdown so the picture shows in your reply. Always use "share_file" ` +
+    `for this — do not upload the file to a connected service such as Nextcloud to "share" it ` +
+    `unless the user explicitly names that service.`;
 
   // The shell and the platform are two different places, and the model conflates
   // them: a run tried to pipe `fetch_url`'s output through a bash command, and
@@ -56,34 +58,33 @@ export function describeEnvironment(env: EnvironmentDescription): string {
     `"search_docs", "read_image", and any skill — run in the platform, not the shell. Call ` +
     `them as tools; do not invoke them inside a bash command.`;
 
-  // A model that cannot see an installed package assumes an empty box.
+  // Tell the model what is actually in the box, and what is not.
   //
-  // Asked to edit an image, a run spent its first minutes on `pip install`
-  // before doing any work — and paid it again the next day, because the reaper
-  // removes an idle container after SANDBOX_IDLE_MS and an install into the
-  // container layer dies with it. The image has carried these packages since;
-  // nothing told the model so.
+  // The Pixelbox coding image is deliberately minimal: python3, pip and git,
+  // and little else — measured against the live service, it has no Node, no
+  // curl/wget, no ImageMagick or ghostscript, no C compiler, and none of the
+  // common Python libraries preinstalled. The earlier prompt (written for the
+  // old Docker image, which did carry a full toolchain) claimed all of those
+  // were present; on this backend that is a lie the model acts on, importing a
+  // package that is not there and failing.
   //
-  // Named by capability rather than as a pinned manifest: the list drifts from
-  // `apps/api/sandbox/Dockerfile` on every rebuild, and a prompt claiming
-  // `numpy==2.5.2` is a prompt that will eventually be wrong. "Check first" is
-  // the instruction that survives the drift — `pip show` costs one second and
-  // an install costs a minute.
-  //
-  // Only for the container backend. The node backend runs on the API host,
-  // whose Python is whatever the deploy happens to have.
-  if (env.backend === "docker") {
+  // Egress is open, so `pip install` works. But the sandbox is ephemeral:
+  // measured against the live service, each sandbox has its own NFS volume, so a
+  // fresh sandbox starts empty and an install lasts only for the current
+  // session — it is NOT cached per workspace. That makes a heavy install a cost
+  // to weigh, not a free one-time step. Only for the sandbox backend; the node
+  // backend runs on the API host with whatever Python the deploy happens to have.
+  if (env.backend === "pixelbox") {
     out +=
-      ` The container already has a working toolchain: Python 3 with pillow and opencv for ` +
-      `images, numpy, pandas, scipy and scikit-learn for data, matplotlib, seaborn and plotly ` +
-      `for charts, openpyxl, python-docx, python-pptx, pypdf and reportlab for documents (read ` +
-      `and write, including PDFs from scratch), requests, beautifulsoup4 and lxml for fetching ` +
-      `and parsing; ImageMagick ("magick"), curl and ghostscript ("ps2pdf") on the shell; and ` +
-      `Node with exceljs, docx and pdf-lib. Assume a common library is present and just import ` +
-      `it. If you are unsure, check ("pip show <name>", "which <cmd>") before installing — ` +
-      `installing something that is already there wastes most of a turn. If something genuinely ` +
-      `is missing, "pip install <name>" works here and lasts for this container, so install it ` +
-      `and move on rather than hunting for a workaround.`;
+      ` This sandbox is a minimal Debian Linux: python3, pip and git are present, but very ` +
+      `little else is — no Node, no curl or wget, no ImageMagick, no C compiler. Common Python ` +
+      `libraries (numpy, pandas, pillow, matplotlib, openpyxl, python-docx, reportlab, requests ` +
+      `and the like) are NOT installed until you install them. Reach for Python rather than a ` +
+      `missing shell tool — use "requests" or urllib, not curl. Install what a task needs with ` +
+      `"pip install <name>", but the sandbox is ephemeral — the install lasts only for this ` +
+      `session and a heavy dependency tree costs real time, so keep installs to what the task ` +
+      `needs and prefer the standard library where it will do. Check with "pip show <name>" or ` +
+      `a quick import before assuming a package is present.`;
   }
 
   // Only worth saying when there is something to confuse it with. A workspace

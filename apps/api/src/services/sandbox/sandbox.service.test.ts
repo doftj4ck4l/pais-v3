@@ -1,58 +1,96 @@
-import { expect, test, beforeAll, afterAll } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
+import { beforeAll, beforeEach, expect, test } from "bun:test";
 import { ensureSchema } from "../../db/client";
 import { sandboxRepository } from "../../repositories/sandbox.repository";
-import { isRunning } from "./docker";
-import { sandboxService } from "./sandbox.service";
+import type { CreateOptions, SandboxApi, SandboxInfo, SandboxState } from "./pixelbox-client";
+import { PixelboxError } from "./pixelbox-client";
+import { sandboxService, setSandboxApiForTests } from "./sandbox.service";
 
-const WS = `sbx_ws_${Date.now()}`;
+/**
+ * A fake Sandbox API tracking which ids exist and their state, so the service's
+ * reuse/create/reap decisions are what is under test — not a live pod.
+ */
+function fakeApi() {
+  const live = new Map<string, SandboxState>();
+  let counter = 0;
+  const api: SandboxApi = {
+    async create(_options?: CreateOptions): Promise<SandboxInfo> {
+      const sandboxId = `sb-fake-${counter++}`;
+      live.set(sandboxId, "ready");
+      return { sandboxId, state: "ready" };
+    },
+    async get(sandboxId: string): Promise<SandboxInfo> {
+      const state = live.get(sandboxId);
+      if (!state) throw new PixelboxError("NOT_FOUND", `no ${sandboxId}`, 404);
+      return { sandboxId, state };
+    },
+    async delete(sandboxId: string) {
+      live.delete(sandboxId);
+    },
+    execute: async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
+    readBytes: async () => new Uint8Array(),
+    writeBytes: async () => {},
+    stat: async () => null,
+    list: async () => [],
+    createDir: async () => {},
+    remove: async () => {},
+  };
+  return { api, live };
+}
 
-/** Let the clock advance so a just-used sandbox counts as measurably idle. */
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+let fake: ReturnType<typeof fakeApi>;
+const WS = () => `sbx_${Math.random().toString(36).slice(2)}`;
 
 beforeAll(() => ensureSchema());
-afterAll(async () => {
-  await sandboxService.destroy(WS);
+beforeEach(() => {
+  fake = fakeApi();
+  setSandboxApiForTests(fake.api);
 });
 
-test("acquire creates a workspace and a running container", async () => {
-  const sandbox = await sandboxService.acquire(WS);
-  expect(fs.existsSync(sandbox.workspacePath)).toBe(true);
-  expect(await isRunning(sandbox.containerId)).toBe(true);
+test("acquire creates a remote sandbox and records its id", async () => {
+  const ws = WS();
+  const sandbox = await sandboxService.acquire(ws);
+  expect(sandbox.sandboxId).toBe("sb-fake-0");
+  expect(sandbox.workspacePath).toBe("/workspace");
+  expect((await sandboxRepository.get(ws))?.containerId).toBe("sb-fake-0");
+  expect(fake.live.has("sb-fake-0")).toBe(true);
 });
 
-test("acquire reuses a warm container", async () => {
-  const first = await sandboxService.acquire(WS);
-  const second = await sandboxService.acquire(WS);
-  expect(second.containerId).toBe(first.containerId);
+test("acquire reuses a sandbox that is still ready", async () => {
+  const ws = WS();
+  const first = await sandboxService.acquire(ws);
+  const second = await sandboxService.acquire(ws);
+  expect(second.sandboxId).toBe(first.sandboxId);
 });
 
-test("the workspace survives destroying the container", async () => {
-  const sandbox = await sandboxService.acquire(WS);
-  fs.writeFileSync(path.join(sandbox.workspacePath, "keep.txt"), "kept");
-
-  await sandboxService.destroy(WS);
-  expect(fs.existsSync(path.join(sandbox.workspacePath, "keep.txt"))).toBe(true);
-
-  const again = await sandboxService.acquire(WS);
-  expect(again.containerId).not.toBe(sandbox.containerId);
-  expect(fs.readFileSync(path.join(again.workspacePath, "keep.txt"), "utf8")).toBe("kept");
+test("acquire recreates when the recorded sandbox is gone", async () => {
+  const ws = WS();
+  const first = await sandboxService.acquire(ws);
+  await fake.api.delete(first.sandboxId); // pod vanished server-side
+  const second = await sandboxService.acquire(ws);
+  expect(second.sandboxId).not.toBe(first.sandboxId);
+  expect(fake.live.has(second.sandboxId)).toBe(true);
 });
 
-test("reapIdle removes containers past the idle window", async () => {
-  await sandboxService.acquire(WS);
-  await sandboxService.release(WS);
-  await tick();
-
+test("reapIdle deletes the remote sandbox and clears the row", async () => {
+  const ws = WS();
+  const sandbox = await sandboxService.acquire(ws);
   const reaped = await sandboxService.reapIdle(0);
   expect(reaped).toBeGreaterThan(0);
-  expect((await sandboxRepository.get(WS))?.containerId).toBeNull();
+  expect(fake.live.has(sandbox.sandboxId)).toBe(false);
+  expect((await sandboxRepository.get(ws))?.containerId).toBeNull();
 });
 
-test("reapIdle leaves warm containers alone", async () => {
-  const sandbox = await sandboxService.acquire(WS);
+test("reapIdle leaves a warm sandbox alone", async () => {
+  const ws = WS();
+  const sandbox = await sandboxService.acquire(ws);
   const reaped = await sandboxService.reapIdle(60_000);
   expect(reaped).toBe(0);
-  expect(await isRunning(sandbox.containerId)).toBe(true);
+  expect(fake.live.has(sandbox.sandboxId)).toBe(true);
+});
+
+test("destroy deletes the remote sandbox", async () => {
+  const ws = WS();
+  const sandbox = await sandboxService.acquire(ws);
+  await sandboxService.destroy(ws);
+  expect(fake.live.has(sandbox.sandboxId)).toBe(false);
 });

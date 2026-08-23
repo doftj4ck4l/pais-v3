@@ -1,9 +1,9 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "../../lib/logger";
 import { mediaConfigured } from "./media.service";
 import { UPLOADABLE, storeUploadedImage } from "./upload.service";
 import { resolveInWorkspace } from "./vision-tools";
+import { readInWorkspace, statInWorkspace } from "./workspace-io";
 
 /**
  * `share_file` — turn a file the agent wrote into a URL the user can open.
@@ -102,22 +102,23 @@ export function createShareTools(
         if (!source) return text("error: path required");
 
         // Same boundary as `read_image`, and load-bearing for the same reason:
-        // this runs in the API process, where SANDBOX_ROOT is mounted at an
-        // identical path, so an unchecked `../..` would publish the API's own
-        // secrets at a URL.
+        // under the node backend this runs in the API process where SANDBOX_ROOT
+        // is mounted at an identical path, so an unchecked `../..` would publish
+        // the API's own secrets at a URL. On Pixelbox `workspaceDir` is
+        // `/workspace`, so this resolves to the in-sandbox path the reads use.
         const resolved = resolveInWorkspace(workspaceDir, source);
         if (!resolved) return text(`error: ${source} is outside your workspace`);
 
-        const stat = await fs.stat(resolved).catch(() => null);
+        const stat = await statInWorkspace(workspaceId, resolved);
         if (!stat) return text(`error: ${source} does not exist in your workspace`);
-        if (!stat.isFile()) return text(`error: ${source} is a directory, not a file`);
+        if (!stat.isFile) return text(`error: ${source} is a directory, not a file`);
 
         const relative = path.relative(path.resolve(workspaceDir), resolved);
         const label = String(params?.name ?? "").trim() || path.basename(resolved);
         const contentType = IMAGE_TYPES[path.extname(resolved).toLowerCase()] ?? "";
 
         if (contentType && UPLOADABLE.has(contentType) && deps.configured()) {
-          const bytes = await fs.readFile(resolved).catch(() => null);
+          const bytes = await readInWorkspace(workspaceId, resolved);
           if (!bytes) return text(`error: could not read ${source}`);
 
           const stored = await deps.store({
