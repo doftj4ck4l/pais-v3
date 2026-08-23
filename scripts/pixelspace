@@ -1077,6 +1077,33 @@ wait_for_model() {
 
 readonly RUSTFS_BUNDLE_IMAGE="rustfs/rustfs@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21"
 
+# Build one image for the bundle. A native build — the common case, including on
+# the DGX — is a plain `docker build`, unchanged. When CI cross-builds for
+# another architecture it sets PIXELSPACE_BUILD_PLATFORM (e.g. linux/arm64); that
+# path needs buildx with an emulated builder and an explicit `--load`, because
+# the default builder does not apply QEMU to build steps (the "exec format error"
+# an unqualified cross build hits) and a container-driver build must be loaded
+# into the local store before `docker save` can see it.
+bundle_build_image() {
+  local tag="$1" dockerfile="$2" context="$3"
+  if [[ -n "${PIXELSPACE_BUILD_PLATFORM:-}" ]]; then
+    run docker buildx build --load --platform "$PIXELSPACE_BUILD_PLATFORM" \
+      -t "$tag" -f "$dockerfile" "$context"
+  else
+    run docker build -t "$tag" -f "$dockerfile" "$context"
+  fi
+}
+
+# Pull an upstream image for the bundle, honouring a cross-build platform so the
+# saved bytes match the bundle's target architecture rather than the runner's.
+bundle_pull_image() {
+  if [[ -n "${PIXELSPACE_BUILD_PLATFORM:-}" ]]; then
+    run docker pull --platform "$PIXELSPACE_BUILD_PLATFORM" "$1"
+  else
+    run docker pull "$1"
+  fi
+}
+
 package_bundle() {
   [[ -f "$ROOT/docker-compose.yml" && -d "$ROOT/apps/api/skills" ]] ||
     die "package must run from a full Pixelspace checkout (needs docker-compose.yml and apps/api/skills)"
@@ -1103,18 +1130,18 @@ package_bundle() {
 
   if [[ "$PACKAGE_SKIP_IMAGES" -ne 1 ]]; then
     say "Building images for $arch (this can take several minutes)…"
-    run docker build -t "$api_img" -f "$ROOT/apps/api/Dockerfile" "$ROOT" || die "api image build failed"
-    run docker build -t "$web_img" -f "$ROOT/apps/web/Dockerfile" "$ROOT" || die "web image build failed"
-    run docker build -t "$sandbox_img" -f "$ROOT/apps/api/sandbox/Dockerfile" "$ROOT/apps/api/sandbox" ||
+    bundle_build_image "$api_img" "$ROOT/apps/api/Dockerfile" "$ROOT" || die "api image build failed"
+    bundle_build_image "$web_img" "$ROOT/apps/web/Dockerfile" "$ROOT" || die "web image build failed"
+    bundle_build_image "$sandbox_img" "$ROOT/apps/api/sandbox/Dockerfile" "$ROOT/apps/api/sandbox" ||
       die "sandbox image build failed"
-    run docker pull "$rustfs_img" || die "could not pull the rustfs image"
+    bundle_pull_image "$rustfs_img" || die "could not pull the rustfs image"
     say "Saving images…"
     run docker save "$api_img" -o "$bundle/images/api.tar" || die "could not save the api image"
     run docker save "$web_img" -o "$bundle/images/web.tar" || die "could not save the web image"
     run docker save "$sandbox_img" -o "$bundle/images/sandbox.tar" || die "could not save the sandbox image"
     run docker save "$rustfs_img" -o "$bundle/images/rustfs.tar" || die "could not save the rustfs image"
     if [[ "$PACKAGE_WITH_MODEL" -eq 1 ]]; then
-      run docker pull "$model_img" || die "could not pull the model image"
+      bundle_pull_image "$model_img" || die "could not pull the model image"
       run docker save "$model_img" -o "$bundle/images/model.tar" || die "could not save the model image"
       say "Included the bundled model image (large)."
     else

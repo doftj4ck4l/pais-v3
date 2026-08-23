@@ -1,64 +1,86 @@
 name: package
 
 # Build self-contained offline install bundles for every supported architecture
-# and attach them to a Forgejo release — so an operator installs on a fresh host
-# by downloading one archive, no repository clone. See `scripts/pixelspace
-# package` and ON_PREM.md.
+# and attach them to a Forgejo release. An operator then installs on a fresh host
+# from one archive — no repository clone. See `scripts/pixelspace package` and
+# ON_PREM.md.
 #
-# The git tag is the single source of the version: it names the release, and it
-# is stamped into the VERSION file before the images are built, so nobody edits
-# VERSION by hand for a release. Push a tag (`v0.5.0`) or run this by hand naming
-# one.
+# The VERSION file is the single source of the version, and the git tag is
+# derived from it — nobody tags by hand:
+#   * push to main  → if VERSION names a version with no release yet, cut it
+#   * push tag v*    → (re)build that tag
+#   * manual run     → build the given tag, or VERSION if none is given
 #
-# Both bundles are built on one amd64 runner; the arm64 build runs under QEMU
-# emulation, which needs a runner that permits binfmt/buildx. If arm64 builds are
-# slow or unavailable there, register the DGX Spark (or any arm64 host) as a
-# runner and give the arm64 matrix leg `runs-on: arm64` instead — the steps are
-# identical.
+# Both bundles build on one amd64 runner: amd64 natively, arm64 under QEMU via a
+# buildx container builder (a plain builder does not apply the emulator to build
+# steps). Emulated arm64 builds are slow; if that is a problem, register an arm64
+# host (e.g. a DGX Spark) as a runner and switch the arm64 matrix leg to
+# `runs-on: arm64` — the steps are identical and it builds natively.
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.5.0)"
-        required: true
+        description: "Tag to build (default: the VERSION file)"
+        required: false
       with_model:
         description: "Include the large DGX model image"
         type: boolean
         default: false
 
 jobs:
-  # One release for the tag, created once so the per-arch jobs only upload.
+  # Resolve the version, decide whether a release is due, and create it once so
+  # the per-arch jobs only upload.
   release:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
     steps:
-      - name: Resolve the tag
-        id: tag
-        run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          [ -n "$tag" ] || { echo "no tag to release"; exit 1; }
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
 
-      - name: Create the release if it does not exist
+      - name: Plan the release
+        id: plan
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SERVER: ${{ github.server_url }}
           REPO: ${{ github.repository }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           set -euo pipefail
+          case "${{ github.ref }}" in
+            refs/tags/*) v="${GITHUB_REF_NAME#v}" ;;
+            *) v="${INPUT_TAG#v}"; [ -n "$v" ] || v="$(cat VERSION)" ;;
+          esac
+          tag="v$v"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
           api="$SERVER/api/v1/repos/$REPO"; auth="Authorization: token $TOKEN"
-          if ! curl -fsS -H "$auth" "$api/releases/tags/$TAG" >/dev/null 2>&1; then
+          exists=no
+          curl -fsS -H "$auth" "$api/releases/tags/$tag" >/dev/null 2>&1 && exists=yes
+
+          # A plain push to main with a VERSION that is already released is a
+          # no-op; a tag push or manual run always (re)builds.
+          if [ "$exists" = yes ] && [ "${{ github.ref }}" != "refs/tags/$tag" ] \
+             && [ "${{ github.event_name }}" != workflow_dispatch ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "release $tag already exists; nothing to build"
+            exit 0
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
+          if [ "$exists" = no ]; then
             curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' "$api/releases" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Offline install bundles. See ON_PREM.md.\"}" >/dev/null
+              -d "{\"tag_name\":\"$tag\",\"name\":\"$tag\",\"body\":\"Offline install bundles. See ON_PREM.md.\"}" >/dev/null
+            echo "created release $tag"
           fi
 
   bundle:
     needs: release
+    if: needs.release.outputs.build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -67,29 +89,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # binfmt so this amd64 runner can build the arm64 image. No-op for amd64.
-      - name: Enable cross-architecture builds
+      # binfmt so this amd64 runner can execute arm64 build steps. amd64: skipped.
+      - name: Enable emulation
         if: matrix.arch == 'arm64'
         uses: docker/setup-qemu-action@v3
 
-      - name: Verify Docker
-        run: docker version
+      # A container-driver builder is what actually applies the emulator to the
+      # build (the default builder does not) and lets --load stage the result.
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
 
-      # The tag is the version: stamp it into VERSION before building so the
-      # images and the bundle carry it, with no manual edit.
-      - name: Stamp the version from the tag
+      # The tag is the version: stamp it into VERSION so the images carry it.
+      - name: Stamp the version
         run: |
-          v="${{ needs.release.outputs.tag }}"; v="${v#v}"
-          printf '%s\n' "$v" > VERSION
-          echo "building version $v for ${{ matrix.arch }}"
+          v="${{ needs.release.outputs.tag }}"
+          printf '%s\n' "${v#v}" > VERSION
+          echo "building ${v#v} for ${{ matrix.arch }}"
 
-      - name: Build the offline bundle
+      - name: Build the bundle
         id: build
         env:
-          # host_arch() honours this for the bundle name; DOCKER_DEFAULT_PLATFORM
-          # makes `docker build` emit that architecture (native or emulated).
           PIXELSPACE_ARCH_OVERRIDE: ${{ matrix.arch }}
-          DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
+          PIXELSPACE_BUILD_PLATFORM: linux/${{ matrix.arch }}
         run: |
           args=(package --output "$PWD/dist")
           [ "${{ github.event.inputs.with_model }}" = "true" ] && args+=(--with-model)
@@ -101,7 +122,7 @@ jobs:
           echo "name=$(basename "$archive")" >> "$GITHUB_OUTPUT"
           ls -lh "$archive"
 
-      - name: Attach the bundle to the release
+      - name: Attach to the release
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SERVER: ${{ github.server_url }}
@@ -113,8 +134,7 @@ jobs:
           set -euo pipefail
           api="$SERVER/api/v1/repos/$REPO"; auth="Authorization: token $TOKEN"
           id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" | jq -r '.id')"
-          [ -n "$id" ] && [ "$id" != "null" ] || { echo "release $TAG not found"; exit 1; }
-          # Idempotent: replace a same-named asset so re-runs overwrite.
+          [ -n "$id" ] && [ "$id" != null ] || { echo "release $TAG not found"; exit 1; }
           old="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
             | jq -r --arg n "$NAME" '.[] | select(.name==$n) | .id')"
           [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$old"
