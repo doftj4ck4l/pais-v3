@@ -8,6 +8,7 @@ import {
   stopRun,
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
+import { historyFrom } from '@/features/agents/lib/attachment-notes'
 import type { Scope } from '@/shared/api/api'
 import type {
   ConversationRow,
@@ -15,7 +16,7 @@ import type {
   Meta,
   Slots,
   TraceLine,
-  UploadedImage,
+  ChatAttachments,
 } from '@/shared/lib/types'
 
 export type AgentStatus = 'running' | 'done' | 'stopped' | 'error'
@@ -80,17 +81,6 @@ export type ContextUsage = {
  * conversation the model is given. Sending them back would double-count context
  * the server already accounts for.
  */
-function historyFrom(items: Item[]): { role: 'user' | 'assistant'; content: string }[] {
-  const out: { role: 'user' | 'assistant'; content: string }[] = []
-  for (const item of items) {
-    if (item.kind === 'user') out.push({ role: 'user', content: item.text })
-    else if (item.kind === 'assistant' && item.text.trim()) {
-      out.push({ role: 'assistant', content: item.text })
-    }
-  }
-  return out
-}
-
 /**
  * AgentBoard: a multi-agent console. Each agent runs its own task on its own
  * model, streaming over an independent SSE connection in parallel. The UI
@@ -322,7 +312,12 @@ export function useAgentBoard(scope: Scope) {
   }, [])
 
   /** Spawn a new agent running `task` on `modelId`. Returns the new agent id. */
-  function spawn(task: string, modelId: string, images: UploadedImage[] = []) {
+  function spawn(
+    task: string,
+    modelId: string,
+    attachments: ChatAttachments = { images: [], dataFiles: [] },
+  ) {
+    const { images, dataFiles } = attachments
     const id = Math.random().toString(36).slice(2, 8)
     const agent: AgentRun = {
       id,
@@ -330,7 +325,7 @@ export function useAgentBoard(scope: Scope) {
       modelId,
       task,
       status: 'running',
-      items: [{ kind: 'user', text: task, images: images.map((i) => i.url) }],
+      items: [{ kind: 'user', text: task, images: images.map((i) => i.url), files: dataFiles }],
       trace: [],
       slots: null,
       notice: null,
@@ -349,7 +344,7 @@ export function useAgentBoard(scope: Scope) {
     // having gone somewhere else.
     setAgents((prev) => [agent, ...prev])
     setSelectedId(id)
-    void run(id, agent, [{ role: 'user', content: agent.task }], images)
+    void run(id, agent, [{ role: 'user', content: agent.task }], attachments)
     return id
   }
 
@@ -360,7 +355,12 @@ export function useAgentBoard(scope: Scope) {
    * conversation id goes with it so the server extends that row instead of
    * opening a new one.
    */
-  function sendFollowUp(agentId: string, text: string, images: UploadedImage[] = []) {
+  function sendFollowUp(
+    agentId: string,
+    text: string,
+    attachments: ChatAttachments = { images: [], dataFiles: [] },
+  ) {
+    const { images, dataFiles } = attachments
     const agent = agentsRef.current.find((a) => a.id === agentId)
     if (!agent || agent.status === 'running') return
 
@@ -368,7 +368,7 @@ export function useAgentBoard(scope: Scope) {
     if (!items) return
 
     const history = [...historyFrom(items), { role: 'user' as const, content: text }]
-    items.push({ kind: 'user', text, images: images.map((i) => i.url) })
+    items.push({ kind: 'user', text, images: images.map((i) => i.url), files: dataFiles })
     streamRefs.current.set(agentId, freshStream())
     patchAgent(agentId, {
       status: 'running',
@@ -377,15 +377,16 @@ export function useAgentBoard(scope: Scope) {
       startedAt: Date.now(),
       elapsed: 0,
     })
-    void run(agentId, agent, history, images)
+    void run(agentId, agent, history, attachments)
   }
 
   async function run(
     id: string,
     seed: AgentRun,
-    history: { role: 'user' | 'assistant'; content: string }[],
-    images: UploadedImage[] = [],
+    history: { role: 'user' | 'assistant'; content: string; filePaths?: string[] }[],
+    attachments: ChatAttachments = { images: [], dataFiles: [] },
   ) {
+    const { images, dataFiles } = attachments
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
 
@@ -405,6 +406,7 @@ export function useAgentBoard(scope: Scope) {
           // these into a note on the user message telling the model to call
           // read_image.
           imageIds: images.length ? images.map((i) => i.id) : undefined,
+          filePaths: dataFiles.length ? dataFiles.map((file) => file.path) : undefined,
         }),
         signal: controller.signal,
       })

@@ -11,6 +11,7 @@ import type {
   RunSessionDetail,
   SessionImage,
   UploadedImage,
+  UploadedDataFile,
   RunRow,
   WorkspaceFile,
   WorkspaceRow,
@@ -413,6 +414,15 @@ export async function uploadChatImage(
   )
 }
 
+export async function uploadChatDataFile(scope: Scope, file: File): Promise<UploadedDataFile> {
+  const form = new FormData()
+  form.append('file', file)
+  const { file: uploaded } = await json<{ file: Omit<UploadedDataFile, 'url'> }>(
+    await fetch(`/api/workspace/files?${scoped(scope)}`, { method: 'POST', body: form }),
+  )
+  return { ...uploaded, url: workspaceFileUrl(scope, uploaded.path) }
+}
+
 /**
  * Images belonging to one chat session — generated, pasted, or shared.
  *
@@ -448,8 +458,14 @@ export async function listWorkspaceFiles(scope: Scope): Promise<WorkspaceFile[]>
 
 /** Download URL for one workspace file. Served as an attachment by the API. */
 export function workspaceFileUrl(scope: Scope, filePath: string): string {
-  const encoded = filePath.split('/').map(encodeURIComponent).join('/')
+  const encoded = filePath.split('/').map(encodePathSegment).join('/')
   return `/api/workspace/files/${encoded}?${scoped(scope)}`
+}
+
+function encodePathSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
 }
 
 /** Read-only Postgres connections this browser has added. */

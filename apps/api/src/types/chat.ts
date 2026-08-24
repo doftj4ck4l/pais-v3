@@ -5,6 +5,8 @@ export type ChatRole = "user" | "assistant" | "tool";
 export type ChatMessage = {
   role: ChatRole;
   content?: string;
+  /** Workspace-relative data files attached to this user turn. */
+  filePaths?: string[];
   tool_call_id?: string;
   tool_calls?: {
     id: string;

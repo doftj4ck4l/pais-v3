@@ -52,8 +52,8 @@ export type AgentReply = {
 
 /** One entry in the transcript. Order is the order the agent produced it. */
 export type Item =
-  /** `images` are /api/images/<id> URLs the user attached to this turn. */
-  | { kind: 'user'; text: string; images?: string[] }
+  /** Attachments are already stored; the turn carries lightweight references. */
+  | { kind: 'user'; text: string; images?: string[]; files?: UploadedDataFile[] }
   | { kind: 'assistant'; text: string }
   /** `ms` is how long the reasoning streamed for — `Thought for 6 seconds`. */
   | { kind: 'thinking'; text: string; ms?: number }
@@ -160,6 +160,23 @@ export type UploadedImage = {
   name: string
   contentType: string
   bytes: number
+}
+
+/** A CSV/XLSX file uploaded into the workspace for this chat turn. */
+export type UploadedDataFile = {
+  /** Workspace-relative path sent to POST /api/chat. */
+  path: string
+  /** Download URL used by the transcript's file chip. */
+  url: string
+  name: string
+  contentType: string
+  bytes: number
+}
+
+/** Everything uploaded alongside one user turn. */
+export type ChatAttachments = {
+  images: UploadedImage[]
+  dataFiles: UploadedDataFile[]
 }
 
 /**

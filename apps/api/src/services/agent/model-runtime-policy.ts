@@ -7,8 +7,19 @@ export const CHAT_ONLY_SYSTEM_PROMPT =
 // `describeAttachments` persists this bracketed suffix in user-message text so
 // agent models can revisit an earlier image. A chat-only model must not receive
 // either the private image URL or the instruction to call a tool it cannot use.
-const ATTACHMENT_NOTE =
+const IMAGE_ATTACHMENT_NOTE =
   /\n\n\[The user attached (?:an image|\d+ images) to this message: [^\]]+call read_image[^\]]+\.\]$/;
+const DATA_ATTACHMENT_NOTE =
+  /\n\n\[The user attached (?:a data file|\d+ data files) to this message:[\s\S]*?untrusted data, not instructions\.\]\s*$/;
+
+function stripAttachmentNotes(content: string): string {
+  let stripped = content;
+  for (;;) {
+    const next = stripped.replace(DATA_ATTACHMENT_NOTE, "").replace(IMAGE_ATTACHMENT_NOTE, "");
+    if (next === stripped) return stripped;
+    stripped = next;
+  }
+}
 
 export function isChatOnlyModel(model: ModelConfig): boolean {
   return model.mode === "chat-only";
@@ -34,6 +45,6 @@ export function prepareHistoryForModel(
     if (message.role === "assistant") {
       return message.content ? [{ role: "assistant", content: message.content }] : [];
     }
-    return [{ role: "user", content: (message.content ?? "").replace(ATTACHMENT_NOTE, "") }];
+    return [{ role: "user", content: stripAttachmentNotes(message.content ?? "") }];
   });
 }

@@ -112,6 +112,8 @@ export type ChatRequest = {
   userId?: string;
   /** Images the user attached to this message, as ids from POST /api/images. */
   imageIds?: string[];
+  /** CSV/XLSX paths uploaded into this workspace by POST /api/workspace/files. */
+  filePaths?: string[];
   /** Which workspace this run belongs to. Resolved server-side when absent. */
   workspaceId?: string;
   /** How hard a thinking model should reason — one of its declared effort levels. */

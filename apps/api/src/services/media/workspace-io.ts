@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { env } from "../../config/env";
-import { list as hostList, type WorkspaceFile } from "../../repositories/workspace.repository";
+import {
+  list as hostList,
+  resolve as hostResolve,
+  workspaceRoot,
+  type WorkspaceFile,
+} from "../../repositories/workspace.repository";
 import { PixelboxError } from "../sandbox/pixelbox-client";
 import { WORKSPACE_PATH, sandboxApi, sandboxService } from "../sandbox/sandbox.service";
 
@@ -23,6 +28,24 @@ import { WORKSPACE_PATH, sandboxApi, sandboxService } from "../sandbox/sandbox.s
 const isPixelbox = () => env.sandboxBackend === "pixelbox";
 
 export type WorkspaceStat = { size: number; mtimeMs: number; isFile: boolean };
+
+/** Normalize and confine a caller-supplied workspace-relative path. */
+export function normalizeWorkspacePath(relativePath: string): string | null {
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  if (path.isAbsolute(relativePath) || !segments.length || segments.some((segment) => segment === "..")) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+/** The absolute path the active execution backend gives to the agent. */
+export function absoluteWorkspacePath(workspaceId: string, relativePath: string): string | null {
+  const normalized = normalizeWorkspacePath(relativePath);
+  if (!normalized) return null;
+  return isPixelbox()
+    ? `${WORKSPACE_PATH}/${normalized}`
+    : path.resolve(workspaceRoot(workspaceId), ...normalized.split("/"));
+}
 
 /** Metadata for a confined absolute path, or null when it is absent. */
 export async function statInWorkspace(workspaceId: string, absPath: string): Promise<WorkspaceStat | null> {
@@ -52,6 +75,66 @@ export async function readInWorkspace(workspaceId: string, absPath: string): Pro
     if (e instanceof PixelboxError && e.code === "NOT_FOUND") return null;
     throw e;
   }
+}
+
+/**
+ * Write bytes to a relative path inside one workspace.
+ *
+ * Upload callers provide a relative path rather than an absolute one so the
+ * backend boundary stays here. Pixelbox always addresses `/workspace`; the
+ * node backend addresses this workspace's configured host root. Traversal is
+ * rejected before either filesystem sees it.
+ */
+export async function writeWorkspaceFile(
+  workspaceId: string,
+  relativePath: string,
+  bytes: Uint8Array,
+  signal?: AbortSignal,
+): Promise<void> {
+  const normalized = normalizeWorkspacePath(relativePath);
+  const target = absoluteWorkspacePath(workspaceId, relativePath);
+  if (!normalized || !target) throw new Error("invalid workspace path");
+  const segments = normalized.split("/");
+
+  if (!isPixelbox()) {
+    if (segments.length !== 1) throw new Error("invalid workspace path");
+    const root = workspaceRoot(workspaceId);
+    const rel = path.relative(root, target);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("invalid workspace path");
+    await ensureHostDirectories(root, segments.slice(0, -1));
+    await fs.writeFile(target, bytes, { flag: "wx", signal });
+    return;
+  }
+
+  const { sandboxId } = await sandboxService.acquire(workspaceId);
+  const deadline = AbortSignal.timeout(60_000);
+  const uploadSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  await sandboxApi().createDir(sandboxId, path.posix.dirname(target), true, uploadSignal);
+  await sandboxApi().writeBytes(sandboxId, target, bytes, uploadSignal);
+}
+
+/** Create child directories without following a workspace-controlled symlink. */
+async function ensureHostDirectories(root: string, segments: string[]): Promise<void> {
+  await fs.mkdir(root, { recursive: true });
+  let current = root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    await fs.mkdir(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    const stat = await fs.lstat(current);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("invalid workspace path");
+  }
+}
+
+/** Whether a relative path names a real, confined file in this workspace. */
+export async function workspaceFileExists(workspaceId: string, relativePath: string): Promise<boolean> {
+  const normalized = normalizeWorkspacePath(relativePath);
+  const absolutePath = absoluteWorkspacePath(workspaceId, relativePath);
+  if (!normalized || !absolutePath) return false;
+  if (!isPixelbox()) return (await hostResolve(workspaceId, normalized)).ok;
+  const stat = await statInWorkspace(workspaceId, absolutePath);
+  return stat?.isFile === true;
 }
 
 /**

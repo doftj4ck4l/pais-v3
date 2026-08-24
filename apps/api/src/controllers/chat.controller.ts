@@ -9,6 +9,7 @@ import { runRepository } from "../repositories/run.repository";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { fitToWindow } from "../services/context/context-budget.service";
 import { describeAttachments } from "../services/media/upload.service";
+import { describeWorkspaceUploads } from "../services/media/workspace-upload";
 import { closeStream, createEmitter, startHeartbeat } from "../lib/sse";
 import { abortRun, registerRun, unregisterRun } from "../services/agent/run-registry";
 import { answerQuestion } from "../services/agent/elicitation-registry";
@@ -77,6 +78,13 @@ export function stream(c: Context) {
         });
         return;
       }
+      if (chatOnly && body.filePaths?.length) {
+        emit({
+          type: "error",
+          message: `${model.label} supports text chat only. Remove file attachments and try again.`,
+        });
+        return;
+      }
       if (chatOnly && body.template) {
         emit({
           type: "error",
@@ -94,11 +102,22 @@ export function stream(c: Context) {
       // Attachments become part of the last user message, before the recorder
       // is built from `history` — so the note is what gets stored, and every
       // later turn of the conversation still knows an image was there.
-      if (body.imageIds?.length) {
-        const note = await describeAttachments(workspace.id, body.imageIds);
-        const last = [...history].reverse().find((m) => m.role === "user");
-        if (note && last) last.content = `${last.content ?? ""}${note}`;
-      }
+      const last = [...history].reverse().find((message) => message.role === "user");
+      if (last && body.filePaths?.length) last.filePaths = body.filePaths;
+
+      const imageNote = body.imageIds?.length
+        ? await describeAttachments(workspace.id, body.imageIds)
+        : "";
+      await Promise.all(
+        history.map(async (message) => {
+          if (message.role !== "user") return;
+          const fileNote = message.filePaths?.length
+            ? await describeWorkspaceUploads(workspace.id, message.filePaths)
+            : "";
+          message.content = `${message.content ?? ""}${message === last ? imageNote : ""}${fileNote}`;
+          delete message.filePaths;
+        }),
+      );
 
       const runId = newRunId();
       const timer = startTimer();
