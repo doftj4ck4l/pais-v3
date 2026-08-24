@@ -123,18 +123,21 @@ export const env = {
   /**
    * Where the agent's shell and file tools run.
    *
-   * `docker` gives each user an isolated container over a workspace that
-   * outlives it, and is the default because the alternative is not safe by
-   * default. `node` executes the same tools directly on this API host, as the
-   * user running the server: `cwd` is a starting directory, not a boundary, so
-   * the agent can read anything that user can — including this process's own
-   * environment and `.env`. Uploaded documents make that reachable by prompt
-   * injection, so `node` is for a trusted operator on a throwaway machine only.
+   * `pixelbox` runs each workspace's tools in a remote gVisor sandbox reached
+   * over HTTPS (the Pixelbox service; see `services/sandbox/pixelbox-client.ts`),
+   * which is the isolated, production stance. `node` executes the same tools
+   * directly on this API host, as the user running the server: `cwd` is a
+   * starting directory, not a boundary, so the agent can read anything that user
+   * can — including this process's own environment and `.env`. Uploaded
+   * documents make that reachable by prompt injection, so `node` is for a
+   * trusted operator on a throwaway machine only, and stays the default so a
+   * checkout with no Pixelbox credentials still runs.
    *
-   * With `docker` selected and the daemon down, runs fail loudly rather than
-   * falling back to the host — a silent fallback would hand the model a shell.
+   * With `pixelbox` selected and the service unreachable, runs fail loudly
+   * rather than falling back to the host — a silent fallback would hand the
+   * model a shell.
    */
-  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "docker") as "node" | "docker",
+  sandboxBackend: (process.env.SANDBOX_BACKEND ?? "node") as "node" | "pixelbox",
 
   sandboxImage: process.env.SANDBOX_IMAGE ?? "pixelspace-sandbox:1",
 

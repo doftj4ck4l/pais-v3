@@ -17,3 +17,6 @@ apps/api/src/data/
 # Agent sandbox workspaces
 workspaces/
 apps/api/workspace/
+
+# Pixelbox sandbox credentials — never commit
+secrets/

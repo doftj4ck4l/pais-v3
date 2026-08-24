@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import { env as appEnv } from "../../config/env";
-import { SKILLS_MOUNT } from "../sandbox/docker";
+import { SKILLS_MOUNT } from "../sandbox/sandbox.service";
 import { logger } from "../../lib/logger";
 
 /** Placeholder a skill's `run` command uses to locate its own directory. */
@@ -130,10 +130,10 @@ export async function invokeSkill(
 
   // Refuse rather than fall back to the host. A silent fallback is exactly the
   // exposure this indirection exists to remove.
-  if (appEnv.sandboxBackend !== "docker") {
+  if (appEnv.sandboxBackend !== "pixelbox") {
     return (
       `error: skills run inside the sandbox, and SANDBOX_BACKEND is ` +
-      `"${appEnv.sandboxBackend}". Set SANDBOX_BACKEND=docker (with Docker running) to use skills.`
+      `"${appEnv.sandboxBackend}". Set SANDBOX_BACKEND=pixelbox to use skills.`
     );
   }
 
