@@ -80,8 +80,9 @@ jobs:
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       # .env and apps/api/.env hold this host's secrets and are never in git.
-      # apps/api/data is the live SQLite database. All three are excluded from
-      # --delete as well as from transfer, so a deploy cannot destroy them.
+      # `secrets` holds mounted Pixelbox credentials; apps/api/data is the live
+      # SQLite database. All four are excluded from --delete as well as from
+      # transfer, so a deploy cannot destroy host credentials or live data.
       - name: Sync tree to deploy host
         run: |
           rsync -az --delete \
@@ -89,6 +90,7 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude 'apps/api/.env' \
+            --exclude 'secrets' \
             --exclude 'apps/api/data' \
             ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
 
@@ -106,7 +108,8 @@ jobs:
       # "deployed" silently means "restarted the old code".
       - name: Build and restart
         run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker compose up -d --build"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build"
 
       # /api/meta proves three things at once: Caddy is up, the proxy reaches
       # the API, and the API finished ensureSchema().
