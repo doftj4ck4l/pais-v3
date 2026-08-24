@@ -11,6 +11,7 @@ import {
   ok,
 } from "@earendil-works/pi-agent-core";
 import { PixelboxError, type PixelboxFileKind, type SandboxApi } from "./pixelbox-client";
+import { PYTHON_RUNTIME_ENV } from "./python-baseline";
 
 /**
  * The agent's world, relocated into a remote gVisor sandbox.
@@ -68,7 +69,7 @@ export class PixelboxExecutionEnv {
         {
           command,
           cwd: this.resolve(options.cwd ?? this.cwd),
-          env: options.env,
+          env: { ...PYTHON_RUNTIME_ENV, ...options.env },
           timeoutSeconds: options.timeout,
         },
         options.abortSignal,

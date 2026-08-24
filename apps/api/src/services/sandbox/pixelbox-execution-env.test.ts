@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PixelboxExecutionEnv } from "./pixelbox-execution-env";
+import { PYTHON_RUNTIME_ENV } from "./python-baseline";
 import {
   PixelboxError,
   type ExecRequest,
@@ -77,6 +78,22 @@ describe("PixelboxExecutionEnv shell", () => {
     const api = fakeApi();
     await env(api).exec("ls", { cwd: "sub" });
     expect(api.lastExec?.cwd).toBe("/workspace/sub");
+  });
+
+  test("exec includes the Python runtime environment defaults", async () => {
+    const api = fakeApi();
+    await env(api).exec("python3 -c 'import pandas'");
+    expect(api.lastExec?.env).toEqual(PYTHON_RUNTIME_ENV);
+  });
+
+  test("exec lets callers override Python defaults without dropping the rest", async () => {
+    const api = fakeApi();
+    await env(api).exec("env", { env: { HOME: "/tmp/custom-home", EXTRA: "yes" } });
+    expect(api.lastExec?.env).toEqual({
+      ...PYTHON_RUNTIME_ENV,
+      HOME: "/tmp/custom-home",
+      EXTRA: "yes",
+    });
   });
 
   test("exec maps a timed-out result to a timeout ExecutionError", async () => {

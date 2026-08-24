@@ -168,7 +168,16 @@ export async function runPiAgent(opts: {
     // one is a liveness check, which is milliseconds. On the timeline the
     // difference between those two is the whole explanation for a slow first run.
     const sandboxTimer = startTimer();
-    const sandbox = await sandboxService.acquire(workspaceId);
+    let sandbox: { sandboxId: string; workspacePath: string };
+    try {
+      sandbox = await sandboxService.acquire(workspaceId, signal);
+    } catch (e) {
+      // Stop/disconnect is an intentional run outcome. The controller records
+      // it as `stopped`; surfacing the acquisition abort as an error event would
+      // incorrectly turn the same action into a run failure.
+      if (signal?.aborted) return 0;
+      throw e;
+    }
     emit({
       type: "trace",
       step: "sandbox.acquire",

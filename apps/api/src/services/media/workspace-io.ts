@@ -59,9 +59,9 @@ export async function readInWorkspace(workspaceId: string, absPath: string): Pro
  *
  * On Pixelbox a single `find` is one round trip where a recursive walk over the
  * file API would be dozens. Dot-directories are excluded: the workspace's NFS
- * volume also holds `.local` (pip installs persist there — see the environment
- * prompt) and `.pixelspace` (spilled tool output), and neither is the agent's
- * work product.
+ * volume also holds `.local` (the warm sandbox's Python user site) and
+ * `.pixelspace` (bootstrap metadata and spilled tool output), and neither is the
+ * agent's work product.
  */
 export async function listWorkspaceFiles(workspaceId: string, limit = 200): Promise<WorkspaceFile[]> {
   if (!isPixelbox()) return hostList(workspaceId, limit);

@@ -1,3 +1,5 @@
+import { describePythonBaseline } from "../sandbox/python-baseline";
+
 /**
  * Tell the model where it is.
  *
@@ -62,29 +64,25 @@ export function describeEnvironment(env: EnvironmentDescription): string {
   //
   // The Pixelbox coding image is deliberately minimal: python3, pip and git,
   // and little else — measured against the live service, it has no Node, no
-  // curl/wget, no ImageMagick or ghostscript, no C compiler, and none of the
-  // common Python libraries preinstalled. The earlier prompt (written for the
-  // old Docker image, which did carry a full toolchain) claimed all of those
-  // were present; on this backend that is a lie the model acts on, importing a
-  // package that is not there and failing.
+  // curl/wget, no ImageMagick or ghostscript, and no C compiler. Cold sandbox
+  // acquisition prewarms the common Python task libraries below as an app-level
+  // bridge until Pixelbox exposes the equivalent image/session hook.
   //
-  // Egress is open, so `pip install` works. But the sandbox is ephemeral:
-  // measured against the live service, each sandbox has its own NFS volume, so a
-  // fresh sandbox starts empty and an install lasts only for the current
-  // session — it is NOT cached per workspace. That makes a heavy install a cost
-  // to weigh, not a free one-time step. Only for the sandbox backend; the node
-  // backend runs on the API host with whatever Python the deploy happens to have.
+  // Egress is open, so `python3 -m pip install --user --break-system-packages`
+  // works for anything outside the baseline. It lasts while this sandbox
+  // remains warm but not after the reaper replaces it. Only for the sandbox
+  // backend; the node backend runs on the API host with whatever Python the
+  // deploy happens to have.
   if (env.backend === "pixelbox") {
     out +=
-      ` This sandbox is a minimal Debian Linux: python3, pip and git are present, but very ` +
-      `little else is — no Node, no curl or wget, no ImageMagick, no C compiler. Common Python ` +
-      `libraries (numpy, pandas, pillow, matplotlib, openpyxl, python-docx, reportlab, requests ` +
-      `and the like) are NOT installed until you install them. Reach for Python rather than a ` +
-      `missing shell tool — use "requests" or urllib, not curl. Install what a task needs with ` +
-      `"pip install <name>", but the sandbox is ephemeral — the install lasts only for this ` +
-      `session and a heavy dependency tree costs real time, so keep installs to what the task ` +
-      `needs and prefer the standard library where it will do. Check with "pip show <name>" or ` +
-      `a quick import before assuming a package is present.`;
+      ` This sandbox starts from a minimal Debian Linux with python3, pip and git, but no Node, ` +
+      `curl or wget, ImageMagick, or C compiler. The common Python libraries for ` +
+      `${describePythonBaseline()} are already installed when the sandbox ` +
+      `starts. Import them directly instead of reinstalling them. Reach for Python rather than ` +
+      `a missing shell tool — use requests or urllib, not curl. If a task needs something outside ` +
+      `that baseline, "python3 -m pip install --user --break-system-packages <name>" works for ` +
+      `the life of this warm sandbox, but keep it to what the task needs and prefer the standard ` +
+      `library where it will do.`;
   }
 
   // Only worth saying when there is something to confuse it with. A workspace

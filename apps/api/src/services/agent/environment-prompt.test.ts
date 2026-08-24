@@ -51,17 +51,19 @@ describe("describeEnvironment", () => {
     expect(out).toContain("/workspace");
   });
 
-  it("tells the model to install what it needs rather than assuming a toolchain", () => {
-    // The Pixelbox image is minimal (python3/pip/git only, measured live). The
-    // old prompt promised a full toolchain that this backend does not have, so a
-    // run imported a package that was not there and failed. The prompt must say
-    // "install it", not "it's already here".
+  it("names the Python packages prewarmed for every sandbox", () => {
+    // Cold acquisition installs the common document, image, data and chart
+    // libraries before the agent receives the sandbox. The prompt should keep
+    // the model from paying for the same install again during its first task.
     const out = describeEnvironment(sandbox);
     expect(out).toContain("pip install");
-    expect(out).toContain("NOT installed");
+    expect(out).toContain("pillow");
+    expect(out).toContain("pandas");
+    expect(out).toContain("reportlab");
+    expect(out).toContain("already installed");
     expect(out).toContain("minimal");
-    // And it must not make the old false promise.
-    expect(out).not.toContain("already has a working toolchain");
+    expect(out).toContain("python3 -m pip install --user --break-system-packages <name>");
+    expect(out).not.toContain("NOT installed");
   });
 
   it("claims nothing about the API host's Python", () => {
