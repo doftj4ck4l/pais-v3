@@ -109,7 +109,10 @@ export async function writeWorkspaceFile(
   const { sandboxId } = await sandboxService.acquire(workspaceId);
   const deadline = AbortSignal.timeout(60_000);
   const uploadSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  await sandboxApi().createDir(sandboxId, path.posix.dirname(target), true, uploadSignal);
+  const parent = path.posix.dirname(target);
+  if (parent !== WORKSPACE_PATH) {
+    await sandboxApi().createDir(sandboxId, parent, true, uploadSignal);
+  }
   await sandboxApi().writeBytes(sandboxId, target, bytes, uploadSignal);
 }
 
