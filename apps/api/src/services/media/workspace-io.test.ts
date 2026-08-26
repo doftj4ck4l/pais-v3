@@ -116,6 +116,20 @@ test("pixelbox writes relative workspace files through the sandbox API", async (
   expect(new TextDecoder().decode(bytes)).toBe("a,b\n1,2");
 });
 
+test("pixelbox writes root workspace files without recreating the existing root", async () => {
+  setBackend("pixelbox");
+  const api = fakeApi();
+  api.createDir = async (_id, directory) => {
+    if (directory === "/workspace") throw new Error(`unexpected mkdir ${directory}`);
+  };
+  setSandboxApiForTests(api);
+
+  await writeWorkspaceFile("ws1", "upload-data.csv", new TextEncoder().encode("a,b\n1,2"));
+
+  const bytes = await api.readBytes("sb-io", "/workspace/upload-data.csv");
+  expect(new TextDecoder().decode(bytes)).toBe("a,b\n1,2");
+});
+
 test("workspace writes reject traversal before touching either backend", async () => {
   setBackend("pixelbox");
   await expect(writeWorkspaceFile("ws1", "../outside.csv", new Uint8Array([1]))).rejects.toThrow(
