@@ -240,6 +240,24 @@ describe("POST /api/chat", () => {
     expect(await res.text()).toContain("supports text chat only");
   });
 
+  it("rejects data-file attachments for a chat-only model", async () => {
+    const res = await createApp().request("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-authentik-uid": "alice-uid",
+      },
+      body: JSON.stringify({
+        modelId: "local-qwen3.8-27b-uncensored",
+        messages: [{ role: "user", content: "Analyse this" }],
+        filePaths: ["uploads/one/sales.csv"],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Remove file attachments and try again");
+  });
+
   it("rejects prompt templates for a chat-only model", async () => {
     const res = await createApp().request("/api/chat", {
       method: "POST",

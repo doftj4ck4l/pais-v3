@@ -7,9 +7,10 @@ import { ensureSchema } from "../../db/client";
 import type { ExecResult, SandboxApi, StatInfo } from "../sandbox/pixelbox-client";
 import { PixelboxError } from "../sandbox/pixelbox-client";
 import { setSandboxApiForTests } from "../sandbox/sandbox.service";
-import { listWorkspaceFiles, readInWorkspace, statInWorkspace } from "./workspace-io";
+import { listWorkspaceFiles, readInWorkspace, statInWorkspace, writeWorkspaceFile } from "./workspace-io";
 
 const original = env.sandboxBackend;
+const originalRoot = env.sandboxRoot;
 const setBackend = (b: "node" | "pixelbox") => {
   (env as { sandboxBackend: string }).sandboxBackend = b;
 };
@@ -40,7 +41,9 @@ function fakeApi(seed: Record<string, string> = {}) {
       if (v === undefined) throw new PixelboxError("NOT_FOUND", `missing ${p}`, 404);
       return new TextEncoder().encode(v);
     },
-    async writeBytes() {},
+    async writeBytes(_id, p, content) {
+      files.set(p, new TextDecoder().decode(content));
+    },
     async stat(_id, p): Promise<StatInfo | null> {
       return files.has(p) ? { kind: "file", size: files.get(p)!.length, mtimeMs: 5 } : null;
     },
@@ -54,7 +57,10 @@ function fakeApi(seed: Record<string, string> = {}) {
 }
 
 beforeAll(() => ensureSchema());
-afterAll(() => setBackend(original as "node" | "pixelbox"));
+afterAll(() => {
+  setBackend(original as "node" | "pixelbox");
+  (env as { sandboxRoot: string }).sandboxRoot = originalRoot;
+});
 beforeEach(() => setSandboxApiForTests(fakeApi()));
 
 test("node backend reads a file from the host path", async () => {
@@ -97,4 +103,42 @@ test("pixelbox list excludes dot-dirs and returns newest-first relatives", async
   expect(paths).toContain("chart.png");
   expect(paths).toContain("notes.txt");
   expect(paths).not.toContain(".local/lib/numpy.py");
+});
+
+test("pixelbox writes relative workspace files through the sandbox API", async () => {
+  setBackend("pixelbox");
+  const api = fakeApi();
+  setSandboxApiForTests(api);
+
+  await writeWorkspaceFile("ws1", "uploads/run/data.csv", new TextEncoder().encode("a,b\n1,2"));
+
+  const bytes = await api.readBytes("sb-io", "/workspace/uploads/run/data.csv");
+  expect(new TextDecoder().decode(bytes)).toBe("a,b\n1,2");
+});
+
+test("workspace writes reject traversal before touching either backend", async () => {
+  setBackend("pixelbox");
+  await expect(writeWorkspaceFile("ws1", "../outside.csv", new Uint8Array([1]))).rejects.toThrow(
+    "invalid workspace path",
+  );
+});
+
+test("node workspace writes reject a symlinked upload directory", async () => {
+  setBackend("node");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wsio-root-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "wsio-outside-"));
+  (env as { sandboxRoot: string }).sandboxRoot = root;
+  fs.mkdirSync(path.join(root, "ws1"));
+  fs.symlinkSync(outside, path.join(root, "ws1", "uploads"), "dir");
+
+  try {
+    await expect(
+      writeWorkspaceFile("ws1", "uploads/run/data.csv", new Uint8Array([1])),
+    ).rejects.toThrow("invalid workspace path");
+    expect(fs.readdirSync(outside)).toEqual([]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+    (env as { sandboxRoot: string }).sandboxRoot = originalRoot;
+  }
 });

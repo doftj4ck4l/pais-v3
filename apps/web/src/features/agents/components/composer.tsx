@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUpIcon, ImageIcon, XIcon } from 'lucide-react'
+import { ArrowUpIcon, FileSpreadsheetIcon, PaperclipIcon, XIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ModelPicker } from '@/features/agents/components/model-picker'
 import { Textarea } from '@/shared/ui/textarea'
 import { Spinner } from '@/shared/ui/spinner'
-import { uploadChatImage } from '@/shared/api/api'
+import { uploadChatDataFile, uploadChatImage } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
-import type { Model, UploadedImage } from '@/shared/lib/types'
+import type { ChatAttachments, Model, UploadedDataFile, UploadedImage } from '@/shared/lib/types'
+
+const DATA_FILE_ACCEPT =
+  '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+const isDataFile = (file: File) => /\.(csv|xlsx)$/i.test(file.name)
 
 /**
  * Starts a new agent. It is never bound to a running agent — stopping one
  * happens on that agent's own header.
  *
- * Images are uploaded on paste rather than on send, so the thumbnail appears
- * while the user is still typing the question and the send request carries an
- * id instead of a megabyte of base64.
+ * Attachments are uploaded before send, so their preview appears while the
+ * user is still typing and the chat request carries references rather than
+ * megabytes of file data.
  */
 export function Composer({
   notice,
@@ -32,7 +37,7 @@ export function Composer({
 }: {
   notice: string | null
   onDismissNotice: () => void
-  onSend: (text: string, images: UploadedImage[]) => void
+  onSend: (text: string, attachments: ChatAttachments) => void
   /** The catalog, for the picker under the input. Empty until /api/meta answers. */
   models: Model[]
   /** The model the next run will use — not the open one's, which never changes. */
@@ -51,11 +56,15 @@ export function Composer({
 }) {
   const [value, setValue] = useState('')
   const [images, setImages] = useState<UploadedImage[]>([])
+  const [files, setFiles] = useState<UploadedDataFile[]>([])
   const [uploading, setUploading] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const attachmentGeneration = useRef(0)
   const scope = useScope()
+  const dataFileSlots = useRef(0)
+  const workspaceIdRef = useRef(scope.workspaceId)
   const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
   const chatOnly = activeModel?.mode === 'chat-only'
 
@@ -64,10 +73,22 @@ export function Composer({
   }, [chatOnly])
 
   useEffect(() => {
-    if (!chatOnly || !images.length) return
+    if (workspaceIdRef.current === scope.workspaceId) return
+    workspaceIdRef.current = scope.workspaceId
+    attachmentGeneration.current += 1
+    dataFileSlots.current = 0
     setImages([])
-    setError('Images were removed because this model supports text chat only.')
-  }, [chatOnly, images.length])
+    setFiles([])
+    setError(null)
+  }, [scope.workspaceId])
+
+  useEffect(() => {
+    if (!chatOnly || (!images.length && !files.length)) return
+    setImages([])
+    setFiles([])
+    dataFileSlots.current = 0
+    setError('Attachments were removed because this model supports text chat only.')
+  }, [chatOnly, files.length, images.length])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -77,42 +98,88 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [value])
 
-  const attach = useCallback(
-    async (files: File[]) => {
-      if (!files.length) return
+  const uploadBatch = useCallback(
+    async <T,>(
+      selected: File[],
+      upload: (file: File) => Promise<T>,
+      append: (items: T[]) => void,
+      unavailableMessage: string,
+    ) => {
+      if (!selected.length) return 0
       if (chatOnly) {
-        setError('This model supports text chat only. Choose an agent model to use images.')
-        return
+        setError(unavailableMessage)
+        return 0
       }
       setError(null)
-      setUploading((n) => n + files.length)
+      setUploading((n) => n + selected.length)
       const generation = attachmentGeneration.current
-      for (const file of files) {
-        try {
-          const uploaded = await uploadChatImage(scope, file, conversationId)
-          if (attachmentGeneration.current !== generation) continue
-          setImages((prev) => [...prev, uploaded])
-        } catch (e) {
-          // The API's message names the actual problem ("image is 20MB, over
-          // the 12MB limit"), which is worth more than "upload failed".
-          setError((e as Error).message)
-        } finally {
-          setUploading((n) => n - 1)
-        }
+      try {
+        const results = await settleWithConcurrency(selected, upload, 2)
+        if (attachmentGeneration.current !== generation) return 0
+        const completed = results.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value] : [],
+        )
+        if (completed.length) append(completed)
+        const failed = results.find((result) => result.status === 'rejected')
+        if (failed?.status === 'rejected') setError((failed.reason as Error).message)
+        return completed.length
+      } finally {
+        setUploading((n) => n - selected.length)
       }
     },
-    [scope, conversationId, chatOnly],
+    [chatOnly],
+  )
+
+  const attachImages = useCallback(
+    (selected: File[]) =>
+      uploadBatch(
+        selected,
+        (file) => uploadChatImage(scope, file, conversationId),
+        (uploaded) => setImages((prev) => [...prev, ...uploaded]),
+        'This model supports text chat only. Choose an agent model to use images.',
+      ),
+    [conversationId, scope, uploadBatch],
+  )
+
+  const attachDataFiles = useCallback(
+    async (selected: File[]) => {
+      const available = Math.max(0, 6 - dataFileSlots.current)
+      const accepted = selected.slice(0, available)
+      const generation = attachmentGeneration.current
+      dataFileSlots.current += accepted.length
+      const completed = await uploadBatch(
+        accepted,
+        (file) => uploadChatDataFile(scope, file),
+        (uploaded) => setFiles((prev) => [...prev, ...uploaded]),
+        'This model supports text chat only. Choose an agent model to analyze files.',
+      )
+      if (attachmentGeneration.current !== generation) return
+      dataFileSlots.current = Math.max(
+        0,
+        dataFileSlots.current - (accepted.length - completed),
+      )
+      if (selected.length > accepted.length) {
+        setError((current) => current ?? 'Attach up to 6 data files per message.')
+      }
+    },
+    [scope, uploadBatch],
   )
 
   const submit = () => {
-    // An image with no question is still a message — "what is this?" is the
-    // obvious intent, and refusing to send would be pedantic. But an empty
-    // composer with nothing attached is not.
-    if (!value.trim() && !images.length) return
+    // An attachment with no question still has an obvious analysis intent.
+    // An empty composer with nothing attached does not.
+    if (!value.trim() && !images.length && !files.length) return
     if (uploading > 0) return
-    onSend(value.trim() || 'What is in this image?', images)
+    const fallback = files.length
+      ? files.length === 1
+        ? 'Analyze this data file.'
+        : 'Analyze these data files.'
+      : 'What is in this image?'
+    onSend(value.trim() || fallback, { images, dataFiles: files })
     setValue('')
     setImages([])
+    setFiles([])
+    dataFileSlots.current = 0
     setError(null)
   }
 
@@ -142,13 +209,23 @@ export function Composer({
         }}
       >
         <div className="rounded-xl border bg-card transition-colors focus-within:border-ring">
-          {images.length || uploading > 0 ? (
+          {images.length || files.length || uploading > 0 ? (
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
               {images.map((image) => (
                 <Thumbnail
                   key={image.id}
                   image={image}
                   onRemove={() => setImages((prev) => prev.filter((i) => i.id !== image.id))}
+                />
+              ))}
+              {files.map((file) => (
+                <DataFileChip
+                  key={file.path}
+                  file={file}
+                  onRemove={() => {
+                    dataFileSlots.current = Math.max(0, dataFileSlots.current - 1)
+                    setFiles((prev) => prev.filter((item) => item.path !== file.path))
+                  }}
                 />
               ))}
               {uploading > 0 ? (
@@ -162,10 +239,34 @@ export function Composer({
           <div className="flex items-end gap-2 p-2 pl-3">
             <span
               aria-hidden
-              className="readout shrink-0 pb-2.5 leading-none text-muted-foreground select-none"
+              className="readout hidden shrink-0 pb-2.5 leading-none text-muted-foreground select-none sm:inline"
             >
               →
             </span>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={DATA_FILE_ACCEPT}
+              multiple
+              className="sr-only"
+              onChange={(event) => {
+                void attachDataFiles(Array.from(event.target.files ?? []))
+                event.target.value = ''
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={chatOnly || uploading > 0}
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach CSV or Excel file"
+              title={chatOnly ? 'Choose an agent model to analyze files' : 'Attach CSV or Excel file'}
+              className="mb-0.5 text-muted-foreground"
+            >
+              <PaperclipIcon />
+            </Button>
 
             <Textarea
               ref={ref}
@@ -183,16 +284,17 @@ export function Composer({
                 )
                 if (!files.length) return
                 e.preventDefault()
-                void attach(files)
+                void attachImages(files)
               }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
-                const files = Array.from(e.dataTransfer.files).filter((f) =>
-                  f.type.startsWith('image/'),
-                )
-                if (!files.length) return
+                const dropped = Array.from(e.dataTransfer.files)
+                const droppedImages = dropped.filter((file) => file.type.startsWith('image/'))
+                const droppedData = dropped.filter(isDataFile)
+                if (!droppedImages.length && !droppedData.length) return
                 e.preventDefault()
-                void attach(files)
+                void attachImages(droppedImages)
+                void attachDataFiles(droppedData)
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -201,18 +303,27 @@ export function Composer({
                 }
               }}
               placeholder={
-                images.length ? 'Ask about the image…' : chatOnly ? 'Ask anything (chat only)…' : 'Ask anything…'
+                composerPlaceholder(files.length > 0, images.length > 0, chatOnly)
               }
               aria-label="Start a new agent"
               className="max-h-[200px] min-h-0 resize-none border-0 bg-transparent px-0 py-2 text-[0.9375rem] shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
 
-            <Button type="submit" disabled={(!value.trim() && !images.length) || uploading > 0}>
-              Send
+            <Button
+              type="submit"
+              disabled={(!value.trim() && !images.length && !files.length) || uploading > 0}
+            >
+              <span className="hidden sm:inline">Send</span>
               <ArrowUpIcon data-icon="inline-end" />
             </Button>
           </div>
         </div>
+
+        {error ? (
+          <p role="alert" className="mt-1.5 px-1 text-[0.6875rem] text-destructive">
+            {error}
+          </p>
+        ) : null}
 
         {/* The model sits on the left of this row and the hint on the right, so
             the control the user changes is the one nearest the input's own
@@ -239,19 +350,13 @@ export function Composer({
             )
           })()}
 
-          <p className="flex min-w-0 items-center gap-1.5 truncate">
-            {error ? (
-              <span className="text-destructive">{error}</span>
+          <p className="hidden min-w-0 items-center gap-1.5 truncate sm:flex">
+            {chatOnly ? (
+              <span>Chat only · no tools, connected resources, or attachments</span>
             ) : (
               <>
-                {chatOnly ? (
-                  <span>Chat only · no tools, connected resources, or images</span>
-                ) : (
-                  <>
-                    <ImageIcon className="size-3 shrink-0" />
-                    Paste or drop an image to ask about it
-                  </>
-                )}
+                <PaperclipIcon className="size-3 shrink-0" />
+                Attach CSV/XLSX · paste or drop an image
               </>
             )}
           </p>
@@ -259,6 +364,65 @@ export function Composer({
       </form>
     </div>
   )
+}
+
+function DataFileChip({ file, onRemove }: { file: UploadedDataFile; onRemove: () => void }) {
+  return (
+    <span className="group flex h-14 max-w-64 items-center gap-2 rounded-md border bg-background px-2.5">
+      <FileSpreadsheetIcon className="size-5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-medium">{file.name}</span>
+        <span className="block text-[0.625rem] tracking-wide text-muted-foreground uppercase">
+          {file.name.toLowerCase().endsWith('.csv') ? 'CSV' : 'Excel'} · {formatBytes(file.bytes)}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${file.name}`}
+        className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <XIcon className="size-3" />
+      </button>
+    </span>
+  )
+}
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1_000_000
+    ? `${(bytes / 1_000_000).toFixed(1)}MB`
+    : `${Math.max(1, Math.round(bytes / 1000))}KB`
+}
+
+function composerPlaceholder(hasFiles: boolean, hasImages: boolean, chatOnly: boolean): string {
+  if (hasFiles) return 'Ask what to analyze…'
+  if (hasImages) return 'Ask about the image…'
+  if (chatOnly) return 'Ask anything (chat only)…'
+  return 'Ask anything…'
+}
+
+async function settleWithConcurrency<T>(
+  inputs: File[],
+  worker: (file: File) => Promise<T>,
+  concurrency: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results = new Array<PromiseSettledResult<T>>(inputs.length)
+  let next = 0
+
+  async function runWorker() {
+    for (;;) {
+      const index = next++
+      if (index >= inputs.length) return
+      try {
+        results[index] = { status: 'fulfilled', value: await worker(inputs[index]) }
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, inputs.length) }, runWorker))
+  return results
 }
 
 function Thumbnail({ image, onRemove }: { image: UploadedImage; onRemove: () => void }) {

@@ -73,6 +73,7 @@ export function sessionArtifacts(items: Item[]): SessionArtifacts {
       // A live turn carries the URLs as a field and a stored one carries them
       // in the note the server appended, so both paths are read.
       for (const url of item.images ?? []) images.add(url)
+      for (const file of item.files ?? []) files.add(file.path)
       scan(item.text)
       continue
     }
@@ -121,7 +122,7 @@ function argPath(argsJson: string): string | null {
 }
 
 /** A malformed percent-encoding is a path to skip, not a crash. */
-function decodePath(encoded: string): string | null {
+export function decodePath(encoded: string): string | null {
   try {
     return encoded
       .split('/')

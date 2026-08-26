@@ -1,11 +1,16 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ChevronRightIcon, LightbulbIcon } from 'lucide-react'
+import { ChevronRightIcon, FileSpreadsheetIcon, LightbulbIcon } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
 import { Spinner } from '@/shared/ui/spinner'
 import { describeTool, thoughtLabel } from '@/features/agents/lib/tool-summary'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
 import { parseMessage, hasUiBlock, validateSpec } from '@/features/agents/lib/ui-blocks'
 import { SegmentView } from '@/features/agents/components/ui-blocks'
+import {
+  attachedImageUrls,
+  attachedWorkspaceFiles,
+  withoutAttachmentNote,
+} from '@/features/agents/lib/attachment-notes'
 import { cn } from '@/shared/lib/utils'
 import type { ReactNode } from 'react'
 import type { Item } from '@/shared/lib/types'
@@ -60,6 +65,7 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
     // appended, so the URLs are recovered from the text. A live turn has both,
     // and the ids match, so this stays one code path rather than two.
     const attached = item.images?.length ? item.images : attachedImageUrls(item.text)
+    const attachedFiles = item.files?.length ? item.files : attachedWorkspaceFiles(item.text)
     return (
       // Flushed right, and the only thing in the transcript that is. The agent's
       // side of the conversation is prose — answers, code, lists, images — and
@@ -80,6 +86,21 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
                     alt="Attached"
                     className="max-h-40 max-w-full rounded border border-primary-foreground/20 object-contain"
                   />
+                </a>
+              ))}
+            </div>
+          ) : null}
+          {attachedFiles.length ? (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {attachedFiles.map((file) => (
+                <a
+                  key={file.path}
+                  href={file.url}
+                  download
+                  className="flex min-w-0 items-center gap-2 rounded-md border border-primary-foreground/20 bg-primary-foreground/10 px-2.5 py-2 transition-colors hover:bg-primary-foreground/15"
+                >
+                  <FileSpreadsheetIcon className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-xs">{file.name}</span>
                 </a>
               ))}
             </div>
@@ -355,15 +376,3 @@ function TriggerRow({
  * addressed to the model, though, so the console hides it and draws the
  * pictures instead.
  */
-const ATTACHMENT_NOTE = /\n*\[The user attached (?:an image|\d+ images) to this message:[^\]]*\]\s*$/
-
-const IMAGE_URL = /\/api\/images\/[A-Za-z0-9_-]+/g
-
-function attachedImageUrls(text: string): string[] {
-  const note = text.match(ATTACHMENT_NOTE)?.[0]
-  return note ? [...new Set(note.match(IMAGE_URL) ?? [])] : []
-}
-
-function withoutAttachmentNote(text: string): string {
-  return text.replace(ATTACHMENT_NOTE, '').trimEnd()
-}

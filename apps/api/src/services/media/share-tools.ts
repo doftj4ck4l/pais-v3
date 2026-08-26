@@ -4,6 +4,9 @@ import { mediaConfigured } from "./media.service";
 import { UPLOADABLE, storeUploadedImage } from "./upload.service";
 import { resolveInWorkspace } from "./vision-tools";
 import { readInWorkspace, statInWorkspace } from "./workspace-io";
+import { workspaceFileUrl } from "./workspace-url";
+
+export { workspaceFileUrl } from "./workspace-url";
 
 /**
  * `share_file` — turn a file the agent wrote into a URL the user can open.
@@ -47,15 +50,6 @@ const text = (s: string) => ({
   content: [{ type: "text" as const, text: s }],
   details: { output: s },
 });
-
-/** Percent-encode per segment: the route splits on `/` before decoding. */
-export function workspaceFileUrl(workspaceId: string, relativePath: string): string {
-  const encoded = relativePath.split(path.sep).map(encodeURIComponent).join("/");
-  // The workspace id is explicit rather than left to default resolution: a user
-  // with two workspaces opening a bare link would be served the wrong one's
-  // file, or a 404, depending on which happened to be default.
-  return `/api/workspace/files/${encoded}?workspaceId=${encodeURIComponent(workspaceId)}`;
-}
 
 export type ShareDeps = {
   /** Whether the bucket is reachable. Injected so a test can drive both branches. */

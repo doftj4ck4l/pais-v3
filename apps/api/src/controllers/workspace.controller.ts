@@ -1,10 +1,15 @@
 import type { Context } from "hono";
 import path from "node:path";
+import { env } from "../config/env";
 import { resolve } from "../repositories/workspace.repository";
 import { fileOrigins } from "../services/media/file-origins";
-import { listWorkspaceFiles, readInWorkspace } from "../services/media/workspace-io";
-import { WORKSPACE_PATH } from "../services/sandbox/sandbox.service";
-import { env } from "../config/env";
+import {
+  absoluteWorkspacePath,
+  listWorkspaceFiles,
+  normalizeWorkspacePath,
+  readInWorkspace,
+} from "../services/media/workspace-io";
+import { MAX_DATA_FILE_BYTES, storeWorkspaceUpload } from "../services/media/workspace-upload";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";
 
@@ -35,6 +40,40 @@ export async function index(c: Context) {
   });
 }
 
+export async function create(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: "Expected a multipart/form-data body" }, 400);
+  }
+
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return c.json({ error: "No file supplied under the 'file' field" }, 400);
+  }
+  if (file.size > MAX_DATA_FILE_BYTES) {
+    return c.json(
+      { error: `The attached file is ${(file.size / 1_000_000).toFixed(1)}MB, over the 25MB limit.` },
+      413,
+    );
+  }
+
+  try {
+    const result = await storeWorkspaceUpload({
+      workspaceId,
+      name: file.name,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      signal: c.req.raw.signal,
+    });
+    if (!result.ok) return c.json({ error: result.error }, 400);
+    return c.json({ file: result.file }, 201);
+  } catch (error) {
+    return c.json({ error: `Could not store the attached file: ${(error as Error).message}` }, 502);
+  }
+}
+
 /**
  * GET /api/workspace/files/* — download one file.
  *
@@ -57,12 +96,11 @@ export async function show(c: Context) {
   let absPath: string;
   let name: string;
   if (env.sandboxBackend === "pixelbox") {
-    const segments = decoded.split(/[\\/]+/).filter(Boolean);
-    if (path.isAbsolute(decoded) || !segments.length || segments.some((s) => s === "..")) {
-      return c.json({ error: "File not found" }, 404);
-    }
-    absPath = `${WORKSPACE_PATH}/${segments.join("/")}`;
-    name = segments[segments.length - 1]!;
+    const sandboxPath = absoluteWorkspacePath(workspaceId, decoded);
+    const normalized = normalizeWorkspacePath(decoded);
+    if (!sandboxPath || !normalized) return c.json({ error: "File not found" }, 404);
+    absPath = sandboxPath;
+    name = path.posix.basename(normalized);
   } else {
     const found = await resolve(workspaceId, decoded);
     if (!found.ok) return c.json({ error: "File not found" }, 404);

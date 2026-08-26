@@ -8,7 +8,7 @@ import { ArtifactPanel } from '@/features/agents/components/artifact-panel'
 import { Composer } from '@/features/agents/components/composer'
 import { AskUserPrompt } from '@/features/agents/components/ask-user-prompt'
 import { Greeting, Suggestions } from '@/pages/console/components/empty-state'
-import type { UploadedImage } from '@/shared/lib/types'
+import type { ChatAttachments } from '@/shared/lib/types'
 import { Transcript } from '@/features/agents/components/transcript'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
 import { useSessionArtifacts } from '@/features/agents/hooks/use-session-artifacts'
@@ -71,9 +71,10 @@ export function Console() {
    * parallel agent stays available as an explicit action (New agent in the
    * sidebar), which is what the board is for.
    */
-  const send = (text: string, images: UploadedImage[] = []) => {
-    if (selected && selected.status !== 'running') board.sendFollowUp(selected.id, text, images)
-    else board.spawn(text, board.modelIdForNew, images)
+  const send = (text: string, attachments: ChatAttachments) => {
+    if (selected && selected.status !== 'running') {
+      board.sendFollowUp(selected.id, text, attachments)
+    } else board.spawn(text, board.modelIdForNew, attachments)
   }
 
   return (
