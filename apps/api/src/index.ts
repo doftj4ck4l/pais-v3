@@ -6,8 +6,8 @@ import { startSandboxReaper } from "./services/sandbox/sandbox.service";
 
 ensureSchema();
 
-// Idle sandboxes are only cleaned up if something is watching for them.
-if (env.sandboxBackend === "pixelbox") startSandboxReaper();
+// Idle containers are only cleaned up if something is watching for them.
+if (env.sandboxBackend === "docker") startSandboxReaper();
 
 const app = createApp();
 

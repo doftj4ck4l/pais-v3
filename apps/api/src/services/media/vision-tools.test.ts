@@ -70,7 +70,12 @@ describe("read_image", () => {
         : undefined,
   } as unknown as ImageStore;
 
-  const tool = () => createVisionTools("ws1", dir, store)[0]!;
+  const tool = () => createVisionTools(
+    "ws1",
+    dir,
+    store,
+    async (_workspaceId, file) => fs.promises.readFile(file).catch(() => null),
+  )[0]!;
 
   beforeAll(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "vision-test-"));

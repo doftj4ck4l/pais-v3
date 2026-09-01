@@ -1,9 +1,9 @@
-import { readInWorkspace } from "./workspace-io";
 import path from "node:path";
 import { env } from "../../config/env";
 import { describeImage } from "./vision.service";
 import { getObject } from "./media.service";
 import { imageStore, type ImageStore } from "../../repositories/image.repository";
+import { readInWorkspace } from "./workspace-io";
 
 /**
  * The `read_image` tool, bound to one workspace.
@@ -79,6 +79,7 @@ export function createVisionTools(
   workspaceId: string,
   workspaceDir: string,
   store: ImageStore = imageStore,
+  readWorkspace: typeof readInWorkspace = readInWorkspace,
 ): any[] {
   return [
     {
@@ -146,7 +147,7 @@ export function createVisionTools(
                 `(supported: ${Object.keys(EXTENSIONS).join(", ")})`,
             );
           }
-          const read = await readInWorkspace(workspaceId, resolved);
+          const read = await readWorkspace(workspaceId, resolved);
           if (!read) return text(`error: ${source} does not exist in your workspace`);
           bytes = read;
         }

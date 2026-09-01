@@ -45,14 +45,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # The sandbox is a remote HTTPS service now (Pixelbox), and every suite
-      # drives it through an injected fake — nothing here needs a Docker daemon
-      # or the live service, so the whole suite runs and any failure stops the
-      # deploy, which is the rule in .claude/skills/deploy.
+      # The sandbox suites drive a real Docker daemon and fail without one.
+      # They are excluded here rather than ignored, so any *other* failure
+      # still stops the deploy — which is the rule in .claude/skills/deploy.
       - name: Test
         run: |
           cd apps/api
-          mapfile -t files < <(find src -name '*.test.ts')
+          mapfile -t files < <(find src -name '*.test.ts' \
+            ! -name 'docker.test.ts' \
+            ! -name 'docker-execution-env.test.ts' \
+            ! -name 'sandbox.service.test.ts')
           echo "running ${#files[@]} test files"
           bun test "${files[@]}"
 
@@ -80,10 +82,10 @@ jobs:
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       # .env and apps/api/.env hold this host's secrets and are never in git.
-      # `secrets` holds mounted Pixelbox credentials; apps/api/data is the live
-      # SQLite database; backups holds operator-created recovery snapshots. All
-      # five are excluded from --delete as well as from transfer, so a deploy
-      # cannot destroy host credentials, live data, or recovery points.
+      # `secrets` holds host-only credentials; apps/api/data is the live SQLite
+      # database; backups holds operator-created recovery snapshots. All five
+      # are excluded from --delete as well as from transfer, so a deploy cannot
+      # destroy host credentials, live data, or recovery points.
       - name: Sync tree to deploy host
         run: |
           rsync -az --delete \
@@ -102,16 +104,21 @@ jobs:
         run: |
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH/apps/api/data"
 
-      # The sandbox is a remote service (Pixelbox) now, not a local Docker image,
-      # so there is no separate sandbox image to build out-of-band any more — just
-      # the Compose stack (api + web).
+      # Two builds, because the sandbox image is not a Compose service — it is
+      # built out-of-band (the installer's refresh_stack does the same). Without
+      # this, `compose up --build` refreshes api/web but the sandbox keeps its
+      # old image, so sandbox-side changes (its toolchain: bash, curl,
+      # ghostscript, PDF libs, pip) silently never ship on a CI deploy.
       #
-      # --build is not optional: without it compose reuses the previous image and
-      # "deployed" silently means "restarted the old code".
+      # --build on the compose step is not optional either: without it compose
+      # reuses the previous image and "deployed" silently means "restarted the
+      # old code".
       - name: Build and restart
         run: |
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build"
+            img=\$(grep -m1 '^SANDBOX_IMAGE=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"' || true) && \
+            docker build -t \"\${img:-pixelspace-sandbox:1}\" -f apps/api/sandbox/Dockerfile apps/api/sandbox && \
+            docker compose up -d --build"
 
       # /api/meta proves three things at once: Caddy is up, the proxy reaches
       # the API, and the API finished ensureSchema().

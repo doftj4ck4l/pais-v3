@@ -18,5 +18,5 @@ apps/api/src/data/
 workspaces/
 apps/api/workspace/
 
-# Pixelbox sandbox credentials — never commit
+# Host-only credentials — never commit
 secrets/

@@ -25,7 +25,6 @@ import {
   RUN_CHAR_BUDGET,
   capResult,
   createBudget,
-  createRemoteSpill,
   createSpill,
   SPILL_RETENTION_MS,
   createMcpTools,
@@ -835,6 +834,30 @@ describe("Nextcloud write approval", () => {
     await runtime.dispose();
   });
 
+  it("asks before a non-read-only tool on a non-Nextcloud server too", async () => {
+    const approvals: any[] = [];
+    await seed(["files"]);
+    const runtime = await createMcpTools(
+      "ws1",
+      store,
+      (spec) => linkedConnection(spec, filesServer()),
+      {
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return true;
+        },
+      },
+    );
+
+    const tool: any = byName(runtime.tools, "files__read_file");
+    const result = await tool.execute("f-1", { path: "/x" });
+
+    expect(result.isError).toBeUndefined();
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ server: "files", tool: "read_file" });
+    await runtime.dispose();
+  });
+
   it("asks before a write and only calls Nextcloud after approval", async () => {
     const calls: string[] = [];
     const approvals: any[] = [];
@@ -901,33 +924,6 @@ describe("Nextcloud write approval", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("requires user approval");
     expect(calls).toHaveLength(0);
-    await runtime.dispose();
-  });
-
-  it("asks before a non-read-only tool on a non-Nextcloud server too", async () => {
-    // The gate is not Nextcloud-specific: a tool on any server that is not
-    // provably read-only pauses for the user. `files.read_file` ships no
-    // read-only annotation, so it is treated as write-capable and gated.
-    const approvals: any[] = [];
-    await seed(["files"]);
-    const runtime = await createMcpTools(
-      "ws1",
-      store,
-      (spec) => linkedConnection(spec, filesServer()),
-      {
-        requestApproval: async (request) => {
-          approvals.push(request);
-          return true;
-        },
-      },
-    );
-
-    const tool: any = byName(runtime.tools, "files__read_file");
-    const result = await tool.execute("f-1", { path: "/x" });
-
-    expect(result.isError).toBeUndefined();
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0]).toMatchObject({ server: "files", tool: "read_file" });
     await runtime.dispose();
   });
 
@@ -1351,35 +1347,5 @@ describe("createMcpTools catalog and deferred loading", () => {
     expect(runtime.tools.map((t) => t.name)).not.toContain("search_tools");
     expect(runtime.activeToolNames).toContain("files__read_file");
     await runtime.dispose();
-  });
-});
-
-describe("createRemoteSpill", () => {
-  it("returns a path under the remote dir and writes the full text there", async () => {
-    const writes: Array<{ path: string; text: string }> = [];
-    const spill = createRemoteSpill(
-      async (path, text) => {
-        writes.push({ path, text });
-      },
-      "/workspace/.pixelspace/tool-output",
-    );
-
-    const file = spill("x".repeat(1000), "server__read_file");
-
-    expect(file).toBeDefined();
-    expect(file!.startsWith("/workspace/.pixelspace/tool-output/")).toBe(true);
-    // The write is fire-and-forget; let the microtask run.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(writes).toHaveLength(1);
-    expect(writes[0]!.path).toBe(file!);
-    expect(writes[0]!.text.length).toBe(1000);
-  });
-
-  it("does not throw when the remote write rejects", async () => {
-    const spill = createRemoteSpill(async () => {
-      throw new Error("remote down");
-    }, "/workspace/.pixelspace/tool-output");
-    expect(() => spill("data", "tool")).not.toThrow();
-    await new Promise((r) => setTimeout(r, 0));
   });
 });

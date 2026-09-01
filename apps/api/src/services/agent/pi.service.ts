@@ -19,8 +19,8 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { ExecutionEnv } from "@earendil-works/pi-agent-core";
 import { env as appEnv } from "../../config/env";
-import { PixelboxExecutionEnv } from "../sandbox/pixelbox-execution-env";
-import { sandboxApi, sandboxService } from "../sandbox/sandbox.service";
+import { DockerExecutionEnv } from "../sandbox/docker-execution-env";
+import { sandboxService } from "../sandbox/sandbox.service";
 import path from "node:path";
 import fs from "node:fs";
 import type { AgentEvent } from "../../types/agent";
@@ -46,13 +46,7 @@ import {
   createUserInputRequester,
 } from "./ask-user-tool";
 import { connectorStore } from "../../repositories/connector.repository";
-import {
-  SPILL_DIR,
-  createMcpTools,
-  createRemoteSpill,
-  createToolActivator,
-  type McpRuntime,
-} from "../mcp/mcp-tools";
+import { createMcpTools, createToolActivator, type McpRuntime } from "../mcp/mcp-tools";
 import { isChatOnlyModel } from "./model-runtime-policy";
 import { playbookStore } from "../../repositories/playbook.repository";
 import { renderPlaybook } from "../playbook/prompt";
@@ -151,7 +145,8 @@ export async function runPiAgent(opts: {
 
   // --- the agent's world: this host, or the workspace's container ---
   // `docker` isolates the run and gives the user a workspace that outlives the
-  // container. `node` keeps tools on the API host and is the default, so this
+  // container. `docker` is the safe default; `node` is an explicit trusted-
+  // operator override that keeps tools on the API host, so this
   // stays inert until SANDBOX_BACKEND is switched.
   let execEnv: ExecutionEnv;
   let releaseSandbox: (() => Promise<void>) | undefined;
@@ -163,50 +158,22 @@ export async function runPiAgent(opts: {
     // merely to hand Pi an environment none of its zero tools can use.
     execCwd = workspace ?? process.cwd();
     execEnv = new NodeExecutionEnv({ cwd: execCwd });
-  } else if (appEnv.sandboxBackend === "pixelbox") {
-    // Timed because a cold acquire creates a remote pod, which is seconds; a warm
-    // one is a liveness check, which is milliseconds. On the timeline the
-    // difference between those two is the whole explanation for a slow first run.
+  } else if (appEnv.sandboxBackend === "docker") {
+    // Timed because a cold acquire pulls an image and starts a container, which
+    // is seconds; a warm one is milliseconds. On the timeline the difference
+    // between those two is the whole explanation for a slow first run.
     const sandboxTimer = startTimer();
-    let sandbox: { sandboxId: string; workspacePath: string };
-    try {
-      sandbox = await sandboxService.acquire(workspaceId, signal);
-    } catch (e) {
-      // Stop/disconnect is an intentional run outcome. The controller records
-      // it as `stopped`; surfacing the acquisition abort as an error event would
-      // incorrectly turn the same action into a run failure.
-      if (signal?.aborted) return 0;
-      throw e;
-    }
+    const sandbox = await sandboxService.acquireLease(workspaceId);
     emit({
       type: "trace",
       step: "sandbox.acquire",
-      fields: { ms: sandboxTimer.elapsed(), sandbox: sandbox.sandboxId },
+      fields: { ms: sandboxTimer.elapsed(), container: sandbox.containerId.slice(0, 12) },
     });
-    execEnv = new PixelboxExecutionEnv({
-      api: sandboxApi(),
-      sandboxId: sandbox.sandboxId,
+    execEnv = new DockerExecutionEnv({
+      containerId: sandbox.containerId,
       cwd: sandbox.workspacePath,
-      // Warm-reuse means the run does not own the sandbox: cleanup detaches, the
-      // reaper deletes. Owning it here would delete a warm sandbox after one run.
-      ownsSandbox: false,
     });
-    // Keep the sandbox marked in-use for the life of the run. lastUsedAt is
-    // otherwise written only at acquire and release, so a run whose work — or
-    // the model's own thinking between tool calls — outlasts SANDBOX_IDLE_MS had
-    // its sandbox reaped from under it, and the next tool call died. A heartbeat
-    // at half the idle window keeps the reaper away while the run is active.
-    const heartbeat = setInterval(
-      () => {
-        void sandboxService.keepAlive(workspaceId);
-      },
-      Math.max(1_000, Math.floor(appEnv.sandboxIdleMs / 2)),
-    );
-    heartbeat.unref?.();
-    releaseSandbox = async () => {
-      clearInterval(heartbeat);
-      await sandboxService.release(workspaceId);
-    };
+    releaseSandbox = sandbox.release;
     execCwd = sandbox.workspacePath;
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");
@@ -394,21 +361,10 @@ export async function runPiAgent(opts: {
       mcp = await createMcpTools(workspaceId, undefined, undefined, {
         activator: mcpActivator,
         // The agent's own working directory, so a spilled result's path is one
-        // the `read` and `bash` tools resolve — under the node backend there is
-        // only one path to begin with.
+        // the `read` and `bash` tools resolve — under Docker the workspace is
+        // mounted at an identical host and container path, and under the node
+        // backend there is only one path to begin with.
         workspacePath: execCwd,
-        // Under Pixelbox the workspace is remote: a spill has to be written
-        // *through* the sandbox so the in-sandbox `read`/`bash` can resolve the
-        // path it is handed. For the node backend this stays undefined and the
-        // local-filesystem spill under `workspacePath` is used instead.
-        spill:
-          appEnv.sandboxBackend === "pixelbox"
-            ? createRemoteSpill(async (filePath, text) => {
-                await execEnv.createDir(`${execCwd}/${SPILL_DIR}`, { recursive: true });
-                const written = await execEnv.writeFile(filePath, text);
-                if (!written.ok) throw written.error;
-              }, `${execCwd}/${SPILL_DIR}`)
-            : undefined,
         // A connection is now opened by the first tool call that needs one, which
         // is somewhere in the middle of a run rather than at its start. Traced
         // where it happens, or the seconds it costs would go unattributed.
@@ -648,7 +604,7 @@ export async function runPiAgent(opts: {
     // default place; the remote services are the exception, and the prompt
     // should introduce them in that order.
     out += describeEnvironment({
-      backend: appEnv.sandboxBackend,
+      backend: appEnv.sandboxBackend === "docker" ? "docker" : "node",
       cwd: execCwd,
       hasExternalServices: Boolean(mcp?.systemPromptBlock),
     });
