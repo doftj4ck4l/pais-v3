@@ -783,25 +783,27 @@ export async function createMcpTools(
       ),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const args = (params ?? {}) as Record<string, unknown>;
+        // Gate every MCP tool that is not provably read-only, on any server.
+        // Nextcloud additionally gets a live annotation refresh because its
+        // cached hints are not trusted for write approval.
         const safetyEntry = entry.isNextcloud ? await liveSafetyEntry(entry) : entry;
-        if (
-          safetyEntry.isNextcloud &&
-          !isReadOnlyMcpTool(safetyEntry.remoteName, safetyEntry.annotationsJson)
-        ) {
-          if (!requestApproval) {
+        if (!isReadOnlyMcpTool(safetyEntry.remoteName, safetyEntry.annotationsJson)) {
+          const label = `"${safetyEntry.title ?? safetyEntry.remoteName}" (${entry.serverName})`;
+          if (requestApproval) {
+            const approved = await requestApproval(approvalRequest(safetyEntry, args), signal);
+            if (!approved) {
+              return toolResult(
+                budget,
+                `The action ${label} was denied by the user and was not run.`,
+                true,
+                entry.name,
+              );
+            }
+          } else if (safetyEntry.isNextcloud) {
             return toolResult(
               budget,
-              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" requires user approval, ` +
-                `but this run cannot ask the user. The action was not run.`,
-              true,
-              entry.name,
-            );
-          }
-          const approved = await requestApproval(approvalRequest(safetyEntry, args), signal);
-          if (!approved) {
-            return toolResult(
-              budget,
-              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" was denied by the user and was not run.`,
+              `Nextcloud action ${label} requires user approval, but this run cannot ask the user. ` +
+                "The action was not run.",
               true,
               entry.name,
             );

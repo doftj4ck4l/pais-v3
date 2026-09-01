@@ -6,6 +6,9 @@ import {
   workspaceRoot,
   type WorkspaceFile,
 } from "../../repositories/workspace.repository";
+import { env as appEnv } from "../../config/env";
+import { DockerExecutionEnv } from "../sandbox/docker-execution-env";
+import { sandboxService } from "../sandbox/sandbox.service";
 
 /**
  * Workspace files live on the API host and are bind-mounted into Docker
@@ -14,6 +17,16 @@ import {
  */
 
 export type WorkspaceStat = { size: number; mtimeMs: number; isFile: boolean };
+type WorkspaceReader = Pick<DockerExecutionEnv, "fileInfo" | "readBinaryFile"> & {
+  release?: () => Promise<void>;
+};
+type OpenWorkspace = (workspaceId: string) => Promise<WorkspaceReader>;
+
+const openDockerWorkspace: OpenWorkspace = async (workspaceId) => {
+  const sandbox = await sandboxService.acquireLease(workspaceId);
+  const reader = new DockerExecutionEnv({ containerId: sandbox.containerId, cwd: sandbox.workspacePath });
+  return Object.assign(reader, { release: sandbox.release });
+};
 
 /** Normalize and confine a caller-supplied workspace-relative path. */
 export function normalizeWorkspacePath(relativePath: string): string | null {
@@ -32,14 +45,53 @@ export function absoluteWorkspacePath(workspaceId: string, relativePath: string)
 }
 
 /** Metadata for a confined absolute path, or null when it is absent. */
-export async function statInWorkspace(_workspaceId: string, absPath: string): Promise<WorkspaceStat | null> {
-  const stat = await fs.stat(absPath).catch(() => null);
-  return stat ? { size: stat.size, mtimeMs: stat.mtimeMs, isFile: stat.isFile() } : null;
+export async function statInWorkspace(
+  workspaceId: string,
+  absPath: string,
+  openWorkspace?: OpenWorkspace,
+): Promise<WorkspaceStat | null> {
+  if (!openWorkspace && appEnv.sandboxBackend === "node") {
+    const resolved = await resolveHostPath(workspaceId, absPath);
+    if (!resolved) return null;
+    const stat = await fs.stat(resolved).catch(() => null);
+    return stat ? { size: stat.size, mtimeMs: stat.mtimeMs, isFile: stat.isFile() } : null;
+  }
+  const reader = await (openWorkspace ?? openDockerWorkspace)(workspaceId);
+  try {
+    const stat = await reader.fileInfo(absPath);
+    return stat.ok
+      ? { size: stat.value.size, mtimeMs: stat.value.mtimeMs, isFile: stat.value.kind === "file" }
+      : null;
+  } finally {
+    await reader.release?.();
+  }
 }
 
 /** Bytes for a confined absolute path, or null when it is absent. */
-export async function readInWorkspace(_workspaceId: string, absPath: string): Promise<Uint8Array | null> {
-  return fs.readFile(absPath).catch(() => null);
+export async function readInWorkspace(
+  workspaceId: string,
+  absPath: string,
+  openWorkspace?: OpenWorkspace,
+): Promise<Uint8Array | null> {
+  if (!openWorkspace && appEnv.sandboxBackend === "node") {
+    const resolved = await resolveHostPath(workspaceId, absPath);
+    return resolved ? fs.readFile(resolved).catch(() => null) : null;
+  }
+  const reader = await (openWorkspace ?? openDockerWorkspace)(workspaceId);
+  try {
+    const read = await reader.readBinaryFile(absPath);
+    return read.ok ? read.value : null;
+  } finally {
+    await reader.release?.();
+  }
+}
+
+async function resolveHostPath(workspaceId: string, absPath: string): Promise<string | null> {
+  const root = workspaceRoot(workspaceId);
+  const relative = path.relative(root, absPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  const resolved = await hostResolve(workspaceId, relative);
+  return resolved.ok ? resolved.absolutePath : null;
 }
 
 /** Write bytes to a relative path inside one workspace. */

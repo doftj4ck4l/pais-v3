@@ -34,6 +34,11 @@ const withBucket = (uploads: any[] = []) => ({
       name: input.name,
     };
   },
+  stat: async (_workspaceId: string, file: string) => {
+    const value = fs.statSync(file);
+    return { size: value.size, mtimeMs: value.mtimeMs, isFile: value.isFile() };
+  },
+  read: async (_workspaceId: string, file: string) => new Uint8Array(fs.readFileSync(file)),
 });
 
 const noBucket = {
@@ -41,9 +46,22 @@ const noBucket = {
   store: async (): Promise<UploadResult> => {
     throw new Error("must not be called when the bucket is unconfigured");
   },
+  stat: async (_workspaceId: string, file: string) => {
+    const value = await fs.promises.stat(file).catch(() => null);
+    return value ? { size: value.size, mtimeMs: value.mtimeMs, isFile: value.isFile() } : null;
+  },
+  read: async (_workspaceId: string, file: string) => fs.promises.readFile(file).catch(() => null),
 };
 
-const share = (deps: any) => createShareTools("ws1", root, deps)[0];
+const localAccess = {
+  stat: async (_workspaceId: string, file: string) => {
+    const value = await fs.promises.stat(file).catch(() => null);
+    return value ? { size: value.size, mtimeMs: value.mtimeMs, isFile: value.isFile() } : null;
+  },
+  read: async (_workspaceId: string, file: string) => fs.promises.readFile(file).catch(() => null),
+};
+
+const share = (deps: any) => createShareTools("ws1", root, { ...localAccess, ...deps })[0];
 
 describe("workspaceFileUrl", () => {
   it("names the workspace, so a second workspace cannot shadow the file", () => {

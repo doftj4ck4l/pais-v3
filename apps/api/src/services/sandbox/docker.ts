@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 /** Fixed in-container path for the read-only skills mount. */
 export const SKILLS_MOUNT = "/skills";
@@ -25,6 +26,8 @@ export type ExecOptions = {
   signal?: AbortSignal;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  stdin?: string | Uint8Array;
+  abortCleanup?: () => Promise<void>;
 };
 
 export type ExecOutcome =
@@ -49,21 +52,29 @@ function docker(args: string[], options: ExecOptions = {}): Promise<ExecOutcome>
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const kill = () => child.kill("SIGKILL");
-    const finish = (outcome: ExecOutcome) => {
+    const claim = () => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
+      return true;
+    };
+    const finish = (outcome: ExecOutcome) => {
+      if (!claim()) return;
       resolve(outcome);
     };
-    function onAbort() {
+    async function onAbort() {
+      if (!claim()) return;
       kill();
-      finish({ kind: "aborted" });
+      try {
+        await options.abortCleanup?.();
+      } finally {
+        resolve({ kind: "aborted" });
+      }
     }
 
     if (options.signal?.aborted) {
-      kill();
-      finish({ kind: "aborted" });
+      void onAbort();
       return;
     }
     options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -85,6 +96,8 @@ function docker(args: string[], options: ExecOptions = {}): Promise<ExecOutcome>
       stderr += chunk;
       options.onStderr?.(chunk);
     });
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(options.stdin);
     child.on("error", (e) => finish({ kind: "spawn_error", message: e.message }));
     child.on("close", (code) =>
       finish({ kind: "ok", result: { stdout, stderr, exitCode: code ?? -1 } }),
@@ -122,8 +135,9 @@ export async function ensureImage(image: string): Promise<void> {
 
 /**
  * Start a detached container whose workspace is bind-mounted at the SAME
- * absolute path it occupies on the host. That shared namespace is what lets the
- * filesystem half of DockerExecutionEnv delegate straight to the host.
+ * absolute path it occupies on the host. The shared namespace lets uploads and
+ * generated artifacts cross the boundary, while filesystem operations still
+ * execute inside the container so sandbox symlinks cannot reach the API host.
  */
 export async function runDetached(options: {
   image: string;
@@ -164,7 +178,13 @@ export async function isRunning(containerId: string): Promise<boolean> {
 
 /** Remove a container by id or name. Missing containers are not an error. */
 export async function removeContainer(containerId: string): Promise<void> {
-  await docker(["rm", "-f", containerId], { timeoutMs: 30_000 });
+  const outcome = await docker(["rm", "-f", containerId], { timeoutMs: 30_000 });
+  if (outcome.kind !== "ok") {
+    throw new Error(`docker rm did not complete: ${outcome.kind}`);
+  }
+  if (outcome.result.exitCode !== 0 && !outcome.result.stderr.includes("No such container")) {
+    throw new Error(`docker rm failed: ${outcome.result.stderr.trim()}`);
+  }
 }
 
 export function execInContainer(
@@ -172,7 +192,48 @@ export function execInContainer(
   command: string,
   options: ExecOptions = {},
 ): Promise<ExecOutcome> {
+  const commandArgs = options.timeoutMs
+    ? [
+        "timeout",
+        "--signal=KILL",
+        "--kill-after=1s",
+        `${Math.max(0.001, options.timeoutMs / 1_000)}s`,
+        "bash",
+        "-lc",
+        command,
+      ]
+    : ["bash", "-lc", command];
+  return execArgvInContainer(containerId, commandArgs, options).then((outcome) => {
+    if (
+      options.timeoutMs &&
+      outcome.kind === "ok" &&
+      (outcome.result.exitCode === 124 || outcome.result.exitCode === 137)
+    ) {
+      return { kind: "timeout" } as const;
+    }
+    return outcome;
+  });
+}
+
+/** Execute an argv vector without involving a shell. */
+export function execArgvInContainer(
+  containerId: string,
+  commandArgs: string[],
+  options: ExecOptions = {},
+): Promise<ExecOutcome> {
+  const pidFile = options.signal ? `/tmp/pixelspace-exec-${randomUUID()}.pid` : undefined;
+  const trackedCommandArgs = pidFile
+    ? [
+        "bash",
+        "-c",
+        'pid_file="$1"; shift; setsid "$@" & pid=$!; printf "%s\\n" "$pid" > "$pid_file"; wait "$pid"; status=$?; rm -f "$pid_file"; exit "$status"',
+        "pixelspace-exec",
+        pidFile,
+        ...commandArgs,
+      ]
+    : commandArgs;
   const args = ["exec"];
+  if (options.stdin !== undefined) args.push("-i");
   if (options.cwd) args.push("-w", options.cwd);
   for (const [key, value] of Object.entries(options.env ?? {})) {
     args.push("-e", `${key}=${value}`);
@@ -181,6 +242,30 @@ export function execInContainer(
   // model writes bashisms (here-strings, `[[ ]]`) that dash rejects with an
   // opaque "Syntax error" (measured in the DGX traces). bash ships in the
   // sandbox image; falls through to sh only if it were ever absent.
-  args.push(containerId, "bash", "-lc", command);
-  return docker(args, options);
+  args.push(containerId, ...trackedCommandArgs);
+
+  const abortCleanup = pidFile
+    ? async () => {
+        await docker(
+          [
+            "exec",
+            containerId,
+            "bash",
+            "-c",
+            'i=0; while [ "$i" -lt 25 ] && [ ! -s "$1" ]; do sleep 0.02; i=$((i + 1)); done; if [ -s "$1" ]; then pid=$(cat "$1"); kill -KILL -- "-$pid" 2>/dev/null || true; rm -f "$1"; fi',
+            "pixelspace-cancel",
+            pidFile,
+          ],
+          { timeoutMs: 2_000 },
+        );
+      }
+    : undefined;
+
+  return docker(args, {
+    ...options,
+    // The in-container timeout owns command termination. This outer deadline
+    // is only a backstop for a wedged Docker client/daemon.
+    timeoutMs: options.timeoutMs ? options.timeoutMs + 2_000 : undefined,
+    abortCleanup,
+  });
 }

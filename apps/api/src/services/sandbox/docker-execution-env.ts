@@ -1,25 +1,94 @@
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { ExecutionError, FileError, err, ok } from "@earendil-works/pi-agent-core";
-import type { Result, ShellExecOptions } from "@earendil-works/pi-agent-core";
+import {
+  ExecutionError,
+  FileError,
+  err,
+  ok,
+  type FileInfo,
+  type Result,
+  type ShellExecOptions,
+} from "@earendil-works/pi-agent-core";
 import nodePath from "node:path";
-import { execInContainer } from "./docker";
+import { execArgvInContainer, execInContainer } from "./docker";
+
+type FsReply =
+  | { ok: true; value?: unknown }
+  | { ok: false; code: FileError["code"]; message: string; path?: string };
 
 /**
- * The agent's world, relocated into a container.
+ * Filesystem adapter executed inside the sandbox container.
  *
- * Shell commands run in the container. Filesystem operations are inherited from
- * NodeExecutionEnv and answered by the host, which is equivalent *only* for paths
- * inside the bind-mounted workspace — one path means the same file on both sides
- * there. Outside it the host would answer with host files, so every path is
- * confined to the workspace first. Change the mount and this breaks.
- *
- * Inheriting rather than delegating also keeps pi's own narrower method
- * signatures intact — several take fewer arguments than the `ExecutionEnv`
- * interface allows, which hand-written forwarding gets wrong.
- *
- * Swapping in a hosted backend (E2B, Fly) means one more class against the same
- * interface; nothing else in the app needs to know.
+ * A host-side adapter cannot safely follow workspace symlinks: a link created
+ * by the agent to `/etc/passwd` would resolve against the API host, not the
+ * container. Keeping every file operation inside Docker makes links resolve in
+ * the sandbox's namespace and removes that host escape entirely.
  */
+const FILE_HELPER = String.raw`
+import base64, json, os, shutil, stat, sys, tempfile
+
+op = sys.argv[1]
+req = json.load(sys.stdin)
+path = req.get("path")
+
+def info(target):
+    value = os.lstat(target)
+    mode = value.st_mode
+    kind = "symlink" if stat.S_ISLNK(mode) else "directory" if stat.S_ISDIR(mode) else "file"
+    return {"name": os.path.basename(target), "path": os.path.normpath(target), "kind": kind,
+            "size": value.st_size, "mtimeMs": value.st_mtime * 1000}
+
+try:
+    if op == "read_text":
+        with open(path, "r", encoding="utf-8") as handle: value = handle.read()
+    elif op == "read_lines":
+        maximum = req.get("maxLines")
+        value = []
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if maximum is not None and len(value) >= maximum: break
+                value.append(line.rstrip("\n").rstrip("\r"))
+    elif op == "read_binary":
+        with open(path, "rb") as handle: value = base64.b64encode(handle.read()).decode("ascii")
+    elif op in ("write", "append"):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "ab" if op == "append" else "wb") as handle:
+            handle.write(base64.b64decode(req["content"]))
+        value = None
+    elif op == "info": value = info(path)
+    elif op == "list": value = [info(os.path.join(path, name)) for name in os.listdir(path)]
+    elif op == "canonical": value = os.path.realpath(path, strict=True)
+    elif op == "exists":
+        try: os.lstat(path); value = True
+        except FileNotFoundError: value = False
+    elif op == "mkdir":
+        if req.get("recursive", True): os.makedirs(path, exist_ok=True)
+        else: os.mkdir(path)
+        value = None
+    elif op == "remove":
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            if req.get("force", False): value = None
+            else: raise
+        else:
+            if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
+                shutil.rmtree(path) if req.get("recursive", False) else os.rmdir(path)
+            else: os.unlink(path)
+            value = None
+    elif op == "temp_dir": value = tempfile.mkdtemp(prefix=req.get("prefix", "tmp-"), dir=req["cwd"])
+    elif op == "temp_file":
+        fd, value = tempfile.mkstemp(prefix=req.get("prefix", ""), suffix=req.get("suffix", ""), dir=req["cwd"])
+        os.close(fd)
+    else: raise ValueError("unsupported filesystem operation")
+    print(json.dumps({"ok": True, "value": value}))
+except FileNotFoundError as error: print(json.dumps({"ok": False, "code": "not_found", "message": str(error), "path": path}))
+except PermissionError as error: print(json.dumps({"ok": False, "code": "permission_denied", "message": str(error), "path": path}))
+except NotADirectoryError as error: print(json.dumps({"ok": False, "code": "not_directory", "message": str(error), "path": path}))
+except IsADirectoryError as error: print(json.dumps({"ok": False, "code": "is_directory", "message": str(error), "path": path}))
+except ValueError as error: print(json.dumps({"ok": False, "code": "invalid", "message": str(error), "path": path}))
+except Exception as error: print(json.dumps({"ok": False, "code": "unknown", "message": str(error), "path": path}))
+`;
+
 export class DockerExecutionEnv extends NodeExecutionEnv {
   private readonly containerId: string;
 
@@ -35,7 +104,6 @@ export class DockerExecutionEnv extends NodeExecutionEnv {
     const outcome = await execInContainer(this.containerId, command, {
       cwd: options.cwd ?? this.cwd,
       env: options.env,
-      // pi measures timeouts in seconds; the docker layer in milliseconds.
       timeoutMs: options.timeout ? options.timeout * 1000 : undefined,
       signal: options.abortSignal,
       onStdout: options.onStdout,
@@ -43,88 +111,144 @@ export class DockerExecutionEnv extends NodeExecutionEnv {
     });
 
     switch (outcome.kind) {
-      case "ok":
-        // A non-zero exit is a result the agent should read and react to, not a
-        // failure to run. Only the cases below stopped the command executing.
-        return ok(outcome.result);
-      case "timeout":
-        return err(new ExecutionError("timeout", `Command timed out: ${command}`));
-      case "aborted":
-        return err(new ExecutionError("aborted", `Command aborted: ${command}`));
-      case "spawn_error":
-        return err(new ExecutionError("spawn_error", outcome.message));
+      case "ok": return ok(outcome.result);
+      case "timeout": return err(new ExecutionError("timeout", `Command timed out: ${command}`));
+      case "aborted": return err(new ExecutionError("aborted", `Command aborted: ${command}`));
+      case "spawn_error": return err(new ExecutionError("spawn_error", outcome.message));
     }
   }
 
-  // ---- filesystem confinement -------------------------------------------
-  //
-  // The inherited filesystem operates on the host. That is only equivalent to
-  // the container for paths inside the bind-mounted workspace; outside it, the
-  // host answers with host files. Every path is therefore checked against the
-  // workspace before the inherited implementation sees it.
-
-  /**
-   * Reject anything resolving outside the workspace.
-   *
-   * Typed as the failure arm alone so it unions cleanly with each method's own
-   * success type — a full `Result` here would widen every return value.
-   */
-  private guard(path: string): { ok: false; error: FileError } | null {
+  private resolved(path: string): Result<string, FileError> {
     const resolved = nodePath.resolve(this.cwd, path);
     const relative = nodePath.relative(this.cwd, resolved);
-    const inside = relative === "" || (!relative.startsWith("..") && !nodePath.isAbsolute(relative));
-    if (inside) return null;
-    return {
-      ok: false,
-      error: new FileError(
-        "permission_denied",
-        `Path is outside the sandbox workspace (${this.cwd}). Only files inside the workspace are reachable.`,
-        resolved,
-      ),
-    };
+    if (relative === "" || (!relative.startsWith("..") && !nodePath.isAbsolute(relative))) {
+      return ok<string, FileError>(resolved);
+    }
+    return err<string, FileError>(new FileError(
+      "permission_denied",
+      `Path is outside the sandbox workspace (${this.cwd}). Only files inside the workspace are reachable.`,
+      resolved,
+    ));
   }
 
-  override async readTextFile(path: string, abortSignal?: AbortSignal) {
-    return this.guard(path) ?? super.readTextFile(path, abortSignal);
+  private async fileCall<T>(
+    operation: string,
+    request: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Result<T, FileError>> {
+    if (signal?.aborted) return err<T, FileError>(new FileError("aborted", "aborted", String(request.path ?? "")));
+    const outcome = await execArgvInContainer(
+      this.containerId,
+      ["python3", "-c", FILE_HELPER, operation],
+      { cwd: this.cwd, stdin: JSON.stringify(request), signal },
+    );
+    if (outcome.kind === "aborted") return err<T, FileError>(new FileError("aborted", "aborted", String(request.path ?? "")));
+    if (outcome.kind !== "ok") {
+      return err<T, FileError>(new FileError("unknown", `Docker filesystem operation failed: ${outcome.kind}`, String(request.path ?? "")));
+    }
+    if (outcome.result.exitCode !== 0) {
+      return err<T, FileError>(new FileError("unknown", outcome.result.stderr.trim() || "Docker filesystem helper failed", String(request.path ?? "")));
+    }
+    let reply: FsReply;
+    try {
+      reply = JSON.parse(outcome.result.stdout) as FsReply;
+    } catch {
+      return err<T, FileError>(new FileError("unknown", "Docker filesystem helper returned invalid JSON", String(request.path ?? "")));
+    }
+    if (!reply.ok) return err<T, FileError>(new FileError(reply.code, reply.message, reply.path));
+    return ok<T, FileError>(reply.value as T);
   }
 
-  override async readTextLines(path: string, options?: { maxLines?: number; abortSignal?: AbortSignal }) {
-    return this.guard(path) ?? super.readTextLines(path, options);
+  override async absolutePath(path: string) { return this.resolved(path); }
+  override async joinPath(parts: string[]) { return this.resolved(nodePath.join(...parts)); }
+
+  override async readTextFile(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<string, FileError>(resolved.error);
+    return this.fileCall<string>("read_text", { path: resolved.value }, abortSignal);
   }
 
-  override async readBinaryFile(path: string, abortSignal?: AbortSignal) {
-    return this.guard(path) ?? super.readBinaryFile(path, abortSignal);
+  override async readTextLines(path: string, options?: { maxLines?: number; abortSignal?: AbortSignal }): Promise<Result<string[], FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<string[], FileError>(resolved.error);
+    if (options?.maxLines !== undefined && options.maxLines <= 0) return ok<string[], FileError>([]);
+    return this.fileCall<string[]>("read_lines", { path: resolved.value, maxLines: options?.maxLines }, options?.abortSignal);
   }
 
-  override async writeFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal) {
-    return this.guard(path) ?? super.writeFile(path, content, abortSignal);
+  override async readBinaryFile(path: string, abortSignal?: AbortSignal): Promise<Result<Uint8Array, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<Uint8Array, FileError>(resolved.error);
+    const encoded = await this.fileCall<string>("read_binary", { path: resolved.value }, abortSignal);
+    return encoded.ok
+      ? ok<Uint8Array, FileError>(Uint8Array.from(Buffer.from(encoded.value, "base64")))
+      : err<Uint8Array, FileError>(encoded.error);
   }
 
-  override async appendFile(path: string, content: string | Uint8Array) {
-    return this.guard(path) ?? super.appendFile(path, content);
+  override async writeFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>> {
+    return this.write("write", path, content, abortSignal);
   }
 
-  override async fileInfo(path: string) {
-    return this.guard(path) ?? super.fileInfo(path);
+  override async appendFile(path: string, content: string | Uint8Array, abortSignal?: AbortSignal): Promise<Result<void, FileError>> {
+    return this.write("append", path, content, abortSignal);
   }
 
-  override async listDir(path: string, abortSignal?: AbortSignal) {
-    return this.guard(path) ?? super.listDir(path, abortSignal);
+  private async write(operation: string, path: string, content: string | Uint8Array, signal?: AbortSignal): Promise<Result<void, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<void, FileError>(resolved.error);
+    const bytes = Buffer.from(content);
+    return this.fileCall<void>(operation, { path: resolved.value, content: bytes.toString("base64") }, signal);
   }
 
-  override async exists(path: string) {
-    return this.guard(path) ?? super.exists(path);
+  override async fileInfo(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<FileInfo, FileError>(resolved.error);
+    return this.fileCall<FileInfo>("info", { path: resolved.value }, abortSignal);
   }
 
-  override async canonicalPath(path: string) {
-    return this.guard(path) ?? super.canonicalPath(path);
+  override async listDir(path: string, abortSignal?: AbortSignal): Promise<Result<FileInfo[], FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<FileInfo[], FileError>(resolved.error);
+    return this.fileCall<FileInfo[]>("list", { path: resolved.value }, abortSignal);
   }
 
-  override async createDir(path: string, options?: { recursive?: boolean; abortSignal?: AbortSignal }) {
-    return this.guard(path) ?? super.createDir(path, options);
+  override async canonicalPath(path: string, abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<string, FileError>(resolved.error);
+    const canonical = await this.fileCall<string>("canonical", { path: resolved.value }, abortSignal);
+    return canonical.ok ? this.resolved(canonical.value) : err<string, FileError>(canonical.error);
   }
 
-  override async remove(path: string, options?: { recursive?: boolean; force?: boolean; abortSignal?: AbortSignal }) {
-    return this.guard(path) ?? super.remove(path, options);
+  override async exists(path: string, abortSignal?: AbortSignal): Promise<Result<boolean, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<boolean, FileError>(resolved.error);
+    return this.fileCall<boolean>("exists", { path: resolved.value }, abortSignal);
+  }
+
+  override async createDir(path: string, options?: { recursive?: boolean; abortSignal?: AbortSignal }): Promise<Result<void, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<void, FileError>(resolved.error);
+    return this.fileCall<void>("mkdir", { path: resolved.value, recursive: options?.recursive ?? true }, options?.abortSignal);
+  }
+
+  override async remove(path: string, options?: { recursive?: boolean; force?: boolean; abortSignal?: AbortSignal }): Promise<Result<void, FileError>> {
+    const resolved = this.resolved(path);
+    if (!resolved.ok) return err<void, FileError>(resolved.error);
+    return this.fileCall<void>("remove", {
+      path: resolved.value,
+      recursive: options?.recursive ?? false,
+      force: options?.force ?? false,
+    }, options?.abortSignal);
+  }
+
+  override async createTempDir(prefix = "tmp-", abortSignal?: AbortSignal): Promise<Result<string, FileError>> {
+    return this.fileCall<string>("temp_dir", { cwd: this.cwd, prefix }, abortSignal);
+  }
+
+  override async createTempFile(options?: { prefix?: string; suffix?: string; abortSignal?: AbortSignal }): Promise<Result<string, FileError>> {
+    return this.fileCall<string>("temp_file", {
+      cwd: this.cwd,
+      prefix: options?.prefix ?? "",
+      suffix: options?.suffix ?? "",
+    }, options?.abortSignal);
   }
 }

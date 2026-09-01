@@ -82,10 +82,10 @@ jobs:
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       # .env and apps/api/.env hold this host's secrets and are never in git.
-      # `secrets` holds mounted Pixelbox credentials; apps/api/data is the live
-      # SQLite database; backups holds operator-created recovery snapshots. All
-      # five are excluded from --delete as well as from transfer, so a deploy
-      # cannot destroy host credentials, live data, or recovery points.
+      # `secrets` holds host-only credentials; apps/api/data is the live SQLite
+      # database; backups holds operator-created recovery snapshots. All five
+      # are excluded from --delete as well as from transfer, so a deploy cannot
+      # destroy host credentials, live data, or recovery points.
       - name: Sync tree to deploy host
         run: |
           rsync -az --delete \
@@ -93,6 +93,7 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude 'apps/api/.env' \
+            --exclude 'secrets' \
             --exclude 'apps/api/data' \
             --exclude 'backups' \
             ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
@@ -115,7 +116,7 @@ jobs:
       - name: Build and restart
         run: |
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
-            img=\$(grep -m1 '^SANDBOX_IMAGE=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"') && \
+            img=\$(grep -m1 '^SANDBOX_IMAGE=' .env 2>/dev/null | cut -d= -f2- | tr -d '\"' || true) && \
             docker build -t \"\${img:-pixelspace-sandbox:1}\" -f apps/api/sandbox/Dockerfile apps/api/sandbox && \
             docker compose up -d --build"
 

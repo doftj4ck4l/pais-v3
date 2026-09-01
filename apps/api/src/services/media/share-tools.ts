@@ -55,6 +55,8 @@ export type ShareDeps = {
   /** Whether the bucket is reachable. Injected so a test can drive both branches. */
   configured: typeof mediaConfigured;
   store: typeof storeUploadedImage;
+  stat?: typeof statInWorkspace;
+  read?: typeof readInWorkspace;
 };
 
 export function createShareTools(
@@ -102,7 +104,7 @@ export function createShareTools(
         const resolved = resolveInWorkspace(workspaceDir, source);
         if (!resolved) return text(`error: ${source} is outside your workspace`);
 
-        const stat = await statInWorkspace(workspaceId, resolved);
+        const stat = await (deps.stat ?? statInWorkspace)(workspaceId, resolved);
         if (!stat) return text(`error: ${source} does not exist in your workspace`);
         if (!stat.isFile) return text(`error: ${source} is a directory, not a file`);
 
@@ -111,7 +113,7 @@ export function createShareTools(
         const contentType = IMAGE_TYPES[path.extname(resolved).toLowerCase()] ?? "";
 
         if (contentType && UPLOADABLE.has(contentType) && deps.configured()) {
-          const bytes = await readInWorkspace(workspaceId, resolved);
+          const bytes = await (deps.read ?? readInWorkspace)(workspaceId, resolved);
           if (!bytes) return text(`error: could not read ${source}`);
 
           const stored = await deps.store({

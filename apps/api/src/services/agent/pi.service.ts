@@ -145,7 +145,8 @@ export async function runPiAgent(opts: {
 
   // --- the agent's world: this host, or the workspace's container ---
   // `docker` isolates the run and gives the user a workspace that outlives the
-  // container. `node` keeps tools on the API host and is the default, so this
+  // container. `docker` is the safe default; `node` is an explicit trusted-
+  // operator override that keeps tools on the API host, so this
   // stays inert until SANDBOX_BACKEND is switched.
   let execEnv: ExecutionEnv;
   let releaseSandbox: (() => Promise<void>) | undefined;
@@ -162,7 +163,7 @@ export async function runPiAgent(opts: {
     // is seconds; a warm one is milliseconds. On the timeline the difference
     // between those two is the whole explanation for a slow first run.
     const sandboxTimer = startTimer();
-    const sandbox = await sandboxService.acquire(workspaceId);
+    const sandbox = await sandboxService.acquireLease(workspaceId);
     emit({
       type: "trace",
       step: "sandbox.acquire",
@@ -172,23 +173,7 @@ export async function runPiAgent(opts: {
       containerId: sandbox.containerId,
       cwd: sandbox.workspacePath,
     });
-    // Keep the sandbox marked in-use for the life of the run. lastUsedAt is
-    // otherwise written only at acquire and release, so a run whose work — or
-    // the model's own thinking between tool calls — outlasts SANDBOX_IDLE_MS had
-    // its container reaped from under it, and the next tool call died with
-    // "No such container" (measured in the DGX traces). A heartbeat at half the
-    // idle window keeps the reaper away while the run is active.
-    const heartbeat = setInterval(
-      () => {
-        void sandboxService.keepAlive(workspaceId);
-      },
-      Math.max(1_000, Math.floor(appEnv.sandboxIdleMs / 2)),
-    );
-    heartbeat.unref?.();
-    releaseSandbox = async () => {
-      clearInterval(heartbeat);
-      await sandboxService.release(workspaceId);
-    };
+    releaseSandbox = sandbox.release;
     execCwd = sandbox.workspacePath;
   } else {
     const workspaceDir = workspace ?? path.resolve(process.cwd(), "workspace");

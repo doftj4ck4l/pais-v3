@@ -10,8 +10,9 @@ import {
   removeContainer,
   runDetached,
 } from "./docker";
+import { env as appEnv } from "../../config/env";
 
-const IMAGE = "node:22-bookworm-slim";
+const IMAGE = appEnv.sandboxImage;
 const WS = path.join(os.homedir(), "pixelspace-workspaces", "test-docker");
 let id = "";
 
@@ -56,11 +57,32 @@ test("exec honours a timeout", async () => {
   expect(r.kind).toBe("timeout");
 });
 
+test("a timed-out command cannot keep writing in the container", async () => {
+  await execInContainer(id, "sleep 1; touch after-timeout", { timeoutMs: 100 });
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  const marker = await execInContainer(id, "test -e after-timeout");
+  expect(marker.kind).toBe("ok");
+  if (marker.kind !== "ok") return;
+  expect(marker.result.exitCode).toBe(1);
+});
+
 test("exec honours an abort signal", async () => {
   const controller = new AbortController();
   const pending = execInContainer(id, "sleep 5", { signal: controller.signal });
   setTimeout(() => controller.abort(), 200);
   expect((await pending).kind).toBe("aborted");
+});
+
+test("an aborted command cannot keep writing in the container", async () => {
+  const controller = new AbortController();
+  const pending = execInContainer(id, "sleep 1; touch after-abort", { signal: controller.signal });
+  setTimeout(() => controller.abort(), 200);
+  expect((await pending).kind).toBe("aborted");
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  const marker = await execInContainer(id, "test -e after-abort");
+  expect(marker.kind).toBe("ok");
+  if (marker.kind !== "ok") return;
+  expect(marker.result.exitCode).toBe(1);
 });
 
 test("exec streams stdout chunks", async () => {

@@ -834,6 +834,30 @@ describe("Nextcloud write approval", () => {
     await runtime.dispose();
   });
 
+  it("asks before a non-read-only tool on a non-Nextcloud server too", async () => {
+    const approvals: any[] = [];
+    await seed(["files"]);
+    const runtime = await createMcpTools(
+      "ws1",
+      store,
+      (spec) => linkedConnection(spec, filesServer()),
+      {
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return true;
+        },
+      },
+    );
+
+    const tool: any = byName(runtime.tools, "files__read_file");
+    const result = await tool.execute("f-1", { path: "/x" });
+
+    expect(result.isError).toBeUndefined();
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ server: "files", tool: "read_file" });
+    await runtime.dispose();
+  });
+
   it("asks before a write and only calls Nextcloud after approval", async () => {
     const calls: string[] = [];
     const approvals: any[] = [];

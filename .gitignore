@@ -17,3 +17,6 @@ apps/api/src/data/
 # Agent sandbox workspaces
 workspaces/
 apps/api/workspace/
+
+# Host-only credentials — never commit
+secrets/

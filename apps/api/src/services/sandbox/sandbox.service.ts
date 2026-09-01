@@ -15,6 +15,76 @@ import {
 const containerNameFor = (workspaceId: string) =>
   `pixelspace-${workspaceId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
 
+/** Serialize lifecycle changes for one workspace without blocking other users. */
+const workspaceLocks = new Map<string, Promise<void>>();
+const activeLeases = new Map<string, number>();
+
+async function withWorkspaceLock<T>(workspaceId: string, work: () => Promise<T>): Promise<T> {
+  const previous = workspaceLocks.get(workspaceId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  workspaceLocks.set(workspaceId, tail);
+
+  await previous.catch(() => undefined);
+  try {
+    return await work();
+  } finally {
+    release();
+    if (workspaceLocks.get(workspaceId) === tail) workspaceLocks.delete(workspaceId);
+  }
+}
+
+async function acquireUnlocked(workspaceId: string): Promise<{ containerId: string; workspacePath: string }> {
+  if (!(await dockerAvailable())) {
+    throw new Error(
+      "Docker isn't reachable. Start Docker Desktop, or set SANDBOX_BACKEND=node to run tools on the API host.",
+    );
+  }
+
+  const existing = await sandboxRepository.get(workspaceId);
+  // Pixelbox rows stored the remote path `/workspace`. Never reuse that as
+  // a host bind mount: every Docker workspace has its own canonical root.
+  const workspacePath = path.join(env.sandboxRoot, workspaceId);
+  fs.mkdirSync(workspacePath, { recursive: true });
+
+  if (
+    existing?.containerId &&
+    existing.workspacePath === workspacePath &&
+    (await isRunning(existing.containerId))
+  ) {
+    await sandboxRepository.touch(workspaceId);
+    return { containerId: existing.containerId, workspacePath };
+  }
+
+  if (existing?.containerId) await removeContainer(existing.containerId);
+  await removeContainer(containerNameFor(workspaceId));
+
+  await ensureImage(env.sandboxImage);
+  const containerId = await runDetached({
+    image: env.sandboxImage,
+    workspacePath,
+    name: containerNameFor(workspaceId),
+    skillsPath: env.skillsRoot,
+  });
+
+  await sandboxRepository.upsert({
+    workspaceId,
+    containerId,
+    workspacePath,
+    image: env.sandboxImage,
+  });
+  logger.info("sandbox.started", {
+    workspace: workspaceId,
+    container: containerId.slice(0, 12),
+    path: workspacePath,
+  });
+
+  return { containerId, workspacePath };
+}
+
 /**
  * Owns the container lifecycle behind a workspace's directory.
  *
@@ -27,47 +97,31 @@ const containerNameFor = (workspaceId: string) =>
 export const sandboxService = {
   /** A running container for this workspace, creating or restarting one as needed. */
   async acquire(workspaceId: string): Promise<{ containerId: string; workspacePath: string }> {
-    if (!(await dockerAvailable())) {
-      throw new Error(
-        "Docker isn't reachable. Start Docker Desktop, or set SANDBOX_BACKEND=node to run tools on the API host.",
-      );
-    }
+    return withWorkspaceLock(workspaceId, () => acquireUnlocked(workspaceId));
+  },
 
-    const existing = await sandboxRepository.get(workspaceId);
-    const workspacePath = existing?.workspacePath ?? path.join(env.sandboxRoot, workspaceId);
-    fs.mkdirSync(workspacePath, { recursive: true });
-
-    if (existing?.containerId && (await isRunning(existing.containerId))) {
-      await sandboxRepository.touch(workspaceId);
-      return { containerId: existing.containerId, workspacePath };
-    }
-
-    // Either a first run or a stale row. Clear both the recorded container and
-    // any orphan left behind by a previous process before starting fresh.
-    if (existing?.containerId) await removeContainer(existing.containerId);
-    await removeContainer(containerNameFor(workspaceId));
-
-    await ensureImage(env.sandboxImage);
-    const containerId = await runDetached({
-      image: env.sandboxImage,
-      workspacePath,
-      name: containerNameFor(workspaceId),
-      skillsPath: env.skillsRoot,
+  /** Acquire a container and protect it from the idle reaper until released. */
+  async acquireLease(workspaceId: string): Promise<{
+    containerId: string;
+    workspacePath: string;
+    release: () => Promise<void>;
+  }> {
+    return withWorkspaceLock(workspaceId, async () => {
+      const sandbox = await acquireUnlocked(workspaceId);
+      activeLeases.set(workspaceId, (activeLeases.get(workspaceId) ?? 0) + 1);
+      let released = false;
+      return {
+        ...sandbox,
+        release: async () => {
+          if (released) return;
+          released = true;
+          const remaining = (activeLeases.get(workspaceId) ?? 1) - 1;
+          if (remaining > 0) activeLeases.set(workspaceId, remaining);
+          else activeLeases.delete(workspaceId);
+          await sandboxRepository.touch(workspaceId);
+        },
+      };
     });
-
-    await sandboxRepository.upsert({
-      workspaceId,
-      containerId,
-      workspacePath,
-      image: env.sandboxImage,
-    });
-    logger.info("sandbox.started", {
-      workspace: workspaceId,
-      container: containerId.slice(0, 12),
-      path: workspacePath,
-    });
-
-    return { containerId, workspacePath };
   },
 
   /** Mark the sandbox idle. The container stays warm until reaped. */
@@ -87,20 +141,30 @@ export const sandboxService = {
   /** Remove containers unused for longer than the window. Returns how many. */
   async reapIdle(olderThanMs: number = env.sandboxIdleMs): Promise<number> {
     const idle = await sandboxRepository.listIdle(olderThanMs);
+    const cutoff = Date.now() - olderThanMs;
+    let reaped = 0;
     for (const row of idle) {
-      if (row.containerId) await removeContainer(row.containerId);
-      await sandboxRepository.clearContainer(row.workspaceId);
-      logger.info("sandbox.reaped", { workspace: row.workspaceId });
+      await withWorkspaceLock(row.workspaceId, async () => {
+        if ((activeLeases.get(row.workspaceId) ?? 0) > 0) return;
+        const current = await sandboxRepository.get(row.workspaceId);
+        if (!current?.containerId || current.lastUsedAt >= cutoff) return;
+        await removeContainer(current.containerId);
+        await sandboxRepository.clearContainer(row.workspaceId);
+        logger.info("sandbox.reaped", { workspace: row.workspaceId });
+        reaped += 1;
+      });
     }
-    return idle.length;
+    return reaped;
   },
 
   /** Remove this user's container now. The workspace is left untouched. */
   async destroy(workspaceId: string): Promise<void> {
-    const row = await sandboxRepository.get(workspaceId);
-    if (row?.containerId) await removeContainer(row.containerId);
-    await removeContainer(containerNameFor(workspaceId));
-    if (row) await sandboxRepository.clearContainer(workspaceId);
+    await withWorkspaceLock(workspaceId, async () => {
+      const row = await sandboxRepository.get(workspaceId);
+      if (row?.containerId) await removeContainer(row.containerId);
+      await removeContainer(containerNameFor(workspaceId));
+      if (row) await sandboxRepository.clearContainer(workspaceId);
+    });
   },
 };
 

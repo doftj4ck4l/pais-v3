@@ -26,7 +26,12 @@ export const sandboxRepository = {
       .values({ ...input, createdAt: now, lastUsedAt: now })
       .onConflictDoUpdate({
         target: sandboxes.workspaceId,
-        set: { containerId: input.containerId, image: input.image, lastUsedAt: now },
+        set: {
+          containerId: input.containerId,
+          workspacePath: input.workspacePath,
+          image: input.image,
+          lastUsedAt: now,
+        },
       });
   },
 

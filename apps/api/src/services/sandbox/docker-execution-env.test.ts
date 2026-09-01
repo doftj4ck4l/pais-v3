@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { ensureImage, removeContainer, runDetached } from "./docker";
 import { DockerExecutionEnv } from "./docker-execution-env";
+import { env as appEnv } from "../../config/env";
 
-const IMAGE = "node:22-bookworm-slim";
+const IMAGE = appEnv.sandboxImage;
 const WS = path.join(os.homedir(), "pixelspace-workspaces", "test-env");
 let id = "";
 let env: DockerExecutionEnv;
@@ -65,12 +66,26 @@ test("filesystem writes are visible to the container", async () => {
   expect(r.value.stdout.trim()).toBe("written");
 });
 
+test("host uploads are visible inside the container", async () => {
+  fs.writeFileSync(path.join(WS, "host-upload.csv"), "name,value\nalpha,1\n");
+  const r = await env.readTextFile(path.join(WS, "host-upload.csv"));
+  expect(r.ok).toBe(true);
+  if (!r.ok) return;
+  expect(r.value).toBe("name,value\nalpha,1\n");
+});
+
 test("container writes are visible to the filesystem methods", async () => {
   await env.exec("echo from-container > made-in-container.txt");
   const r = await env.readTextFile(path.join(WS, "made-in-container.txt"));
   expect(r.ok).toBe(true);
   if (!r.ok) return;
   expect(r.value.trim()).toBe("from-container");
+});
+
+test("container outputs are visible to the API host", async () => {
+  const r = await env.exec("printf report-ready > generated-report.txt");
+  expect(r.ok).toBe(true);
+  expect(fs.readFileSync(path.join(WS, "generated-report.txt"), "utf8")).toBe("report-ready");
 });
 
 test("listDir sees files made on both sides", async () => {
@@ -84,4 +99,23 @@ test("listDir sees files made on both sides", async () => {
 
 test("cwd is the workspace path", () => {
   expect(env.cwd).toBe(WS);
+});
+
+test("sandbox symlinks cannot make host filesystem methods escape", async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pixelspace-host-secret-"));
+  const secret = path.join(outside, "secret.txt");
+  fs.writeFileSync(secret, "host-secret");
+  fs.symlinkSync(secret, path.join(WS, "host-secret-link"));
+  fs.symlinkSync(outside, path.join(WS, "host-dir-link"));
+
+  try {
+    const read = await env.readTextFile(path.join(WS, "host-secret-link"));
+    expect(read.ok).toBe(false);
+
+    const write = await env.writeFile(path.join(WS, "host-dir-link", "created.txt"), "escaped");
+    expect(write.ok).toBe(false);
+    expect(fs.existsSync(path.join(outside, "created.txt"))).toBe(false);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 });
