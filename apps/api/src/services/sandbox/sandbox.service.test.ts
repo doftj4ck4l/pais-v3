@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { ensureSchema } from "../../db/client";
 import { sandboxRepository } from "../../repositories/sandbox.repository";
 import type { CreateOptions, ExecRequest, ExecResult, SandboxApi, SandboxInfo, SandboxState } from "./pixelbox-client";
@@ -110,12 +110,22 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 let fake: ReturnType<typeof fakeApi>;
-const WS = () => `sbx_${Math.random().toString(36).slice(2)}`;
+const workspaces = new Set<string>();
+const WS = () => {
+  const workspaceId = `sbx_${Math.random().toString(36).slice(2)}`;
+  workspaces.add(workspaceId);
+  return workspaceId;
+};
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 beforeAll(() => ensureSchema());
 beforeEach(() => {
   fake = fakeApi();
   setSandboxApiForTests(fake.api);
+});
+afterEach(async () => {
+  for (const workspaceId of workspaces) await sandboxService.destroy(workspaceId);
+  workspaces.clear();
 });
 
 test("acquire creates a remote sandbox and records its id", async () => {
@@ -254,6 +264,7 @@ test("acquire recreates when the recorded sandbox is gone", async () => {
 test("reapIdle deletes the remote sandbox and clears the row", async () => {
   const ws = WS();
   const sandbox = await sandboxService.acquire(ws);
+  await tick();
   const reaped = await sandboxService.reapIdle(0);
   expect(reaped).toBeGreaterThan(0);
   expect(fake.live.has(sandbox.sandboxId)).toBe(false);
