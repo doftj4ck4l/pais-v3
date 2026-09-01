@@ -81,8 +81,9 @@ jobs:
 
       # .env and apps/api/.env hold this host's secrets and are never in git.
       # `secrets` holds mounted Pixelbox credentials; apps/api/data is the live
-      # SQLite database. All four are excluded from --delete as well as from
-      # transfer, so a deploy cannot destroy host credentials or live data.
+      # SQLite database; backups holds operator-created recovery snapshots. All
+      # five are excluded from --delete as well as from transfer, so a deploy
+      # cannot destroy host credentials, live data, or recovery points.
       - name: Sync tree to deploy host
         run: |
           rsync -az --delete \
@@ -92,6 +93,7 @@ jobs:
             --exclude 'apps/api/.env' \
             --exclude 'secrets' \
             --exclude 'apps/api/data' \
+            --exclude 'backups' \
             ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
 
       # A fresh clone has no apps/api/data. Without it Docker creates the bind
