@@ -19,6 +19,22 @@ beforeAll(async () => {
   ensureSchema();
   ({ createApp } = await import("./app"));
 });
+
+async function withChatOnlyModel<T>(run: (modelId: string) => T | PromiseLike<T>): Promise<T> {
+  const previousKey = process.env.CUSTOM_API_KEY;
+  const previousModel = process.env.CUSTOM_MODEL;
+  process.env.CUSTOM_API_KEY = "test-key";
+  delete process.env.CUSTOM_MODEL;
+  try {
+    return await run("local-qwen3.8-27b-uncensored");
+  } finally {
+    if (previousKey === undefined) delete process.env.CUSTOM_API_KEY;
+    else process.env.CUSTOM_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.CUSTOM_MODEL;
+    else process.env.CUSTOM_MODEL = previousModel;
+  }
+}
+
 describe("api auth wiring", () => {
   it("refuses a tenant-scoped route with no identity", async () => {
     const res = await createApp().request("/api/workspaces");
@@ -223,54 +239,54 @@ describe("GET /api/me", () => {
 
 describe("POST /api/chat", () => {
   it("rejects image attachments for a chat-only model", async () => {
-    const res = await createApp().request("/api/chat", {
+    const res = await withChatOnlyModel((modelId) => createApp().request("/api/chat", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-authentik-uid": "alice-uid",
       },
       body: JSON.stringify({
-        modelId: "local-qwen3.8-27b-uncensored",
+        modelId,
         messages: [{ role: "user", content: "Describe this" }],
         imageIds: ["image-1"],
       }),
-    });
+    }));
 
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("supports text chat only");
   });
 
   it("rejects data-file attachments for a chat-only model", async () => {
-    const res = await createApp().request("/api/chat", {
+    const res = await withChatOnlyModel((modelId) => createApp().request("/api/chat", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-authentik-uid": "alice-uid",
       },
       body: JSON.stringify({
-        modelId: "local-qwen3.8-27b-uncensored",
+        modelId,
         messages: [{ role: "user", content: "Analyse this" }],
         filePaths: ["uploads/one/sales.csv"],
       }),
-    });
+    }));
 
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("Remove file attachments and try again");
   });
 
   it("rejects prompt templates for a chat-only model", async () => {
-    const res = await createApp().request("/api/chat", {
+    const res = await withChatOnlyModel((modelId) => createApp().request("/api/chat", {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-authentik-uid": "alice-uid",
       },
       body: JSON.stringify({
-        modelId: "local-qwen3.8-27b-uncensored",
+        modelId,
         messages: [{ role: "user", content: "Run a template" }],
         template: { name: "research" },
       }),
-    });
+    }));
 
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("accepts plain text prompts only");
@@ -307,14 +323,14 @@ describe("POST /api/chat", () => {
     });
 
     try {
-      const res = await createApp().request("/api/chat", {
+      const res = await withChatOnlyModel((modelId) => createApp().request("/api/chat", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "x-authentik-uid": "chat-only-user",
         },
         body: JSON.stringify({
-          modelId: "local-qwen3.8-27b-uncensored",
+          modelId,
           modelConfig: {
             baseUrl: `http://127.0.0.1:${provider.port}/v1`,
             model: "chat-only-test",
@@ -344,7 +360,7 @@ describe("POST /api/chat", () => {
           ],
           reasoningEffort: "low",
         }),
-      });
+      }));
 
       const stream = await res.text();
       await Bun.sleep(50);

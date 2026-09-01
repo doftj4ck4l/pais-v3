@@ -357,7 +357,7 @@ Which gateway models can actually see, measured by handing each the same PNG:
 
 | model | image input |
 | --- | --- |
-| `qwen3.5-397b-instruct`, `qwen3.6-35b`, `vrs_smart`, `gemini-3.1-flash-image` | yes |
+| `qwen3.8-27b`, `gemini-3.1-flash-image` | yes |
 | `ds4-flash`, `nemotron-3.5-lightning` | `... is not a multimodal model` (HTTP 400) |
 
 Two things that are load-bearing:

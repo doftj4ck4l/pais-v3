@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_VISION_MODEL, env } from "../../config/env";
 import { describeImage } from "./vision.service";
 
 const bytes = new Uint8Array([137, 80, 78, 71]);
@@ -35,10 +36,24 @@ describe("describeImage", () => {
     expect(body.max_tokens).toBeUndefined();
   });
 
+  it("defaults image reads to the active Qwen 27B deployment", async () => {
+    let body: any;
+    await describeImage(base, {
+      ...creds,
+      fetchImpl: (async (_url: string, init: any) => {
+        body = JSON.parse(init.body);
+        return reply("ok");
+      }) as any,
+    });
+
+    expect(DEFAULT_VISION_MODEL).toBe("qwen3.8-27b");
+    expect(body.model).toBe(env.visionModel);
+  });
+
   it("uses the requested model over the default", async () => {
     let body: any;
     await describeImage(
-      { ...base, model: "vrs_smart" },
+      { ...base, model: "alternate-vision-model" },
       {
         ...creds,
         fetchImpl: (async (_u: string, init: any) => {
@@ -47,7 +62,7 @@ describe("describeImage", () => {
         }) as any,
       },
     );
-    expect(body.model).toBe("vrs_smart");
+    expect(body.model).toBe("alternate-vision-model");
   });
 
   it("surfaces the gateway's own refusal, which names the fix", async () => {

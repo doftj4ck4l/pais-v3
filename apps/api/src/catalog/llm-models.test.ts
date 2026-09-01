@@ -1,29 +1,74 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getModel, isLikelyConfigured } from './llm-models'
+import { getModel, MODELS } from './llm-models'
 import { getMeta, resolveRun } from '../services/agent/model.service'
 import { __setServedModelsForTest } from '../services/agent/gateway-models'
 
-describe('local Qwen 3.8 uncensored model', () => {
-  test('uses the measured endpoint capabilities in the model picker', () => {
-    const model = getModel('local-qwen3.8-27b-uncensored')
-
-    expect(model).toBeDefined()
-    expect(model?.model).toBe('qwen3.8-27b-uncensored')
-    expect(model?.baseUrl).toBe('http://10.0.151.4:9504/v1')
-    expect(model?.contextWindow).toBe(8_192)
-    expect(model?.mode).toBe('chat-only')
-    expect(model?.thinking).toMatchObject({
-      levels: ['low', 'medium', 'xhigh'],
-      default: 'xhigh',
-    })
-    expect(model?.thinking?.levels).not.toContain('high')
-    expect(model && isLikelyConfigured(model)).toBe(true)
+describe('shared gateway catalog', () => {
+  test('lists only deployments verified healthy on the gateway', () => {
+    expect(MODELS.map((model) => model.model)).toEqual([
+      'qwen3.8-27b',
+      'ds4-flash',
+      'nemotron-3.5-lightning',
+    ])
   })
 
-  test('advertises its chat-only mode to clients', () => {
-    const model = getMeta().models.find((entry) => entry.id === 'local-qwen3.8-27b-uncensored')
+  test('routes persisted retired ids to Qwen without listing them', () => {
+    const previousKey = process.env.CUSTOM_API_KEY
+    const previousModel = process.env.CUSTOM_MODEL
+    const retiredIds = [
+      'local-qwen3.8-27b-uncensored',
+      'gw-qwen3.5-397b-instruct',
+      'gw-qwen3.6-35b-instruct',
+      'gw-qwen3.6-35b',
+      'gw-ds4-flash-1m',
+      'gw-muse-glimmer-30b',
+      'gw-vrs_smart',
+    ]
 
-    expect(model?.mode).toBe('chat-only')
+    process.env.CUSTOM_API_KEY = 'test-key'
+    delete process.env.CUSTOM_MODEL
+    try {
+      for (const retiredId of retiredIds) {
+        expect(MODELS.map((model) => model.id)).not.toContain(retiredId)
+        expect(getModel(retiredId)?.model).toBe('qwen3.8-27b')
+        expect(resolveRun({ modelId: retiredId }).ok).toBe(true)
+      }
+      expect(getModel('local-qwen3.8-27b-uncensored')).toMatchObject({
+        id: 'local-qwen3.8-27b-uncensored',
+        mode: 'chat-only',
+      })
+    } finally {
+      if (previousKey === undefined) delete process.env.CUSTOM_API_KEY
+      else process.env.CUSTOM_API_KEY = previousKey
+      if (previousModel === undefined) delete process.env.CUSTOM_MODEL
+      else process.env.CUSTOM_MODEL = previousModel
+    }
+  })
+
+  test('routes retired ids to the configured on-prem model', () => {
+    const previousKey = process.env.CUSTOM_API_KEY
+    const previousModel = process.env.CUSTOM_MODEL
+    process.env.CUSTOM_API_KEY = 'local-no-auth'
+    process.env.CUSTOM_MODEL = 'nemotron-3.5-lightning'
+
+    try {
+      expect(getModel('gw-qwen3.6-35b')).toMatchObject({
+        id: 'gw-nemotron-3.5-lightning',
+        model: 'nemotron-3.5-lightning',
+      })
+      expect(getModel('local-qwen3.8-27b-uncensored')).toMatchObject({
+        id: 'local-qwen3.8-27b-uncensored',
+        model: 'nemotron-3.5-lightning',
+        mode: 'chat-only',
+      })
+      expect(resolveRun({ modelId: 'gw-qwen3.6-35b' }).ok).toBe(true)
+      expect(resolveRun({ modelId: 'local-qwen3.8-27b-uncensored' }).ok).toBe(true)
+    } finally {
+      if (previousKey === undefined) delete process.env.CUSTOM_API_KEY
+      else process.env.CUSTOM_API_KEY = previousKey
+      if (previousModel === undefined) delete process.env.CUSTOM_MODEL
+      else process.env.CUSTOM_MODEL = previousModel
+    }
   })
 })
 

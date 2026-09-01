@@ -111,7 +111,7 @@ export async function runPiAgent(opts: {
   // --- pi-ai: register the gateway as a custom OpenAI-compatible provider ---
   const reasoning = model.provider === "custom" && !model.model.toLowerCase().includes("-instruct");
   const piModel: TSchema extends never ? never : any = {
-    id: model.model, // bare model id, e.g. "qwen3.5-397b-instruct"
+    id: model.model, // bare model id, e.g. "qwen3.8-27b"
     name: model.label,
     api: "openai-completions",
     provider: "gw",
