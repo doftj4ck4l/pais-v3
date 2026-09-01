@@ -91,7 +91,6 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude 'apps/api/.env' \
-            --exclude 'secrets' \
             --exclude 'apps/api/data' \
             --exclude 'backups' \
             ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
@@ -110,8 +109,7 @@ jobs:
       # "deployed" silently means "restarted the old code".
       - name: Build and restart
         run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && \
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker compose up -d --build"
 
       # /api/meta proves three things at once: Caddy is up, the proxy reaches
       # the API, and the API finished ensureSchema().
