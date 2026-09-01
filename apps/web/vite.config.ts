@@ -20,11 +20,9 @@ export default defineConfig({
     },
   },
   server: {
-    port: Number(process.env.WEB_PORT ?? 5173),
+    port: 5173,
     proxy: {
-      // Override to point the dev UI at a different API (e.g. a branch running
-      // on another port) without editing this file.
-      '/api': process.env.API_PROXY_TARGET ?? 'http://localhost:4000',
+      '/api': 'http://localhost:4000',
     },
   },
 })

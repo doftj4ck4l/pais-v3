@@ -1,14 +1,8 @@
 import type { Context } from "hono";
 import path from "node:path";
-import { env } from "../config/env";
 import { resolve } from "../repositories/workspace.repository";
 import { fileOrigins } from "../services/media/file-origins";
-import {
-  absoluteWorkspacePath,
-  listWorkspaceFiles,
-  normalizeWorkspacePath,
-  readInWorkspace,
-} from "../services/media/workspace-io";
+import { listWorkspaceFiles, readInWorkspace } from "../services/media/workspace-io";
 import { MAX_DATA_FILE_BYTES, storeWorkspaceUpload } from "../services/media/workspace-upload";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";
@@ -87,33 +81,17 @@ export async function show(c: Context) {
   if (decoded === null) return c.json({ error: "File not found" }, 404);
 
   const workspaceId = await workspaceIdOf(c);
+  const found = await resolve(workspaceId, decoded);
+  // Rejected and missing are one response: distinguishing them would let a
+  // caller map the host's filesystem.
+  if (!found.ok) return c.json({ error: "File not found" }, 404);
 
-  // Where a confined path resolves, and what to name the download, differ by
-  // backend: the node backend resolves against the host filesystem (with symlink
-  // checks); Pixelbox has no host copy, so the path is confined textually and
-  // read through the sandbox. Rejected and missing are one response either way,
-  // so the endpoint cannot be used to map a filesystem.
-  let absPath: string;
-  let name: string;
-  if (env.sandboxBackend === "pixelbox") {
-    const sandboxPath = absoluteWorkspacePath(workspaceId, decoded);
-    const normalized = normalizeWorkspacePath(decoded);
-    if (!sandboxPath || !normalized) return c.json({ error: "File not found" }, 404);
-    absPath = sandboxPath;
-    name = path.posix.basename(normalized);
-  } else {
-    const found = await resolve(workspaceId, decoded);
-    if (!found.ok) return c.json({ error: "File not found" }, 404);
-    absPath = found.absolutePath;
-    name = path.basename(found.absolutePath);
-  }
-
-  const body = await readInWorkspace(workspaceId, absPath);
+  const body = await readInWorkspace(workspaceId, found.absolutePath);
   if (!body) return c.json({ error: "File not found" }, 404);
 
   return c.body(body as unknown as ArrayBuffer, 200, {
     "Content-Type": "application/octet-stream",
-    "Content-Disposition": `attachment; filename="${quoted(name)}"`,
+    "Content-Disposition": `attachment; filename="${quoted(path.basename(found.absolutePath))}"`,
     "Content-Length": String(body.byteLength),
     "X-Content-Type-Options": "nosniff",
   });

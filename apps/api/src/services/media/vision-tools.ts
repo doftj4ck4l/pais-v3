@@ -1,4 +1,4 @@
-import { readInWorkspace } from "./workspace-io";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { env } from "../../config/env";
 import { describeImage } from "./vision.service";
@@ -146,9 +146,15 @@ export function createVisionTools(
                 `(supported: ${Object.keys(EXTENSIONS).join(", ")})`,
             );
           }
-          const read = await readInWorkspace(workspaceId, resolved);
-          if (!read) return text(`error: ${source} does not exist in your workspace`);
-          bytes = read;
+          try {
+            bytes = await fs.readFile(resolved);
+          } catch (e: any) {
+            return text(
+              e?.code === "ENOENT"
+                ? `error: ${source} does not exist in your workspace`
+                : `error: could not read ${source}: ${e?.message ?? String(e)}`,
+            );
+          }
         }
 
         const result = await describeImage({

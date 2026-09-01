@@ -328,36 +328,6 @@ function sweepSpills(dir: string): void {
 }
 
 /**
- * Spill oversized results into a *remote* sandbox over its file API.
- *
- * The docker backend could write the spill straight to the workspace because it
- * was a host path bind-mounted at an identical path inside the container. The
- * Pixelbox backend has no such shared path: the only way the `read`/`bash` tools
- * inside the sandbox can later resolve the file is if it was written *through the
- * sandbox*. `write` does exactly that (it wraps the execution env's `writeFile`).
- *
- * The returned path is deterministic, so it is handed back synchronously to keep
- * the `Spill` contract while the write proceeds in the background — the model
- * reads it a turn later, by which time it has landed. Failure is swallowed:
- * degrading to plain truncation is the same best-effort stance as the local
- * spill, and must never fail a tool call that already has its answer.
- */
-export function createRemoteSpill(
-  write: (path: string, text: string) => Promise<unknown>,
-  dir: string,
-): Spill {
-  let n = 0;
-  return (text, toolName) => {
-    const safe = toolName.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 60);
-    const file = `${dir}/tool-${Date.now().toString(36)}-${n++}-${safe}.txt`;
-    void Promise.resolve()
-      .then(() => write(file, text))
-      .catch((err) => logger.warn("mcp.remote_spill_failed", { file, error: (err as Error).message }));
-    return file;
-  };
-}
-
-/**
  * Room held back from the per-call allowance for the notice and the pointer,
  * so that what `take` returns actually fits the budget it was given rather than
  * overshooting it by the length of its own explanation.
@@ -508,14 +478,6 @@ export type McpToolsOptions = {
    * Docker unreachable — in which case results are truncated as before.
    */
   workspacePath?: string;
-  /**
-   * Where to write oversized results. Supplied by the caller when the workspace
-   * is not a host path the API can write to directly — the remote Pixelbox
-   * backend, where a spill has to go through the sandbox's file API so `read`
-   * and `bash` inside the sandbox can resolve the path it is handed. When absent,
-   * spilling falls back to {@link workspacePath} on the local filesystem.
-   */
-  spill?: Spill;
   /** Human gate for Nextcloud tools that are not provably read-only. */
   requestApproval?: (request: McpApprovalRequest, signal?: AbortSignal) => Promise<boolean>;
 };
@@ -571,7 +533,6 @@ export async function createMcpTools(
     usage = (id: string) => runRepository.toolUsage(id),
     onConnect,
     workspacePath,
-    spill,
     requestApproval,
   } = options;
 
@@ -729,7 +690,7 @@ export async function createMcpTools(
   // existed.
   const budget = createBudget(
     RUN_CHAR_BUDGET,
-    spill ?? (workspacePath ? createSpill(path.join(workspacePath, SPILL_DIR)) : undefined),
+    workspacePath ? createSpill(path.join(workspacePath, SPILL_DIR)) : undefined,
   );
 
   // --- one Pi tool per MCP tool, namespaced by server ---
@@ -822,32 +783,25 @@ export async function createMcpTools(
       ),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const args = (params ?? {}) as Record<string, unknown>;
-        // Gate every MCP tool that is not provably read-only, on any server —
-        // not just Nextcloud. `isReadOnlyMcpTool` returns false for anything
-        // without a trusted read-only annotation, so a write (or an unknown
-        // tool) pauses for the user; only a proven read runs unattended. This
-        // is the "ask first before a write action" rule. Nextcloud additionally
-        // gets a live annotation re-check because its advertised hints lie.
         const safetyEntry = entry.isNextcloud ? await liveSafetyEntry(entry) : entry;
-        if (!isReadOnlyMcpTool(safetyEntry.remoteName, safetyEntry.annotationsJson)) {
-          const label = `"${safetyEntry.title ?? safetyEntry.remoteName}" (${entry.serverName})`;
-          if (requestApproval) {
-            // The gate is universal: any tool on any server that is not provably
-            // read-only pauses for the user. A normal run always has an approver,
-            // so in practice every write asks first — the "ask before a write
-            // action" rule the user set.
-            const approved = await requestApproval(approvalRequest(safetyEntry, args), signal);
-            if (!approved) {
-              return toolResult(budget, `The action ${label} was denied by the user and was not run.`, true, entry.name);
-            }
-          } else if (safetyEntry.isNextcloud) {
-            // No approver means a non-interactive run. A general tool proceeds
-            // (there is no one to ask), but Nextcloud stays hard fail-closed: its
-            // writes are the ones this gate was first built to never let slip.
+        if (
+          safetyEntry.isNextcloud &&
+          !isReadOnlyMcpTool(safetyEntry.remoteName, safetyEntry.annotationsJson)
+        ) {
+          if (!requestApproval) {
             return toolResult(
               budget,
-              `Nextcloud action ${label} requires user approval, but this run cannot ask the user. ` +
-                `The action was not run.`,
+              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" requires user approval, ` +
+                `but this run cannot ask the user. The action was not run.`,
+              true,
+              entry.name,
+            );
+          }
+          const approved = await requestApproval(approvalRequest(safetyEntry, args), signal);
+          if (!approved) {
+            return toolResult(
+              budget,
+              `Nextcloud action "${safetyEntry.title ?? safetyEntry.remoteName}" was denied by the user and was not run.`,
               true,
               entry.name,
             );

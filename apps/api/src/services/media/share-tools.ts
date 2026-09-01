@@ -96,10 +96,9 @@ export function createShareTools(
         if (!source) return text("error: path required");
 
         // Same boundary as `read_image`, and load-bearing for the same reason:
-        // under the node backend this runs in the API process where SANDBOX_ROOT
-        // is mounted at an identical path, so an unchecked `../..` would publish
-        // the API's own secrets at a URL. On Pixelbox `workspaceDir` is
-        // `/workspace`, so this resolves to the in-sandbox path the reads use.
+        // this runs in the API process, where SANDBOX_ROOT is mounted at an
+        // identical path, so an unchecked `../..` would publish the API's own
+        // secrets at a URL.
         const resolved = resolveInWorkspace(workspaceDir, source);
         if (!resolved) return text(`error: ${source} is outside your workspace`);
 
