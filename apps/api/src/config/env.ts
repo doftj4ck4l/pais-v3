@@ -52,6 +52,8 @@ export function parseUserPromptTimeoutMs(raw: string | undefined): number {
 
 export type AuthMode = "proxy" | "dev" | "local";
 
+export const DEFAULT_VISION_MODEL = "qwen3.8-27b";
+
 export function parseAuthMode(raw: string | undefined): AuthMode {
   const value = raw?.trim() || "proxy";
   if (value !== "proxy" && value !== "dev" && value !== "local") {
@@ -221,14 +223,14 @@ export const env = {
    * own — but it is a *different* model from the one running the conversation,
    * which is the entire point. `ds4-flash` answers "DeepSeek-V4-Flash-0731 is
    * not a multimodal model" to an image, and `nemotron-3.5-lightning` the same;
-   * `qwen3.6-35b`, `qwen3.5-397b-instruct`, `vrs_smart` and
-   * `gemini-3.1-flash-image` all read one. Measured, not assumed.
+   * `qwen3.8-27b` and `gemini-3.1-flash-image` both read one. Measured, not
+   * assumed.
    *
-   * The default is the cheap end deliberately: this tool is reachable from any
-   * prompt, and the 397B describes a logo's typography unasked when the
-   * question was "what does it say".
+   * The default is the healthy 27B deployment deliberately: this tool is
+   * reachable from any prompt, so it should reuse a model already kept warm by
+   * the shared gateway rather than depend on a separate vision deployment.
    */
-  visionModel: process.env.VISION_MODEL ?? "qwen3.6-35b",
+  visionModel: process.env.VISION_MODEL ?? DEFAULT_VISION_MODEL,
   /**
    * Largest image sent to the vision model, before base64 expansion.
    *

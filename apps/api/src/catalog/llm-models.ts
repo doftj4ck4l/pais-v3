@@ -64,13 +64,6 @@ export function effectiveApiKey(model: ModelConfig): string | undefined {
 }
 
 const CUSTOM_BASE = process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1";
-const QWEN38_UNCENSORED_BASE =
-  process.env.QWEN38_UNCENSORED_BASE_URL?.trim() || "http://10.0.151.4:9504/v1";
-// llama.cpp accepts an Authorization header but this LAN deployment does not
-// require one. pi's OpenAI adapter still expects a non-empty key, so use an
-// inert value unless the endpoint is secured later.
-const QWEN38_UNCENSORED_KEY =
-  process.env.QWEN38_UNCENSORED_API_KEY?.trim() || "local-no-auth";
 
 /**
  * Which logo a gateway model wears, by id prefix.
@@ -132,18 +125,10 @@ const qwenThinking = (levels: string[], defaultLevel: string): ThinkingConfig =>
   },
 });
 
-// Only qwen3.5-397b-instruct is measured: it accepted a 200,012-token prompt,
-// so 262144 is the nearest plausible window and 131072 would have understated
-// it by a third. The rest are the default until someone measures them, except
-// ds4-flash-1m, whose window is the whole point of it being a separate model.
-//
-// This list is checked against `GET /v1/models` on the gateway rather than
-// grown by hand. Three entries were dropped once it was: `qwen3.5-397b`,
-// `qwen3.6-27b` and `qwen3.6-27b-instruct` all answer
-// `403 litellm.PermissionDeniedError: Model is blocked` on our virtual key, and
-// a blocked model reads in the console as a model that returned nothing —
-// there is no error the run can show. Offering one is worse than not listing
-// it. Re-add them if the key's allowlist changes.
+// The shared gateway can advertise a model after all of its deployments have
+// gone unhealthy. Keep this list to models verified with a real completion,
+// not merely names returned by `GET /v1/models`; otherwise the picker offers a
+// run that can only return "no healthy deployments".
 export const MODELS: ModelConfig[] = [
   // Thinking-only: no instruct variant is listed, deliberately — this model is
   // always in thinking mode and the user only adjusts how hard it thinks.
@@ -151,37 +136,40 @@ export const MODELS: ModelConfig[] = [
     ...gw("qwen3.8-27b", "Qwen · 27B (thinking)"),
     thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
   },
-  {
-    id: "local-qwen3.8-27b-uncensored",
-    label: "qwen3.8-27b-uncensored",
-    provider: "custom",
-    model: "qwen3.8-27b-uncensored",
-    mode: "chat-only",
-    thinking: qwenThinking(["low", "medium", "xhigh"], "xhigh"),
-    apiKeyEnv: "QWEN38_UNCENSORED_API_KEY",
-    apiKey: QWEN38_UNCENSORED_KEY,
-    baseUrl: QWEN38_UNCENSORED_BASE,
-    hint: "Qwen · 27B uncensored · local GPU",
-    brand: "qwen",
-    contextWindow: 8_192,
-  },
-  gw("qwen3.5-397b-instruct", "Qwen · 397B chat (instruct)", 262_144),
-  gw("qwen3.6-35b-instruct", "Qwen · 35B chat (instruct)"),
-  gw("qwen3.6-35b", "Qwen · 35B reasoning"),
   gw("ds4-flash", "ds4-flash (reasoning)"),
-  gw("ds4-flash-1m", "ds4-flash · 1M context", 1_048_576),
   gw("nemotron-3.5-lightning", "NVIDIA · Nemotron 3.5 Lightning"),
-  gw("muse-glimmer-30b", "Muse · Glimmer 30B"),
-  gw("vrs_smart", "VRS Smart · reads images"),
 ];
+
+// Existing conversations and managed agents persist catalog ids. Keep retired
+// ids resolvable through the active shared-gateway model (or the configured
+// on-prem model) without advertising them in the picker again.
+const LEGACY_CHAT_ONLY_MODEL_ID = "local-qwen3.8-27b-uncensored";
+const RETIRED_MODEL_IDS = new Set([
+  LEGACY_CHAT_ONLY_MODEL_ID,
+  "gw-qwen3.5-397b-instruct",
+  "gw-qwen3.6-35b-instruct",
+  "gw-qwen3.6-35b",
+  "gw-ds4-flash-1m",
+  "gw-muse-glimmer-30b",
+  "gw-vrs_smart",
+]);
 
 export function getModel(id: string): ModelConfig | undefined {
   const known = MODELS.find((m) => m.id === id);
   if (known) return known;
+  const configured = process.env.CUSTOM_MODEL?.trim();
+  if (RETIRED_MODEL_IDS.has(id)) {
+    const replacement = configured
+      ? MODELS.find((m) => m.model === configured) ?? syntheticGatewayModel(configured)
+      : MODELS.find((m) => m.id === "gw-qwen3.8-27b");
+    if (!replacement) return undefined;
+    return id === LEGACY_CHAT_ONLY_MODEL_ID
+      ? { ...replacement, id, mode: "chat-only" }
+      : replacement;
+  }
   // The single model an on-prem gateway serves may not be in the static list;
   // resolve it so the picker's choice can actually run. Bounded to the
   // configured model, never an arbitrary `gw-*` id.
-  const configured = process.env.CUSTOM_MODEL?.trim();
   if (configured && id === `gw-${configured}`) return syntheticGatewayModel(configured);
   return undefined;
 }

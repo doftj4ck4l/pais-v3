@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getModel } from "../../catalog/llm-models";
+import { getModel, type ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
 import {
   CHAT_ONLY_SYSTEM_PROMPT,
@@ -7,8 +7,8 @@ import {
   systemPromptForModel,
 } from "./model-runtime-policy";
 
-const chatOnly = getModel("local-qwen3.8-27b-uncensored")!;
 const agent = getModel("gw-qwen3.8-27b")!;
+const chatOnly: ModelConfig = { ...agent, id: "chat-only-test", mode: "chat-only" };
 
 describe("model runtime policy", () => {
   test("uses the minimal chat prompt instead of the agent harness prompt", () => {
