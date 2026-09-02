@@ -71,6 +71,16 @@ function parseConfig(
 
   const engine = String(body.engine ?? existing?.engine ?? "postgresql").trim();
   const adapter = databaseAdapterRegistry.get(engine);
+  if (!adapter) {
+    return {
+      ok: false,
+      error: {
+        code: "unsupported_engine",
+        message: `Unsupported database engine: ${engine}`,
+        field: "engine",
+      },
+    };
+  }
   const host = String(body.host ?? existing?.host ?? "").trim();
   const database = String(body.database ?? existing?.database ?? "").trim();
   const username = String(body.username ?? existing?.username ?? "").trim();
@@ -93,7 +103,7 @@ function parseConfig(
       : String(body.ssl.serverName).trim();
 
   const config: DatabaseConnectionConfig = {
-    engine,
+    engine: adapter.engine,
     host,
     port,
     database,
@@ -108,6 +118,8 @@ function parseConfig(
 const INVALID_ATTEMPT_CODES = new Set<DatabaseErrorCode>([
   "invalid_configuration",
   "unsupported_engine",
+  "unsupported_version",
+  "unsupported_capability",
   "target_not_allowed",
   "dns_resolution_failed",
 ]);

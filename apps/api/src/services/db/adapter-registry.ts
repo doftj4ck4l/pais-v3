@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, DatabaseEngine } from "./database-adapter";
+import type { DatabaseAdapter } from "./database-adapter";
 
 /** A small registry keeps engine selection out of controllers and agent tools. */
 export class DatabaseAdapterRegistry {
@@ -12,7 +12,7 @@ export class DatabaseAdapterRegistry {
     return this;
   }
 
-  get(engine: DatabaseEngine): DatabaseAdapter | null {
+  get(engine: string): DatabaseAdapter | null {
     return this.adapters.get(engine) ?? null;
   }
 

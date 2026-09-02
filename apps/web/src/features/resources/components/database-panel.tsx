@@ -34,9 +34,17 @@ import {
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { DbConnectionRow } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
+import {
+  connectionInput,
+  emptyFormFor,
+  engineLabel,
+  formatServerVersion,
+  formFromConnection,
+  type DatabaseFormState as FormState,
+} from './database-form'
 
 /**
- * Connect a read-only Postgres database and see what the agent can query.
+ * Connect a read-only database and see what the agent can query.
  *
  * A connection that failed to introspect is listed alongside the ones that
  * worked, carrying its reason — the same stance the document panel takes, and
@@ -47,7 +55,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
   const [connections, setConnections] = useState<DbConnectionRow[]>([])
   const [busy, setBusy] = useState(false)
   const [formMode, setFormMode] = useState<FormMode>(null)
-  const [form, setForm] = useState(emptyForm)
+  const [form, setForm] = useState(() => emptyFormFor('postgresql'))
   const [error, setError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
   useEffect(() => onCountChange?.(connections.length), [connections.length, onCountChange])
@@ -98,7 +106,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
       setConnections((current) => editing
         ? current.map((connection) => connection.id === out.connection!.id ? out.connection! : connection)
         : [out.connection!, ...current])
-      setForm(emptyForm)
+      setForm(emptyFormFor('postgresql'))
       setFormMode(null)
       setTestResult(null)
     } catch {
@@ -128,7 +136,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
         : await testConnection(scope, connectionInput(form, editing))
       if (result.ok) {
         setTestResult(
-          `Connected in ${result.value.latencyMs.toLocaleString()}ms${result.value.serverVersion ? ` · PostgreSQL ${result.value.serverVersion}` : ''}`,
+          `Connected in ${result.value.latencyMs.toLocaleString()}ms${formatServerVersion(result.value, form.engine)}`,
         )
       } else {
         setError(result.error.message)
@@ -144,12 +152,12 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
     setFormMode(null)
     setError(null)
     setTestResult(null)
-    setForm(emptyForm)
+    setForm(emptyFormFor('postgresql'))
     setSteps([])
   }, [])
 
   const openPicker = useCallback(() => {
-    setForm(emptyForm)
+    setForm(emptyFormFor('postgresql'))
     setFormMode({ kind: 'pick' })
     setError(null)
     setTestResult(null)
@@ -201,8 +209,8 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
         <DialogContent className={cn(formMode?.kind === 'pick' ? 'sm:max-w-4xl' : 'sm:max-w-lg')}>
           {formMode?.kind === 'pick' ? (
             <DatabaseConnectorPicker
-              onChoose={() => {
-                setForm(emptyForm)
+              onChoose={(engine) => {
+                setForm(emptyFormFor(engine))
                 setFormMode({ kind: 'create' })
               }}
             />
@@ -218,12 +226,12 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                   {!editing ? (
                     <BackButton onClick={openPicker} />
                   ) : null}
-                  {editing ? `Edit ${editing.name}` : 'PostgreSQL'}
+                  {editing ? `Edit ${editing.name} · ${engineLabel(form.engine)}` : engineLabel(form.engine)}
                 </DialogTitle>
                 <DialogDescription>
                   {editing
                     ? 'Update the connection settings. Leave secret fields blank to keep their saved values.'
-                    : 'Connect a read-only PostgreSQL database for schema discovery and safe queries.'}
+                    : `Connect a read-only ${engineLabel(form.engine)} database for schema discovery and safe queries.`}
                 </DialogDescription>
               </DialogHeader>
 
@@ -232,8 +240,9 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                   <Field label="Name" value={form.name} onChange={(name) => setForm((v) => ({ ...v, name }))} placeholder="sales" />
                   <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                     Engine
-                    <select disabled value="postgresql" className={inputClass}>
+                    <select disabled value={form.engine} className={inputClass}>
                       <option value="postgresql">PostgreSQL</option>
+                      <option value="mysql">MySQL / MariaDB</option>
                     </select>
                   </label>
                   <Field label="Host" value={form.host} onChange={(host) => setForm((v) => ({ ...v, host }))} placeholder="10.35.180.238" />
@@ -331,7 +340,11 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                 setTestResult(null)
                 try {
                   const result = await testStoredConnection(scope, c.id)
-                  if (result.ok) setTestResult(`${c.name}: connected in ${result.value.latencyMs.toLocaleString()}ms`)
+                  if (result.ok) {
+                    setTestResult(
+                      `${c.name}: connected in ${result.value.latencyMs.toLocaleString()}ms${formatServerVersion(result.value, c.engine)}`,
+                    )
+                  }
                   else setError(result.error.message)
                 } catch {
                   setError(`Could not test ${c.name}`)
@@ -367,19 +380,6 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
   )
 }
 
-type FormState = {
-  name: string
-  host: string
-  port: string
-  database: string
-  username: string
-  password: string
-  sslMode: DatabaseConnectionInput['ssl']['mode']
-  sslCa: string
-  serverName: string
-  removeCa: boolean
-}
-
 type FormMode =
   | { kind: 'pick' }
   | { kind: 'create' }
@@ -399,8 +399,8 @@ const DATABASE_CONNECTORS = [
     engine: 'mysql',
     name: 'MySQL',
     summary: 'Connect MySQL-compatible databases with the same safe tools.',
-    detail: 'Coming soon',
-    available: false,
+    detail: 'Read-only connector · port 3306',
+    available: true,
     tint: '0 117 143',
   },
   {
@@ -413,14 +413,9 @@ const DATABASE_CONNECTORS = [
   },
 ] as const
 
-const emptyForm: FormState = {
-  name: '', host: '', port: '5432', database: '', username: '', password: '',
-  sslMode: 'disable', sslCa: '', serverName: '', removeCa: false,
-}
-
 const inputClass = 'rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:border-foreground/30 disabled:opacity-60'
 
-function DatabaseConnectorPicker({ onChoose }: { onChoose: () => void }) {
+function DatabaseConnectorPicker({ onChoose }: { onChoose: (engine: DatabaseConnectionInput['engine']) => void }) {
   return (
     <>
       <DialogHeader>
@@ -437,7 +432,9 @@ function DatabaseConnectorPicker({ onChoose }: { onChoose: () => void }) {
               key={connector.engine}
               type="button"
               disabled={!connector.available}
-              onClick={onChoose}
+              onClick={() => {
+                if (connector.engine === 'postgresql' || connector.engine === 'mysql') onChoose(connector.engine)
+              }}
               className={cn(
                 'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
                 'transition-colors outline-none',
@@ -493,38 +490,10 @@ function Field({ label, value, onChange, ...props }: {
   )
 }
 
-function formFromConnection(connection: DbConnectionRow): FormState {
-  return {
-    ...emptyForm,
-    name: connection.name,
-    host: connection.host,
-    port: String(connection.port),
-    database: connection.database,
-    username: connection.username,
-    sslMode: connection.sslMode,
-  }
-}
-
-function connectionInput(form: FormState, editing: DbConnectionRow | null): DatabaseConnectionInput {
-  return {
-    name: form.name.trim(),
-    engine: 'postgresql',
-    host: form.host.trim(),
-    port: Number(form.port),
-    database: form.database.trim(),
-    username: form.username.trim(),
-    ...(form.password ? { password: form.password } : {}),
-    ssl: {
-      mode: form.sslMode,
-      ...(form.serverName ? { serverName: form.serverName.trim() } : {}),
-      ...(form.sslCa ? { ca: form.sslCa } : form.removeCa && editing?.hasCustomCa ? { ca: null } : {}),
-    },
-  }
-}
-
 function matchesSavedConnection(form: FormState, connection: DbConnectionRow): boolean {
   return (
     form.name.trim() === connection.name &&
+    form.engine === connection.engine &&
     form.host.trim() === connection.host &&
     Number(form.port) === connection.port &&
     form.database.trim() === connection.database &&
@@ -639,7 +608,7 @@ function ConnectionItem({
       meta={
         failed
           ? 'could not connect'
-          : `${connection.database} @ ${connection.host}:${connection.port} · ${connection.tableCount} tables`
+          : `${engineLabel(connection.engine)} · ${connection.database} @ ${connection.host}:${connection.port} · ${connection.tableCount} tables`
       }
       actions={
         <>

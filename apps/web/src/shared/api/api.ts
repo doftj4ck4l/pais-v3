@@ -468,7 +468,7 @@ function encodePathSegment(segment: string): string {
   )
 }
 
-/** Read-only Postgres connections this browser has added. */
+/** Read-only database connections this browser has added. */
 export async function listConnections(scope: Scope): Promise<DbConnectionRow[]> {
   const { connections } = await json<{ connections: DbConnectionRow[] }>(
     await fetch(`/api/databases?${scoped(scope)}`),
@@ -485,7 +485,7 @@ export type DatabaseApiError = {
 
 export type DatabaseConnectionInput = {
   name: string
-  engine: 'postgresql'
+  engine: 'postgresql' | 'mysql'
   host: string
   port: number
   database: string
@@ -499,6 +499,12 @@ export type DatabaseConnectionInput = {
 }
 
 type DatabaseResult<T> = { ok: true; value: T } | { ok: false; error: DatabaseApiError }
+
+export type DatabaseTestResult = {
+  latencyMs: number
+  serverVersion?: string
+  serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB'
+}
 
 async function databaseError(res: Response): Promise<DatabaseApiError> {
   const body = (await res.json().catch(() => ({}))) as { error?: DatabaseApiError | string }
@@ -598,25 +604,25 @@ export async function addConnectionStreaming(
 export async function testConnection(
   scope: Scope,
   input: DatabaseConnectionInput,
-): Promise<DatabaseResult<{ latencyMs: number; serverVersion?: string }>> {
+): Promise<DatabaseResult<DatabaseTestResult>> {
   const res = await fetch(`/api/databases/test?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   })
   if (!res.ok) return { ok: false, error: await databaseError(res) }
-  return (await res.json()) as DatabaseResult<{ latencyMs: number; serverVersion?: string }>
+  return (await res.json()) as DatabaseResult<DatabaseTestResult>
 }
 
 export async function testStoredConnection(
   scope: Scope,
   id: string,
-): Promise<DatabaseResult<{ latencyMs: number; serverVersion?: string }>> {
+): Promise<DatabaseResult<DatabaseTestResult>> {
   const res = await fetch(`/api/databases/${encodeURIComponent(id)}/test?${scoped(scope)}`, {
     method: 'POST',
   })
   if (!res.ok) return { ok: false, error: await databaseError(res) }
-  return (await res.json()) as DatabaseResult<{ latencyMs: number; serverVersion?: string }>
+  return (await res.json()) as DatabaseResult<DatabaseTestResult>
 }
 
 export async function updateConnection(

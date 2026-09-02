@@ -6,7 +6,7 @@
  * on an engine name.
  */
 
-export type DatabaseEngine = "postgresql" | (string & {});
+export type DatabaseEngine = "postgresql" | "mysql";
 
 export type DatabaseSslMode = "disable" | "require" | "verify-full";
 
@@ -43,6 +43,8 @@ export type DatabaseErrorCode =
   | "dns_resolution_failed"
   | "connection_failed"
   | "authentication_failed"
+  | "unsupported_version"
+  | "unsupported_capability"
   | "timeout"
   | "query_rejected"
   | "query_failed";
@@ -114,7 +116,10 @@ export interface DatabaseAdapter {
   testConnection(
     config: DatabaseConnectionConfig,
     target: ApprovedDatabaseTarget,
-  ): Promise<DatabaseResult<{ serverVersion?: string }>>;
+  ): Promise<DatabaseResult<{
+    serverVersion?: string;
+    serverProduct?: "PostgreSQL" | "MySQL" | "MariaDB";
+  }>>;
   fetchCatalog(
     config: DatabaseConnectionConfig,
     target: ApprovedDatabaseTarget,
