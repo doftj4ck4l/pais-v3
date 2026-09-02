@@ -214,10 +214,9 @@ function ThinkingLine({
   item: Extract<Item, { kind: 'thinking' }>
   streaming: boolean
 }) {
-  // Open while the thought is still arriving, closed once it has landed —
-  // unless the reader has taken a side, which then wins for good.
-  const [manual, setManual] = useState<boolean | null>(null)
-  const open = manual ?? streaming
+  // Reasoning is supporting detail, so keep it collapsed even while it streams.
+  // A reader can still open it, and that choice remains stable as more text lands.
+  const [open, setOpen] = useState(false)
   const scroller = useRef<HTMLPreElement>(null)
 
   // Follow the tail of a thought as it streams, inside this box only.
@@ -228,7 +227,7 @@ function ThinkingLine({
 
   return (
     <ActivityLine icon={<LightbulbIcon className="size-3.5" />}>
-      <Collapsible open={open} onOpenChange={setManual}>
+      <Collapsible open={open} onOpenChange={setOpen}>
         <TriggerRow
           label={streaming ? 'Thinking…' : thoughtLabel(item.ms)}
           muted={!streaming}
