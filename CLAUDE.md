@@ -20,12 +20,13 @@ cd apps/api && bun test                          # 476 pass, 7 fail
 cd apps/api && bun test src/services/mcp         # one directory
 cd apps/api && bun test -t "reapIdle"            # one test by name
 cd apps/api && bunx tsc --noEmit -p tsconfig.json
+cd apps/web && bun test                          # web unit tests
 cd apps/web && bun run build                     # tsc -b && vite build
 cd apps/web && bun run lint                      # oxlint, no config file
 ```
 
-`apps/web` has no test suite; `bun run build` is its check, and the `tsc -b`
-half of it is what catches real breakage.
+For `apps/web`, run both `bun test` and `bun run build`; the `tsc -b` half of the
+build catches type errors that the unit tests do not.
 
 **The 7 failures are the baseline, not a regression.** They are the
 `sandbox.service` / `docker.ts` / `docker-execution-env.ts` tests, and they fail
@@ -476,13 +477,15 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 
 ## Reading a transcript
 
-Everything the agent *does* — reasoning, tool calls — is one collapsed line in
-`transcript.tsx`, phrased as an action rather than as a runtime event. The
-phrasing lives in `lib/tool-summary.ts`: one table matched on the tool name,
+Reasoning is one collapsed line in `transcript.tsx`. Consecutive tool calls in
+one agent-loop batch share a collapsed `Worked for …` line. Expanding it reveals
+the individual action summaries; each action can then reveal its own payload.
+Tool phrasing lives in `lib/tool-summary.ts`: one table matched on the tool name,
 past tense once the result is in and present tense while the call is in flight.
-An MCP tool arrives as `server__tool_name` and is matched on the segment after
-`__`; anything unmatched falls through to `Called <name>` with an argument, so a
-tool added later still reads as a sentence rather than breaking the pattern.
+An MCP tool arrives
+as `server__tool_name` and is matched on the segment after `__`; anything
+unmatched falls through to `Called <name>` with an argument, so a tool added
+later still reads as a sentence rather than breaking the pattern.
 
 **A stored `thinking` row is text, or JSON.** It was bare text, and rows written
 then still are; a timed one is `{text, ms}`, which is where `Thought for 6

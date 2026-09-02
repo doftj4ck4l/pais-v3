@@ -1,5 +1,44 @@
 import type { Item, MessageRow, TraceLine, TraceRow } from '@/shared/lib/types'
 
+type ToolItem = Extract<Item, { kind: 'tool' }>
+type RenderUiItem = ToolItem & { name: 'render_ui' }
+export type TranscriptDisplayItem =
+  | Exclude<Item, { kind: 'iteration' | 'tool' }>
+  | RenderUiItem
+  | { kind: 'tool-group'; tools: ToolItem[] }
+
+/**
+ * Turn the runtime-shaped transcript into the quieter narrative shown to users.
+ * Consecutive tool calls become one collapsed work block; iteration markers and
+ * empty streaming placeholders remain available to run stats but draw no row.
+ */
+export function groupTranscriptItems(items: Item[]): TranscriptDisplayItem[] {
+  const grouped: TranscriptDisplayItem[] = []
+  let activeToolGroup: Extract<TranscriptDisplayItem, { kind: 'tool-group' }> | null = null
+
+  for (const item of items) {
+    if (item.kind === 'iteration') {
+      activeToolGroup = null
+      continue
+    }
+    if (item.kind === 'assistant' && item.text.trim() === '') continue
+
+    if (item.kind === 'tool' && item.name !== 'render_ui') {
+      if (activeToolGroup) activeToolGroup.tools.push(item)
+      else {
+        activeToolGroup = { kind: 'tool-group', tools: [item] }
+        grouped.push(activeToolGroup)
+      }
+      continue
+    }
+
+    activeToolGroup = null
+    grouped.push(item.kind === 'tool' ? (item as RenderUiItem) : item)
+  }
+
+  return grouped
+}
+
 /**
  * How tool arguments are shown: short argument sets read better on one line
  * than pretty-printed. Used for both live events and restored rows so a

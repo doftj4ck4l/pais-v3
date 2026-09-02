@@ -129,14 +129,15 @@ export function useAgentBoard(scope: Scope) {
     setEffort(model?.thinking ? model.thinking.default : null)
   }, [modelIdForNew, meta])
 
-  // Publish the (already mutated) refs into React state.
+  // Publish an immutable items snapshot so memoized transcript rendering can
+  // ignore timer-only agent updates without missing streamed content.
   const flush = useCallback((id: string) => {
     setAgents((prev) =>
       prev.map((a) =>
         a.id === id
           ? {
               ...a,
-              items: itemsRef.current.get(id) ?? a.items,
+              items: [...(itemsRef.current.get(id) ?? a.items)],
               trace: traceRef.current.get(id) ?? a.trace,
             }
           : a,
