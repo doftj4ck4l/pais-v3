@@ -149,8 +149,11 @@ type StoredSecretV2 = {
   sslServerName: string | null;
 };
 
-const normalizeEngine = (engine: string): DatabaseEngine =>
-  engine === "postgres" ? "postgresql" : engine;
+const normalizeEngine = (engine: string): DatabaseEngine => {
+  if (engine === "postgres" || engine === "postgresql") return "postgresql";
+  if (engine === "mysql") return "mysql";
+  throw new Error(`Unsupported stored database engine: ${engine}`);
+};
 
 function encodeSecret(config: DatabaseConnectionConfig): string {
   const value: StoredSecretV2 = {
@@ -212,7 +215,7 @@ function decodeConfig(row: {
 function publicRow(row: any): DbConnectionRow {
   return {
     ...row,
-    engine: normalizeEngine(row.engine) as "postgresql",
+    engine: normalizeEngine(row.engine),
     sslMode: row.sslMode as DbConnectionRow["sslMode"],
   };
 }

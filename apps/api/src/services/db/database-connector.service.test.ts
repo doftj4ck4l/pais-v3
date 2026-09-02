@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { DatabaseAdapterRegistry } from "./adapter-registry";
 import type { ApprovedDatabaseTarget, DatabaseAdapter, DatabaseConnectionConfig } from "./database-adapter";
-import { DatabaseConnectorService } from "./database-connector.service";
+import { DatabaseConnectorService, databaseAdapterRegistry } from "./database-connector.service";
 import { DatabaseNetworkPolicy } from "./network-policy";
 
 const config: DatabaseConnectionConfig = {
-  engine: "future-db",
+  engine: "mysql",
   host: "warehouse.internal",
   port: 4444,
   database: "sales",
@@ -17,8 +17,8 @@ const config: DatabaseConnectionConfig = {
 function setup(adapterOverrides: Partial<DatabaseAdapter> = {}) {
   let target: ApprovedDatabaseTarget | null = null;
   const adapter: DatabaseAdapter = {
-    engine: "future-db",
-    defaultPort: 4444,
+    engine: "mysql",
+    defaultPort: 3306,
     capabilities: {
       schemas: true,
       explain: true,
@@ -47,7 +47,11 @@ function setup(adapterOverrides: Partial<DatabaseAdapter> = {}) {
 }
 
 describe("DatabaseConnectorService", () => {
-  it("pins the approved address before calling a future adapter", async () => {
+  it("registers both production database engines", () => {
+    expect(databaseAdapterRegistry.engines()).toEqual(["postgresql", "mysql"]);
+  });
+
+  it("pins the approved address before calling an adapter", async () => {
     const { connector, getTarget } = setup();
     const result = await connector.testConnection(config);
     expect(result.ok).toBe(true);
@@ -58,13 +62,13 @@ describe("DatabaseConnectorService", () => {
     });
   });
 
-  it("redacts passwords and complete URLs from future-adapter errors", async () => {
+  it("redacts passwords and complete URLs from adapter errors", async () => {
     const { connector } = setup({
       executeReadOnly: async () => ({
         ok: false,
         error: {
           code: "query_failed",
-          message: "failed at postgresql://reader:super-secret@warehouse.internal:5432/sales",
+          message: "failed at mysql://reader:super-secret@warehouse.internal:3306/sales",
         },
       }),
     });

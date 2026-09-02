@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { DatabaseAdapterRegistry } from "./adapter-registry";
-import type { DatabaseAdapter } from "./database-adapter";
+import type { DatabaseAdapter, DatabaseEngine } from "./database-adapter";
 
-const fakeAdapter = (engine: string): DatabaseAdapter => ({
+const fakeAdapter = (engine: DatabaseEngine): DatabaseAdapter => ({
   engine,
   defaultPort: 1234,
   capabilities: {
@@ -23,7 +23,7 @@ const fakeAdapter = (engine: string): DatabaseAdapter => ({
 });
 
 describe("DatabaseAdapterRegistry", () => {
-  it("registers a future driver without changing the adapter contract", () => {
+  it("registers both supported drivers without changing the adapter contract", () => {
     const registry = new DatabaseAdapterRegistry().register(fakeAdapter("postgresql"));
     const agentToolNames = ["search_schema", "describe_table", "run_query"];
 

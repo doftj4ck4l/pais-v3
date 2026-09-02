@@ -572,7 +572,7 @@ export type DbConnectionRow = {
   id: string;
   workspaceId: string | null;
   name: string;
-  engine: "postgresql";
+  engine: "postgresql" | "mysql";
   status: DbConnectionStatus;
   error: string | null;
   host: string;

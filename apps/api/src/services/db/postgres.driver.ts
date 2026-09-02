@@ -141,7 +141,10 @@ function serializeForSize(row: Record<string, unknown>): string {
 async function testConnection(
   config: DatabaseConnectionConfig,
   target: ApprovedDatabaseTarget,
-): Promise<DatabaseResult<{ serverVersion?: string }>> {
+): Promise<DatabaseResult<{
+  serverVersion?: string;
+  serverProduct?: "PostgreSQL";
+}>> {
   let sql: any;
   let inTransaction = false;
   try {
@@ -150,7 +153,13 @@ async function testConnection(
     inTransaction = true;
     await sql.unsafe(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT_MS}ms'`);
     const rows = await sql`SELECT current_setting('server_version') AS version`;
-    return { ok: true, value: { serverVersion: String(rows[0]?.version ?? "") || undefined } };
+    return {
+      ok: true,
+      value: {
+        serverVersion: String(rows[0]?.version ?? "") || undefined,
+        serverProduct: "PostgreSQL",
+      },
+    };
   } catch (error) {
     return { ok: false, error: databaseError(error, config, "connection_failed") };
   } finally {

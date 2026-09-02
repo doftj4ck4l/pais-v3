@@ -11,11 +11,14 @@ const headers = (user: string) => ({
   "content-type": "application/json",
 });
 
-const input = (password = "never-return-this") => ({
+const input = (
+  password = "never-return-this",
+  engine: "postgresql" | "mysql" = "postgresql",
+) => ({
   name: "warehouse",
-  engine: "postgresql",
+  engine,
   host: "10.35.180.238",
-  port: 5432,
+  port: engine === "mysql" ? 3306 : 5432,
   database: "takaful",
   username: "salur_reader",
   password,
@@ -91,6 +94,20 @@ describe("database connector HTTP surface", () => {
       username: "salur_reader",
       sslMode: "disable",
     });
+  });
+
+  it("creates and returns a MySQL connection without exposing credentials", async () => {
+    mockSuccessfulDatabase();
+    const res = await createApp().request("/api/databases", {
+      method: "POST",
+      headers: headers("db-create-mysql-user"),
+      body: JSON.stringify(input("mysql-never-return-this", "mysql")),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(201);
+    expect(JSON.parse(text).connection).toMatchObject({ engine: "mysql", port: 3306 });
+    expect(text).not.toContain("mysql-never-return-this");
+    expect(text).not.toContain("mysql://");
   });
 
   it("updates settings without requiring the password to be returned and resubmitted", async () => {

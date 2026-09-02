@@ -221,7 +221,7 @@ export type PlaybookBullet = {
 export type DbConnectionRow = {
   id: string
   name: string
-  engine: 'postgresql'
+  engine: 'postgresql' | 'mysql'
   status: 'connected' | 'error'
   error: string | null
   host: string

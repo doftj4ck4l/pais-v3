@@ -287,7 +287,7 @@ cd apps/api && bun scripts/sandbox-persistence-check.ts
 
 ### Connected databases
 
-The agent can query a workspace's connected PostgreSQL databases read-only,
+The agent can query a workspace's connected PostgreSQL, MySQL, and MariaDB databases read-only,
 without switching modes or harnesses. A connection is configured with an explicit engine, host, port,
 database, username, password, and SSL policy. Passwords and private TLS options
 are encrypted with `CONNECTION_SECRET`; full URLs are neither stored nor
@@ -316,11 +316,11 @@ Read-only is enforced in four layers:
 | --- | --- |
 | Operator | Point the connection at a `GRANT SELECT`-only role |
 | Statement | Only `SELECT` / `WITH` / `EXPLAIN`; write keywords rejected anywhere in the statement |
-| Transaction | `BEGIN TRANSACTION READ ONLY`, always rolled back |
-| Budget | 10s `statement_timeout`, 100-row cap, 50KB result cap |
+| Transaction | A server-enforced read-only transaction, always rolled back on the same physical connection |
+| Budget | A server timeout where supported, a 10s client deadline, a 100-row cap, and a 50KB result cap |
 
 The statement guard exists to give the model a correctable error message. The
-transaction is the actual guarantee — Postgres allows data-modifying CTEs, so
+transaction is the actual guarantee — PostgreSQL allows data-modifying CTEs, so
 `WITH x AS (DELETE ... RETURNING *) SELECT * FROM x` begins with `WITH` and
 writes, and only the transaction catches it unconditionally.
 
@@ -335,6 +335,44 @@ cd apps/api && \
   DB_CHECK_HOST=10.0.0.10 DB_CHECK_DATABASE=app DB_CHECK_USERNAME=reader \
   DB_CHECK_PASSWORD=... bun scripts/db-connector-check.ts
 ```
+
+For MySQL/MariaDB, the adapter uses Bun.SQL directly, just like PostgreSQL. It
+queries only the configured database in `information_schema`, starts
+`START TRANSACTION READ ONLY`, and rejects file access, advisory-lock, delay,
+benchmark, and user-variable-assignment forms in addition to the shared SQL
+policy. MySQL 5.7.4+ uses `max_execution_time`; MariaDB 10.1.1+ uses
+`max_statement_time`; all versions retain the client deadline.
+
+Compatibility is deliberately fail-closed:
+
+| Server | Status |
+| --- | --- |
+| MySQL 8.0 | Supported; the full Docker integration check passes on 8.0.46 |
+| MySQL 5.6–5.7 | Conditional on a successful read-only transaction capability probe |
+| MariaDB 10.11+ | Supported; the full Docker integration check passes on 10.11.19 |
+| MariaDB 10.1–10.10 | Conditional on a successful live safety check |
+| MariaDB 5.5 | Unsupported in practice: 5.5.64 authenticates, but cannot establish the required read-only transaction and is refused |
+| MySQL 4.1 | Unsupported and rejected explicitly |
+
+The unit suite proves the MySQL 8 and MariaDB version paths, query policy,
+transaction lifecycle, limits, TLS mapping, and cleanup. Disposable Docker
+integration runs additionally prove the complete adapter path on MySQL 8.0.46
+and MariaDB 10.11.19. With MySQL 8's default `caching_sha2_password`, use
+`require` or `verify-full`; the server will reject an unencrypted authentication
+exchange. Run the opt-in live check before approving any other server/version
+combination:
+
+```bash
+cd apps/api && \
+  MYSQL_CHECK_HOST=10.0.0.10 MYSQL_CHECK_PORT=3306 \
+  MYSQL_CHECK_DATABASE=app MYSQL_CHECK_USERNAME=reader \
+  MYSQL_CHECK_PASSWORD=... MYSQL_CHECK_SSL_MODE=disable \
+  bun scripts/mysql-connector-check.ts
+```
+
+Connected external schemas are accessed only through database adapters. They
+are not represented by Drizzle models and are never created, altered, or
+migrated by Pixelspace's internal SQLite migrations.
 
 Database create, update, test, refresh, and delete operations all resolve the
 authenticated caller's workspace before accessing a connection. Encryption

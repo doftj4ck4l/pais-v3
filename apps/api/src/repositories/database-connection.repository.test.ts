@@ -70,6 +70,19 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(await store.resolveConfig("ws1", "c1")).toEqual(baseConfig);
   });
 
+  it("preserves a MySQL engine and its default port through encrypted storage", async () => {
+    const mysqlConfig = {
+      ...baseConfig,
+      engine: "mysql" as const,
+      port: 3306,
+      password: "mysql-test-secret",
+    };
+    await store.create(conn({ config: mysqlConfig }));
+    expect((await store.list("ws1"))[0]).toMatchObject({ engine: "mysql", port: 3306 });
+    expect(await store.resolveConfig("ws1", "c1")).toEqual(mysqlConfig);
+    expect(JSON.stringify((await store.list("ws1"))[0])).not.toContain("mysql-test-secret");
+  });
+
   it("resolves public fields and private config together without mixing ownership", async () => {
     await store.create(conn());
     const resolved = await store.resolveConnection("ws1", "c1");
