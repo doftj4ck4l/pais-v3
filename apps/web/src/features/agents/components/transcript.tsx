@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { ChevronRightIcon, FileSpreadsheetIcon, LightbulbIcon } from 'lucide-react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { ChevronRightIcon, FileSpreadsheetIcon, LightbulbIcon, WrenchIcon } from 'lucide-react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
 import { Spinner } from '@/shared/ui/spinner'
-import { describeTool, thoughtLabel } from '@/features/agents/lib/tool-summary'
+import { describeTool, summarizeWork, thoughtLabel } from '@/features/agents/lib/tool-summary'
+import { groupTranscriptItems } from '@/features/agents/lib/transcript'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
 import { parseMessage, hasUiBlock, validateSpec } from '@/features/agents/lib/ui-blocks'
 import { SegmentView } from '@/features/agents/components/ui-blocks'
@@ -14,6 +15,7 @@ import {
 import { cn } from '@/shared/lib/utils'
 import type { ReactNode } from 'react'
 import type { Item } from '@/shared/lib/types'
+import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
 
 /**
  * The transcript reads as a narrative: what the user asked, what the agent
@@ -21,7 +23,7 @@ import type { Item } from '@/shared/lib/types'
  *
  * Everything the agent *does* — reasoning, tool calls — is one collapsed line
  * with an icon, phrased as an action rather than as a runtime event. The
- * payloads are all still here, one click away; they are just no longer the
+ * payloads are all still here behind disclosures; they are just no longer the
  * loudest thing on screen. The answer is what the run was for.
  */
 export function Transcript({
@@ -33,10 +35,6 @@ export function Transcript({
   running: boolean
   runSummary: string | null
 }) {
-  // A model that goes straight to a tool call opens an empty text block first.
-  // It has nothing to say, so it gets no line.
-  const visible = items.filter((i) => i.kind !== 'assistant' || i.text.trim() !== '')
-
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
   // not by this component. Following from in here would mean scrolling an
   // ancestor it does not own, and would override the reader unconditionally.
@@ -44,9 +42,7 @@ export function Transcript({
     // Top-aligned: the agent header anchors the top of this column, so the
     // transcript starts right under it rather than floating above the composer.
     <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
-      {visible.map((item, i) => (
-        <TranscriptRow key={i} item={item} streaming={running && i === visible.length - 1} />
-      ))}
+      <TranscriptBody items={items} running={running} />
 
       {running ? (
         <ActivityLine icon={<span className="rail-head size-2 rounded-full bg-foreground/50" />}>
@@ -59,7 +55,21 @@ export function Transcript({
   )
 }
 
-function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) {
+const TranscriptBody = memo(function TranscriptBody({
+  items,
+  running,
+}: {
+  items: Item[]
+  running: boolean
+}) {
+  const visible = groupTranscriptItems(items)
+
+  return visible.map((item, i) => (
+    <TranscriptRow key={i} item={item} streaming={running && i === visible.length - 1} />
+  ))
+})
+
+function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; streaming: boolean }) {
   if (item.kind === 'user') {
     // A stored turn has no `images` — it comes back as the note the server
     // appended, so the URLs are recovered from the text. A live turn has both,
@@ -111,23 +121,35 @@ function TranscriptRow({ item, streaming }: { item: Item; streaming: boolean }) 
     )
   }
 
-  // A step boundary draws nothing. It was a hairline and a "Step 3" label, and
-  // it turned the transcript into a runtime log: the reader was being shown the
-  // agent's loop counter, which is a number they can do nothing with and which
-  // interrupted the narrative every few lines to say so.
-  //
-  // The item is still produced and still stored — `run-stats` counts these to
-  // report how many steps a run took, which is the one place the number belongs.
-  if (item.kind === 'iteration') return null
-
   if (item.kind === 'thinking') return <ThinkingLine item={item} streaming={streaming} />
+  if (item.kind === 'tool-group') return <ToolActivityGroup tools={item.tools} />
   // `render_ui` is the one tool whose whole purpose is to draw something in the
   // answer, so it is not collapsed into an activity line like every other tool —
   // its call arguments *are* the component, and they are rendered inline here.
-  if (item.kind === 'tool' && item.name === 'render_ui') return <RenderUiLine item={item} />
-  if (item.kind === 'tool') return <ToolLine item={item} />
+  // All other tools were consumed into groups above; render_ui is the only
+  // tool intentionally left as a standalone display item.
+  if (item.kind === 'tool') return <RenderUiLine item={item} />
 
   return <AssistantMessage text={item.text} streaming={streaming} />
+}
+
+function ToolActivityGroup({ tools }: { tools: Array<Extract<Item, { kind: 'tool' }>> }) {
+  const { label, pending } = summarizeWork(tools)
+
+  return (
+    <ActivityLine
+      icon={pending ? <Spinner className="size-3.5" /> : <WrenchIcon className="size-3.5" />}
+    >
+      <Collapsible>
+        <TriggerRow label={label} muted={!pending} live={pending} />
+        <CollapsibleContent>
+          <div className="mt-1.5 border-l border-border/70 pl-3">
+            {tools.map((tool) => <ToolLine key={tool.id} item={tool} />)}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </ActivityLine>
+  )
 }
 
 /**
@@ -192,10 +214,9 @@ function ThinkingLine({
   item: Extract<Item, { kind: 'thinking' }>
   streaming: boolean
 }) {
-  // Open while the thought is still arriving, closed once it has landed —
-  // unless the reader has taken a side, which then wins for good.
-  const [manual, setManual] = useState<boolean | null>(null)
-  const open = manual ?? streaming
+  // Reasoning is supporting detail, so keep it collapsed even while it streams.
+  // A reader can still open it, and that choice remains stable as more text lands.
+  const [open, setOpen] = useState(false)
   const scroller = useRef<HTMLPreElement>(null)
 
   // Follow the tail of a thought as it streams, inside this box only.
@@ -206,7 +227,7 @@ function ThinkingLine({
 
   return (
     <ActivityLine icon={<LightbulbIcon className="size-3.5" />}>
-      <Collapsible open={open} onOpenChange={setManual}>
+      <Collapsible open={open} onOpenChange={setOpen}>
         <TriggerRow
           label={streaming ? 'Thinking…' : thoughtLabel(item.ms)}
           muted={!streaming}

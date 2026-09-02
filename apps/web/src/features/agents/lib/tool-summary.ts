@@ -119,10 +119,38 @@ export function describeTool(name: string, argsJson: string): ToolSummary {
 /** `Thought for 6 seconds` — the reasoning block's own cost, in words. */
 export function thoughtLabel(ms: number | undefined): string {
   if (ms === undefined) return 'Thought about it'
+  return elapsedLabel('Thought', ms)
+}
+
+export function summarizeWork(tools: Array<{ result?: string; ms?: number }>): {
+  label: string
+  pending: boolean
+} {
+  let pending = false
+  let missingTiming = false
+  let maxMs = 0
+
+  for (const tool of tools) {
+    if (tool.result === undefined) pending = true
+    if (tool.ms === undefined) missingTiming = true
+    else maxMs = Math.max(maxMs, tool.ms)
+  }
+
+  if (pending) return { label: 'Working…', pending }
+  if (missingTiming) {
+    const suffix = tools.length === 1 ? '' : 's'
+    return { label: `Completed ${tools.length} action${suffix}`, pending }
+  }
+  // Calls in one harness batch may run in parallel, so the slowest call is the
+  // closest available measure of elapsed time; summing would overstate it.
+  return { label: elapsedLabel('Worked', maxMs), pending }
+}
+
+function elapsedLabel(verb: 'Thought' | 'Worked', ms: number): string {
   const seconds = Math.max(1, Math.round(ms / 1000))
-  if (seconds < 60) return `Thought for ${seconds} second${seconds === 1 ? '' : 's'}`
+  if (seconds < 60) return `${verb} for ${seconds} second${seconds === 1 ? '' : 's'}`
   const minutes = Math.floor(seconds / 60)
-  return `Thought for ${minutes}m ${seconds % 60}s`
+  return `${verb} for ${minutes}m ${seconds % 60}s`
 }
 
 function phrase(Icon: LucideIcon, done: string, running: string, detail?: string): ToolSummary {
