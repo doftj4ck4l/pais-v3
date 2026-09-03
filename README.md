@@ -35,6 +35,9 @@ and shows it once after account creation. LAN exposure requires TLS or the
 trusted authentication proxy described below. For trusted-network testing,
 `./install.sh --expose` opts into a private-IP HTTP endpoint. See [ON_PREM.md](ON_PREM.md) for
 DGX Spark, authentication, lifecycle, backup, restore, and upgrade instructions.
+Packaged customer installs can use a private, provider-neutral HTTPS release
+channel with checksum verification, a pre-update backup, and automatic rollback;
+S3/CloudFront and private Forgejo assets are both supported delivery backends.
 
 For a task-oriented walkthrough from cloning the repository through first login
 and daily operation, use the [Pixelspace setup manual](SETUP_MANUAL.md).

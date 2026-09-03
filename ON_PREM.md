@@ -202,13 +202,14 @@ scripts/pixelspace package --skip-images   # operator + Compose + skills only
 
 `package` builds the API, web, and sandbox images, saves them alongside the
 operator, the Compose file, and the read-only skills directory Compose mounts,
-and writes `pixelspace-<version>-<arch>.tar.gz`. Because saved images are
+and writes `pixelspace-<version>-<arch>.tar.gz` plus a `.sha256` sidecar. Because saved images are
 architecture-specific, build the bundle on the same CPU architecture as the
 target (for a DGX Spark, on an `arm64` host).
 
 On the target host:
 
 ```bash
+sha256sum -c pixelspace-<version>-<arch>.tar.gz.sha256
 tar xzf pixelspace-<version>-<arch>.tar.gz
 cd pixelspace-<version>
 ./install.sh --admin-email operator@example.com   # guided wizard fills the rest
@@ -216,8 +217,68 @@ cd pixelspace-<version>
 
 The installer loads the bundled images, pins the stack to them, and runs in
 image mode. A bundle's images come from exact saved bytes, so the operator
-accepts their local tags without a registry `@sha256` digest — the archive is
-itself the immutability guarantee.
+resolves their temporary local tags to Docker's content-addressed `sha256:`
+image IDs before starting the stack or allowing the sandbox image to read
+backup data. The verified archive is the distribution immutability guarantee;
+the persisted local IDs keep later tag changes from altering the running stack.
+
+## Private managed updates
+
+Packaged installs can update from any private HTTPS service; the operator does
+not depend on S3, AWS credentials, or a particular release host. The channel is
+a small manifest that points at the immutable bundles for both supported
+architectures:
+
+```text
+PIXELSPACE_RELEASE_VERSION=0.5.0
+PIXELSPACE_RELEASE_AMD64_URL=https://updates.example.com/releases/pixelspace-0.5.0-amd64.tar.gz
+PIXELSPACE_RELEASE_AMD64_SHA256=<64-lowercase-hex-digest>
+PIXELSPACE_RELEASE_ARM64_URL=https://updates.example.com/releases/pixelspace-0.5.0-arm64.tar.gz
+PIXELSPACE_RELEASE_ARM64_SHA256=<64-lowercase-hex-digest>
+```
+
+The manifest parser does not execute this file as shell code. Publish a new
+channel only after both bundles and their CI-produced checksum sidecars exist.
+Do not replace versioned objects after publication.
+
+For AWS, use a private, versioned S3 bucket as the origin and put CloudFront or
+a small authenticated release endpoint in front of it. Keep long-lived AWS
+access keys off customer machines. A useful pattern is a stable,
+customer-authenticated manifest endpoint that returns short-lived signed bundle
+URLs. A static S3 presigned URL is not a durable channel: SigV4 URLs made with
+the AWS CLI expire after at most seven days. If releases must be tamper-evident
+after publication, enable S3 versioning and Object Lock before uploading them.
+
+Authentication is optional. When needed, provision a root/operator-readable
+file containing exactly one `Authorization:` or `Cookie:` HTTP header; do not
+put its value in `.env`, a command argument, or shell history. The file must be
+an absolute-path, regular non-symlink file with mode `600` or `400`.
+
+```bash
+scripts/pixelspace configure-update \
+  --update-manifest-url https://updates.example.com/customer/stable.env \
+  --update-auth-header-file /etc/pixelspace/update-auth-header
+
+scripts/pixelspace check-update
+scripts/pixelspace update --dry-run
+scripts/pixelspace update
+```
+
+`update` refuses source checkouts and bundles for the wrong CPU architecture,
+an older version, incomplete/image-free archives, non-HTTPS URLs, and any
+checksum mismatch. It validates safe archive extraction before cutover, takes a
+full recovery backup, loads the new image bundle, and waits for application
+health. If activation fails, it restores both the previous runtime files and
+the pre-update data/configuration backup. The recovery archive remains under
+`PIXELSPACE_BACKUP_ROOT` after success.
+
+An installation made from a bundle that predates `configure-update` needs one
+manual bootstrap. Deliver the next bundle and checksum through the existing
+secure support channel, verify the sidecar, preserve a copy of the old
+`scripts/pixelspace`, and install the new operator script into that same path.
+Then configure and check the private channel before running the first managed
+update. This changes only the operator; the first `update` still creates the
+normal full backup before replacing application images.
 
 ## Operate
 
@@ -227,6 +288,8 @@ scripts/pixelspace status
 scripts/pixelspace logs
 scripts/pixelspace backup
 scripts/pixelspace upgrade
+scripts/pixelspace check-update
+scripts/pixelspace update
 scripts/pixelspace uninstall
 ```
 
@@ -263,7 +326,9 @@ restore the safety backup and reports its path for manual recovery.
 `upgrade` re-runs `doctor`, prepares the configured sandbox helper, and creates
 a backup before pulling/building and recreating the stack. In build mode, update
 the checkout to the intended release before running it. In image mode, update
-the digest-pinned image references in `.env`.
+the digest-pinned image references in `.env`. Packaged installations should use
+the managed `update` flow above so download verification and rollback are not
+manual steps.
 
 Every release carries a version (SemVer, in the repo-root `VERSION` file, baked
 into the API image). `status` and `doctor` print the installed version and note

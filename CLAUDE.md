@@ -558,6 +558,15 @@ SQLite, quiesced workspace sandboxes, RustFS, MCP cache, and decryption secrets;
 restore uses safe archive extraction, creates a safety backup, and attempts
 automatic rollback after a failed cutover; upgrade re-runs doctor and backs up
 before refresh; uninstall preserves data unless both `--purge --yes` are present.
+Packaged installs additionally support `configure-update`, `check-update`, and
+`update` against a provider-neutral private HTTPS manifest. The client keeps
+authorization headers and signed bundle URLs out of argv/logs, verifies the
+architecture-specific SHA-256 before safe extraction, creates a full backup,
+and restores the prior runtime plus data if activation or health checks fail.
+Registry image mode still requires digests; checksum-verified offline image
+tars are the immutable input for package installs. Release CI attaches each
+bundle's `.sha256` sidecar. The storage/channel contract and the one-time
+bootstrap for older customer bundles are documented in `ON_PREM.md`.
 
 **CI pins bun, and the pin is in the workflow, not in a manifest.** `BUN_VERSION`
 in `deploy.yml` decides what CI runs; nothing checks it against what you have.
