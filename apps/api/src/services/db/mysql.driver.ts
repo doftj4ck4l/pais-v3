@@ -8,6 +8,8 @@ import type {
   QueryOutcome,
   RawCatalog,
 } from "./database-adapter";
+import { connect as connectTcp, isIP } from "node:net";
+import { createConnection, type ConnectionOptions } from "mysql2/promise";
 import { scrubDatabaseMessage } from "./database-adapter";
 import { guardReadOnly } from "./sql-guard";
 import { DATABASE_BYTE_CAP, DATABASE_ROW_CAP } from "./query-policy";
@@ -15,21 +17,20 @@ import { DATABASE_BYTE_CAP, DATABASE_ROW_CAP } from "./query-policy";
 const STATEMENT_TIMEOUT_MS = 10_000;
 const ROW_CAP = DATABASE_ROW_CAP;
 const BYTE_CAP = DATABASE_BYTE_CAP;
-
-type QueryLike<T = any> = PromiseLike<T> & {
-  execute?: () => QueryLike<T>;
-  cancel?: () => unknown;
-};
+const MYSQL_SYSTEM_SCHEMAS = new Set(["mysql", "information_schema", "performance_schema", "sys"]);
 
 export type MysqlSqlClient = {
-  unsafe<T = any>(statement: string, values?: unknown[]): QueryLike<T>;
-  close(options?: { timeout?: number }): PromiseLike<unknown>;
+  query<T = Record<string, unknown>[]>(statement: string, values?: unknown[]): PromiseLike<[T, unknown]>;
+  end(): PromiseLike<unknown>;
+  destroy(): void;
+  /** Test seam; production clients always use the fixed 10-second policy. */
+  statementTimeoutMs?: number;
 };
 
 export type MysqlClientFactory = (
   config: DatabaseConnectionConfig,
   target: ApprovedDatabaseTarget,
-) => MysqlSqlClient;
+) => MysqlSqlClient | PromiseLike<MysqlSqlClient>;
 
 export type MysqlServerVersion = {
   product: "MySQL" | "MariaDB";
@@ -46,7 +47,9 @@ class MysqlAdapterError extends Error {
   }
 }
 
-class MysqlClientTimeoutError extends Error {}
+class MysqlClientTimeoutError extends Error {
+  constructor() { super("Database statement timeout"); }
+}
 
 /** MySQL-compatible servers sometimes prefix MariaDB's real version with 5.5.5. */
 export function parseMysqlServerVersion(rawValue: unknown): MysqlServerVersion | null {
@@ -73,28 +76,39 @@ function versionAtLeast(version: MysqlServerVersion, major: number, minor: numbe
 
 export function mysqlTlsOptions(
   config: DatabaseConnectionConfig,
-  target: ApprovedDatabaseTarget,
-): false | { rejectUnauthorized: boolean; serverName: string; ca?: string } {
-  if (config.ssl.mode === "disable") return false;
+): undefined | { rejectUnauthorized: boolean; verifyIdentity: boolean; ca?: string } {
+  if (config.ssl.mode === "disable") return undefined;
   return {
     rejectUnauthorized: config.ssl.mode === "verify-full",
-    serverName: config.ssl.serverName || target.originalHost,
+    verifyIdentity: config.ssl.mode === "verify-full",
     ...(config.ssl.mode === "verify-full" && config.ssl.ca ? { ca: config.ssl.ca } : {}),
   };
 }
 
-const bunClient: MysqlClientFactory = (config, target) => new Bun.SQL({
-  adapter: "mysql",
-  hostname: target.address,
-  port: config.port,
-  database: config.database,
-  username: config.username,
-  password: config.password,
-  tls: mysqlTlsOptions(config, target),
-  max: 1,
-  idleTimeout: 30,
-  connectionTimeout: 10,
-}) as MysqlSqlClient;
+export function mysqlConnectionOptions(
+  config: DatabaseConnectionConfig,
+  target: ApprovedDatabaseTarget,
+): ConnectionOptions {
+  return {
+    // mysql2 derives TLS SNI and identity from `host`. The custom stream keeps
+    // DNS rebinding protection intact by dialing only the approved literal IP.
+    host: config.ssl.serverName || target.originalHost,
+    port: config.port,
+    user: config.username,
+    password: config.password,
+    ssl: mysqlTlsOptions(config),
+    stream: () => connectTcp({ host: target.address, port: config.port }),
+    connectTimeout: STATEMENT_TIMEOUT_MS,
+    multipleStatements: false,
+    flags: ["-LOCAL_FILES"],
+    supportBigNumbers: true,
+    dateStrings: true,
+    trace: false,
+  };
+}
+
+const mysql2Client: MysqlClientFactory = async (config, target) =>
+  await createConnection(mysqlConnectionOptions(config, target)) as MysqlSqlClient;
 
 function scrub(message: string, config: Pick<DatabaseConnectionConfig, "password">): string {
   return scrubDatabaseMessage(message, config, "mysql://***");
@@ -124,7 +138,7 @@ function databaseError(
       message: `Database "${config.database}" does not exist or is not accessible`,
     };
   }
-  if (/ER_ACCESS_DENIED_ERROR|\b1045\b|access denied|authentication failed/i.test(`${code} ${message}`)) {
+  if (/ER_ACCESS_DENIED_ERROR|ER_NOT_SUPPORTED_AUTH_MODE|AUTH_SWITCH_PLUGIN_ERROR|\b1045\b|access denied|authentication (?:failed|plugin)/i.test(`${code} ${message}`)) {
     return { code: "authentication_failed", message: "Database authentication failed" };
   }
   if (/max_execution_time|max_statement_time|query execution was interrupted|timed? out|timeout/i.test(message)) {
@@ -275,15 +289,19 @@ export function guardMysqlStatement(
   };
 }
 
-async function queryWithTimeout<T>(sql: MysqlSqlClient, statement: string, values?: unknown[]): Promise<T> {
-  const lazy = sql.unsafe<T>(statement, values);
-  const query = lazy.execute ? lazy.execute() : lazy;
+export async function queryMysqlWithTimeout<T>(
+  sql: MysqlSqlClient,
+  statement: string,
+  values?: unknown[],
+  timeoutMs = sql.statementTimeoutMs ?? STATEMENT_TIMEOUT_MS,
+): Promise<T> {
+  const query = Promise.resolve(sql.query<T>(statement, values)).then(([rows]) => rows);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      try { query.cancel?.(); } catch { /* cleanup below still closes the connection */ }
       reject(new MysqlClientTimeoutError());
-    }, STATEMENT_TIMEOUT_MS);
+      try { sql.destroy(); } catch { /* cleanup below still attempts end */ }
+    }, timeoutMs);
   });
   try {
     return await Promise.race([query, timeout]);
@@ -291,6 +309,8 @@ async function queryWithTimeout<T>(sql: MysqlSqlClient, statement: string, value
     if (timer) clearTimeout(timer);
   }
 }
+
+const queryWithTimeout = queryMysqlWithTimeout;
 
 function requireSupportedVersion(raw: unknown): MysqlServerVersion {
   const version = parseMysqlServerVersion(raw);
@@ -300,24 +320,86 @@ function requireSupportedVersion(raw: unknown): MysqlServerVersion {
       message: "The database server returned an unrecognized MySQL/MariaDB version",
     });
   }
-  if (version.product === "MySQL" && version.major <= 4) {
-    throw new MysqlAdapterError({
-      code: "unsupported_version",
-      message: `MySQL ${version.version} is unsupported; MySQL 4.x cannot provide the required connector safety guarantees`,
-    });
-  }
   return version;
 }
 
-async function startProtectedTransaction(
+function legacyGrantError(version: MysqlServerVersion): MysqlAdapterError {
+  return new MysqlAdapterError({
+    code: "unsupported_capability",
+    message: `${version.product} ${version.version} cannot provide a read-only transaction and its effective privileges could not be verified as SELECT-only`,
+  });
+}
+
+/** SHOW GRANTS rows are sensitive: validate in memory and never echo them. */
+export function verifyMysqlSelectOnlyGrants(rows: Record<string, unknown>[]): boolean {
+  if (!rows.length) return false;
+  for (const row of rows) {
+    const values = Object.values(row);
+    if (values.length !== 1 || typeof values[0] !== "string") return false;
+    const grant = values[0].trim();
+    if (!grant || /[\0\r\n]/.test(grant) || /\bWITH\s+GRANT\s+OPTION\b/i.test(grant)) return false;
+    const parsed = /^GRANT\s+(.+?)\s+ON\s+(.+?)\s+TO\s+(.+)$/i.exec(grant);
+    if (!parsed) return false;
+    const privileges = parsed[1]!.split(",").map((value) => value.trim().toUpperCase());
+    if (!privileges.length || privileges.some((privilege) => privilege !== "SELECT" && privilege !== "USAGE")) {
+      return false;
+    }
+    const scope = parsed[2]!.trim();
+    const identifier = "(?:\\*|`(?:``|[^`])+`)";
+    if (!new RegExp(`^${identifier}\\.${identifier}$`).test(scope)) return false;
+    const quotedPrincipalPart = "(?:'(?:''|[^'])*'|`(?:``|[^`])*`)";
+    const principal = new RegExp(`^${quotedPrincipalPart}@${quotedPrincipalPart}`).exec(parsed[3]!);
+    if (!principal) return false;
+    let options = parsed[3]!.slice(principal[0].length);
+    const consume = (pattern: RegExp): boolean => {
+      const match = pattern.exec(options);
+      if (!match) return false;
+      options = options.slice(match[0].length);
+      return true;
+    };
+    consume(/^\s+IDENTIFIED\s+BY\s+PASSWORD\s+'(?:''|[^'])*'/i);
+    if (/^\s+REQUIRE\b/i.test(options)) {
+      if (!consume(/^\s+REQUIRE\s+(?:NONE|SSL|X509)\b/i)
+        && !consume(/^\s+REQUIRE\s+(?:CIPHER|ISSUER|SUBJECT)\s+'(?:''|[^'])*'(?:\s+AND\s+(?:CIPHER|ISSUER|SUBJECT)\s+'(?:''|[^'])*')*/i)) {
+        return false;
+      }
+    }
+    if (/^\s+WITH\b/i.test(options)
+      && !consume(/^\s+WITH(?:\s+(?:MAX_QUERIES_PER_HOUR|MAX_UPDATES_PER_HOUR|MAX_CONNECTIONS_PER_HOUR|MAX_USER_CONNECTIONS)\s+\d+)+/i)) {
+      return false;
+    }
+    if (options.trim()) return false;
+  }
+  return true;
+}
+
+async function verifyLegacyProtection(sql: MysqlSqlClient, version: MysqlServerVersion): Promise<void> {
+  let grants: Record<string, unknown>[];
+  try {
+    grants = await queryWithTimeout(sql, "SHOW GRANTS FOR CURRENT_USER()");
+  } catch {
+    throw legacyGrantError(version);
+  }
+  if (!verifyMysqlSelectOnlyGrants(grants)) throw legacyGrantError(version);
+}
+
+async function establishReadOnlyProtection(
   sql: MysqlSqlClient,
   version: MysqlServerVersion,
   onStarted: () => void,
 ): Promise<void> {
+  if (version.product === "MySQL" && version.major <= 4) {
+    await verifyLegacyProtection(sql, version);
+    return;
+  }
   try {
     await queryWithTimeout(sql, "START TRANSACTION READ ONLY");
   } catch (error) {
     if (error instanceof MysqlClientTimeoutError) throw error;
+    if (version.product === "MariaDB" && !versionAtLeast(version, 10, 0, 0)) {
+      await verifyLegacyProtection(sql, version);
+      return;
+    }
     throw new MysqlAdapterError({
       code: "unsupported_capability",
       message: `${version.product} ${version.version} does not provide a usable server-enforced READ ONLY transaction`,
@@ -334,11 +416,30 @@ async function startProtectedTransaction(
   }
 }
 
+function rowValue(row: Record<string, unknown>, name: string): unknown {
+  const found = Object.keys(row).find((key) => key.toLowerCase() === name.toLowerCase());
+  return found === undefined ? undefined : row[found];
+}
+
+async function selectConfiguredDatabase(sql: MysqlSqlClient, expectedDatabase: string): Promise<void> {
+  const rows = await queryWithTimeout<Record<string, unknown>[]>(sql, "SHOW DATABASES");
+  const exists = rows.some((row) => String(Object.values(row)[0] ?? "") === expectedDatabase);
+  if (!exists) {
+    throw new MysqlAdapterError({
+      code: "invalid_configuration",
+      field: "database",
+      message: `Database "${expectedDatabase}" does not exist or is not accessible`,
+    });
+  }
+  await queryWithTimeout(sql, `USE ${quoteIdentifier(expectedDatabase)}`);
+}
+
 async function readServerIdentity(sql: MysqlSqlClient, expectedDatabase: string): Promise<{
   version: MysqlServerVersion;
   databaseName: string;
   authenticatedAs: string;
 }> {
+  await selectConfiguredDatabase(sql, expectedDatabase);
   const rows = await queryWithTimeout<Record<string, unknown>[]>(sql, `
     SELECT VERSION() AS serverVersion,
            DATABASE() AS databaseName,
@@ -365,7 +466,7 @@ async function cleanup(sql: MysqlSqlClient | undefined, inTransaction: boolean):
   if (inTransaction) {
     try { await queryWithTimeout(sql, "ROLLBACK"); } catch { /* closing is the final cleanup boundary */ }
   }
-  try { await sql.close({ timeout: 0 }); } catch { /* no credential-bearing cleanup error escapes */ }
+  try { await sql.end(); } catch { /* no credential-bearing cleanup error escapes */ }
 }
 
 function makeTestConnection(factory: MysqlClientFactory) {
@@ -376,9 +477,9 @@ function makeTestConnection(factory: MysqlClientFactory) {
     let sql: MysqlSqlClient | undefined;
     let inTransaction = false;
     try {
-      sql = factory(config, target);
+      sql = await factory(config, target);
       const identity = await readServerIdentity(sql, config.database);
-      await startProtectedTransaction(sql, identity.version, () => { inTransaction = true; });
+      await establishReadOnlyProtection(sql, identity.version, () => { inTransaction = true; });
       return {
         ok: true,
         value: { serverVersion: identity.version.version, serverProduct: identity.version.product },
@@ -431,6 +532,169 @@ function groupIndexes(rows: IndexRow[]): RawCatalog["indexes"] {
   }));
 }
 
+function parseQuotedIdentifierList(value: string): string[] | null {
+  const identifiers: string[] = [];
+  let rest = value.trim();
+  while (rest) {
+    const match = /^`((?:``|[^`])+)`\s*(?:,\s*|$)/.exec(rest);
+    if (!match) return null;
+    identifiers.push(match[1]!.replaceAll("``", "`"));
+    rest = rest.slice(match[0].length);
+  }
+  return identifiers.length ? identifiers : null;
+}
+
+export function parseLegacyMysqlForeignKeys(
+  createSql: unknown,
+  schemaName: string,
+  tableName: string,
+): RawCatalog["foreignKeys"] | null {
+  if (typeof createSql !== "string") return null;
+  const foreignKeyCount = [...createSql.matchAll(/\bFOREIGN\s+KEY\b/gi)].length;
+  if (!foreignKeyCount) return [];
+  const clause = /(?:CONSTRAINT\s+`(?:``|[^`])+`\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+(?:(`(?:``|[^`])+`)\s*\.\s*)?(`(?:``|[^`])+`)\s*\(([^)]+)\)/gi;
+  const foreignKeys: RawCatalog["foreignKeys"] = [];
+  let parsedCount = 0;
+  for (const match of createSql.matchAll(clause)) {
+    parsedCount++;
+    const columns = parseQuotedIdentifierList(match[1]!);
+    const refColumns = parseQuotedIdentifierList(match[4]!);
+    if (!columns || !refColumns || columns.length !== refColumns.length) return null;
+    const unquote = (value: string) => value.slice(1, -1).replaceAll("``", "`");
+    const refSchema = match[2] ? unquote(match[2]) : schemaName;
+    const refTable = unquote(match[3]!);
+    for (let index = 0; index < columns.length; index++) {
+      foreignKeys.push({
+        schemaName,
+        tableName,
+        columnName: columns[index]!,
+        refSchema,
+        refTable,
+        refColumn: refColumns[index]!,
+      });
+    }
+  }
+  return parsedCount === foreignKeyCount ? foreignKeys : null;
+}
+
+async function fetchLegacyCatalog(
+  sql: MysqlSqlClient,
+  config: DatabaseConnectionConfig,
+  onStep?: (step: CatalogStep) => void,
+): Promise<RawCatalog> {
+  const schemaName = config.database;
+  if (MYSQL_SYSTEM_SCHEMAS.has(schemaName.toLowerCase())) {
+    for (const step of ["tables", "columns", "primaryKeys", "foreignKeys", "indexes"] as const) {
+      onStep?.({ step, count: 0 });
+    }
+    return { tables: [], columns: [], primaryKeys: [], foreignKeys: [], indexes: [] };
+  }
+  const statusRows = await queryWithTimeout<Record<string, unknown>[]>(
+    sql,
+    `SHOW TABLE STATUS FROM ${quoteIdentifier(schemaName)}`,
+  );
+  const tables = statusRows.map((row) => ({
+    schemaName,
+    name: String(rowValue(row, "Name") ?? ""),
+    comment: String(rowValue(row, "Comment") ?? "") || null,
+    rowEstimate: Number(rowValue(row, "Rows") ?? 0),
+  }));
+  if (tables.some((table) => !table.name)) {
+    throw new MysqlAdapterError({
+      code: "unsupported_capability",
+      message: "The legacy MySQL server returned table metadata that could not be parsed safely",
+    });
+  }
+  onStep?.({ step: "tables", count: tables.length });
+
+  const columns: RawCatalog["columns"] = [];
+  const primaryKeys: RawCatalog["primaryKeys"] = [];
+  for (const table of tables) {
+    const rows = await queryWithTimeout<Record<string, unknown>[]>(
+      sql,
+      `SHOW FULL COLUMNS FROM ${quoteIdentifier(table.name)} FROM ${quoteIdentifier(schemaName)}`,
+    );
+    rows.forEach((row, index) => {
+      const name = String(rowValue(row, "Field") ?? "");
+      const dataType = String(rowValue(row, "Type") ?? "");
+      if (!name || !dataType) {
+        throw new MysqlAdapterError({
+          code: "unsupported_capability",
+          message: "The legacy MySQL server returned column metadata that could not be parsed safely",
+        });
+      }
+      columns.push({
+        schemaName,
+        tableName: table.name,
+        seq: index + 1,
+        name,
+        dataType,
+        nullable: String(rowValue(row, "Null") ?? "").toUpperCase() === "YES",
+        comment: String(rowValue(row, "Comment") ?? "") || null,
+      });
+      if (String(rowValue(row, "Key") ?? "").toUpperCase() === "PRI") {
+        primaryKeys.push({ schemaName, tableName: table.name, columnName: name });
+      }
+    });
+  }
+  onStep?.({ step: "columns", count: columns.length });
+  onStep?.({ step: "primaryKeys", count: primaryKeys.length });
+
+  const foreignKeys: RawCatalog["foreignKeys"] = [];
+  for (const table of tables) {
+    const rows = await queryWithTimeout<Record<string, unknown>[]>(
+      sql,
+      `SHOW CREATE TABLE ${quoteIdentifier(schemaName)}.${quoteIdentifier(table.name)}`,
+    );
+    const row = rows[0];
+    const createSql = row && (rowValue(row, "Create Table") ?? rowValue(row, "Create View"));
+    const parsed = parseLegacyMysqlForeignKeys(createSql, schemaName, table.name);
+    if (!parsed) {
+      throw new MysqlAdapterError({
+        code: "unsupported_capability",
+        message: "The legacy MySQL server returned foreign-key metadata that could not be parsed safely",
+      });
+    }
+    foreignKeys.push(...parsed);
+  }
+  onStep?.({ step: "foreignKeys", count: foreignKeys.length });
+
+  const indexRows: IndexRow[] = [];
+  for (const table of tables) {
+    const rows = await queryWithTimeout<Record<string, unknown>[]>(
+      sql,
+      `SHOW INDEX FROM ${quoteIdentifier(table.name)} FROM ${quoteIdentifier(schemaName)}`,
+    );
+    for (const row of rows) {
+      const indexName = String(rowValue(row, "Key_name") ?? "");
+      const columnName = String(rowValue(row, "Column_name") ?? "");
+      if (!indexName || !columnName) {
+        throw new MysqlAdapterError({
+          code: "unsupported_capability",
+          message: "The legacy MySQL server returned index metadata that could not be parsed safely",
+        });
+      }
+      indexRows.push({
+        schemaName,
+        tableName: table.name,
+        indexName,
+        nonUnique: rowValue(row, "Non_unique"),
+        seq: rowValue(row, "Seq_in_index"),
+        columnName,
+        subPart: rowValue(row, "Sub_part"),
+        collation: rowValue(row, "Collation"),
+      });
+    }
+  }
+  indexRows.sort((left, right) =>
+    String(left.tableName).localeCompare(String(right.tableName))
+    || String(left.indexName).localeCompare(String(right.indexName))
+    || Number(left.seq) - Number(right.seq));
+  const indexes = groupIndexes(indexRows);
+  onStep?.({ step: "indexes", count: indexes.length });
+  return { tables, columns, primaryKeys, foreignKeys, indexes };
+}
+
 function makeFetchCatalog(factory: MysqlClientFactory) {
   return async (
     config: DatabaseConnectionConfig,
@@ -440,9 +704,13 @@ function makeFetchCatalog(factory: MysqlClientFactory) {
     let sql: MysqlSqlClient | undefined;
     let inTransaction = false;
     try {
-      sql = factory(config, target);
+      sql = await factory(config, target);
       const { version } = await readServerIdentity(sql, config.database);
-      await startProtectedTransaction(sql, version, () => { inTransaction = true; });
+      await establishReadOnlyProtection(sql, version, () => { inTransaction = true; });
+
+      if (version.product === "MySQL" && version.major <= 4) {
+        return { ok: true, value: await fetchLegacyCatalog(sql, config, onStep) };
+      }
 
       const tables = await queryWithTimeout<any[]>(sql, `
         SELECT TABLE_SCHEMA AS schemaName, TABLE_NAME AS name,
@@ -559,7 +827,7 @@ function makeExecuteReadOnly(factory: MysqlClientFactory) {
     let sql: MysqlSqlClient | undefined;
     let inTransaction = false;
     try {
-      sql = factory(config, target);
+      sql = await factory(config, target);
       const { version } = await readServerIdentity(sql, config.database);
       const modeRows = await queryWithTimeout<Record<string, unknown>[]>(
         sql,
@@ -575,7 +843,7 @@ function makeExecuteReadOnly(factory: MysqlClientFactory) {
       const statement = serverGuarded.isExplain
         ? serverGuarded.sql
         : `SELECT * FROM (\n${serverGuarded.sql}\n) AS \`_capped\`\nLIMIT ${bounded + 1}`;
-      await startProtectedTransaction(sql, version, () => { inTransaction = true; });
+      await establishReadOnlyProtection(sql, version, () => { inTransaction = true; });
       const rows = await queryWithTimeout<Record<string, unknown>[]>(sql, statement);
       const rowCapped = !serverGuarded.isExplain && rows.length > bounded;
       const rowLimited = rowCapped ? rows.slice(0, bounded) : rows;
@@ -635,10 +903,17 @@ function validate(config: DatabaseConnectionConfig): DatabaseError | null {
   if (config.ssl.serverName && (config.ssl.serverName.length > 253 || /[\s/\\\0]/.test(config.ssl.serverName))) {
     return { code: "invalid_configuration", message: "TLS server name is invalid", field: "ssl.serverName" };
   }
+  if (config.ssl.mode === "verify-full" && isIP(config.ssl.serverName || config.host)) {
+    return {
+      code: "invalid_configuration",
+      message: "MySQL verify-full requires a DNS TLS server name when the connection host is an IP address",
+      field: "ssl.serverName",
+    };
+  }
   return null;
 }
 
-export function createMysqlAdapter(factory: MysqlClientFactory = bunClient): DatabaseAdapter {
+export function createMysqlAdapter(factory: MysqlClientFactory = mysql2Client): DatabaseAdapter {
   return {
     engine: "mysql",
     defaultPort: 3306,

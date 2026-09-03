@@ -319,13 +319,14 @@ Read-only is enforced in four layers:
 | --- | --- |
 | Operator | Point the connection at a `GRANT SELECT`-only role |
 | Statement | Only `SELECT` / `WITH` / `EXPLAIN`; write keywords rejected anywhere in the statement |
-| Transaction | A server-enforced read-only transaction, always rolled back on the same physical connection |
+| Server | A read-only transaction on modern servers; legacy MySQL/MariaDB is allowed only after `SHOW GRANTS` proves every effective privilege is `SELECT` or `USAGE` |
 | Budget | A server timeout where supported, a 10s client deadline, a 100-row cap, and a 50KB result cap |
 
-The statement guard exists to give the model a correctable error message. The
-transaction is the actual guarantee — PostgreSQL allows data-modifying CTEs, so
-`WITH x AS (DELETE ... RETURNING *) SELECT * FROM x` begins with `WITH` and
-writes, and only the transaction catches it unconditionally.
+The statement guard exists to give the model a correctable error message. A
+server-enforced transaction is the primary guarantee where the server supports
+one. Legacy compatibility fails closed unless the server's own effective grants
+prove that writes are impossible; merely naming the account "reader" is never
+trusted.
 
 The model never receives a connection string. Tools take a connection name and
 the credential is resolved server-side, so a prompt-injected document cannot ask
@@ -339,31 +340,32 @@ cd apps/api && \
   DB_CHECK_PASSWORD=... bun scripts/db-connector-check.ts
 ```
 
-For MySQL/MariaDB, the adapter uses Bun.SQL directly, just like PostgreSQL. It
-queries only the configured database in `information_schema`, starts
-`START TRANSACTION READ ONLY`, and rejects file access, advisory-lock, delay,
-benchmark, and user-variable-assignment forms in addition to the shared SQL
-policy. MySQL 5.7.4+ uses `max_execution_time`; MariaDB 10.1.1+ uses
-`max_statement_time`; all versions retain the client deadline.
+For MySQL/MariaDB, the adapter uses `mysql2/promise`; PostgreSQL continues to use
+Bun.SQL. Modern MySQL/MariaDB catalog queries are restricted to the configured
+database in `information_schema`. MySQL 4.1 uses conservative `SHOW` metadata
+queries because its `information_schema` is not usable. The adapter rejects file
+access, advisory-lock, delay, benchmark, and user-variable-assignment forms in
+addition to the shared SQL policy. MySQL 5.7.4+ uses `max_execution_time`;
+MariaDB 10.1.1+ uses `max_statement_time`; every version retains a client
+deadline that destroys its dedicated connection on timeout.
 
 Compatibility is deliberately fail-closed:
 
 | Server | Status |
 | --- | --- |
-| MySQL 8.0 | Supported; the full Docker integration check passes on 8.0.46 |
+| MySQL 8.0.x | Supported, including the default `caching_sha2_password` authentication path |
 | MySQL 5.6–5.7 | Conditional on a successful read-only transaction capability probe |
-| MariaDB 10.11+ | Supported; the full Docker integration check passes on 10.11.19 |
+| MariaDB 10.11+ | Supported |
 | MariaDB 10.1–10.10 | Conditional on a successful live safety check |
-| MariaDB 5.5 | Unsupported in practice: 5.5.64 authenticates, but cannot establish the required read-only transaction and is refused |
-| MySQL 4.1 | Unsupported and rejected explicitly |
+| MariaDB 5.5.x | Legacy compatibility: requires verifiable `SELECT`/`USAGE`-only grants; no server-side statement timeout |
+| MySQL 4.1.24 | Legacy compatibility: mysql2 authentication, verifiable `SELECT`/`USAGE`-only grants, and safely parseable `SHOW` metadata are all mandatory |
 
-The unit suite proves the MySQL 8 and MariaDB version paths, query policy,
-transaction lifecycle, limits, TLS mapping, and cleanup. Disposable Docker
-integration runs additionally prove the complete adapter path on MySQL 8.0.46
-and MariaDB 10.11.19. With MySQL 8's default `caching_sha2_password`, use
+The unit suite covers modern and legacy protection paths, conservative legacy
+catalog parsing, query policy, limits, TLS mapping, timeout destruction, error
+redaction, and cleanup. With MySQL 8's default `caching_sha2_password`, use
 `require` or `verify-full`; the server will reject an unencrypted authentication
-exchange. Run the opt-in live check before approving any other server/version
-combination:
+exchange. Run the opt-in, SELECT-only live check for every server before
+approving it:
 
 ```bash
 cd apps/api && \
@@ -372,6 +374,15 @@ cd apps/api && \
   MYSQL_CHECK_PASSWORD=... MYSQL_CHECK_SSL_MODE=disable \
   bun scripts/mysql-connector-check.ts
 ```
+
+When the configured MySQL host is an IP literal, `verify-full` also requires a
+DNS `serverName`; mysql2 cannot verify an IP certificate identity itself. The
+TCP connection still goes only to the network-policy-approved literal address.
+
+The configured database is validated against `SHOW DATABASES` before it is
+selected. A connection's descriptive UI label is not automatically the remote
+database name; choose one of the databases the account can actually see instead
+of hardcoding site-specific names.
 
 Connected external schemas are accessed only through database adapters. They
 are not represented by Drizzle models and are never created, altered, or

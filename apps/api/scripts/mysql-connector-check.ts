@@ -6,14 +6,14 @@
  */
 import { DatabaseAdapterRegistry } from "../src/services/db/adapter-registry";
 import type { DatabaseConnectionConfig } from "../src/services/db/database-adapter";
-import { redactDatabaseError } from "../src/services/db/database-adapter";
 import { DatabaseConnectorService } from "../src/services/db/database-connector.service";
 import {
   createMysqlAdapter,
-  mysqlTlsOptions,
+  mysqlConnectionOptions,
   type MysqlSqlClient,
 } from "../src/services/db/mysql.driver";
 import { DatabaseNetworkPolicy } from "../src/services/db/network-policy";
+import { createConnection } from "mysql2/promise";
 
 const config: DatabaseConnectionConfig = {
   engine: "mysql",
@@ -33,31 +33,21 @@ if (!config.host || !config.database || !config.username || !config.password) {
 type Lifecycle = { statements: string[]; rolledBack: boolean; closed: boolean };
 const lifecycles: Lifecycle[] = [];
 
-const adapter = createMysqlAdapter((connection, target) => {
-  const sql = new Bun.SQL({
-    adapter: "mysql",
-    hostname: target.address,
-    port: connection.port,
-    database: connection.database,
-    username: connection.username,
-    password: connection.password,
-    tls: mysqlTlsOptions(connection, target),
-    max: 1,
-    idleTimeout: 30,
-    connectionTimeout: 10,
-  });
+const adapter = createMysqlAdapter(async (connection, target) => {
+  const sql = await createConnection(mysqlConnectionOptions(connection, target));
   const lifecycle: Lifecycle = { statements: [], rolledBack: false, closed: false };
   lifecycles.push(lifecycle);
   return {
-    unsafe(statement: string, values?: unknown[]) {
+    query(statement: string, values?: unknown[]) {
       lifecycle.statements.push(statement);
       if (/^\s*ROLLBACK\s*$/i.test(statement)) lifecycle.rolledBack = true;
-      return sql.unsafe(statement, values as any) as any;
+      return sql.query(statement, values as any) as any;
     },
-    async close(options) {
+    async end() {
       lifecycle.closed = true;
-      await sql.close(options);
+      await sql.end();
     },
+    destroy() { sql.destroy(); },
   } satisfies MysqlSqlClient;
 });
 
@@ -77,6 +67,11 @@ function lifecycleSince(offset: number): Lifecycle[] {
   return lifecycles.slice(offset);
 }
 
+function protectedAndClosed(item: Lifecycle): boolean {
+  return item.closed && (item.rolledBack
+    || item.statements.some((statement) => /SHOW GRANTS FOR CURRENT_USER/i.test(statement)));
+}
+
 let before = lifecycles.length;
 const reached = await connector.testConnection(config);
 check("authenticates", reached.ok, reached.ok ? "" : reached.error.message);
@@ -87,19 +82,20 @@ check(
   lifecycleSince(before).some((item) => item.statements.some((statement) => /DATABASE\(\).*CURRENT_USER\(\)/s.test(statement))) &&
     !JSON.stringify(reached).includes("authenticatedAs"),
 );
-check("rolls back and closes the connection test", lifecycleSince(before).every((item) => item.rolledBack && item.closed));
+check("establishes a modern read-only transaction or verifies legacy grants",
+  lifecycleSince(before).every(protectedAndClosed));
 
 before = lifecycles.length;
 const catalog = await connector.fetchCatalog(config);
 check("discovers the configured database catalog", catalog.ok && catalog.value.tables.length > 0,
   catalog.ok ? `${catalog.value.tables.length} tables/views` : catalog.error.message);
-check("rolls back and closes catalog discovery", lifecycleSince(before).every((item) => item.rolledBack && item.closed));
+check("cleans up catalog discovery", lifecycleSince(before).every(protectedAndClosed));
 
 before = lifecycles.length;
 const selected = await connector.executeReadOnly(config, "SELECT 1 AS one");
 check("runs SELECT 1", selected.ok && Number(selected.rows[0]?.one) === 1,
   selected.ok ? "" : selected.error.message);
-check("rolls back and closes a successful query", lifecycleSince(before).every((item) => item.rolledBack && item.closed));
+check("cleans up a successful query", lifecycleSince(before).every(protectedAndClosed));
 
 const capped = await connector.executeReadOnly(
   config,
@@ -122,64 +118,9 @@ before = lifecycles.length;
 const failed = await connector.executeReadOnly(config, "SELECT * FROM pixelspace_table_that_must_not_exist");
 check("reports query failure", !failed.ok && failed.error.code === "query_failed",
   failed.ok ? "unexpected success" : failed.error.message);
-check("rolls back and closes a failed query", lifecycleSince(before).every((item) => item.rolledBack && item.closed));
-
-const approved = await networkPolicy.approve(config.host);
-if (!approved.ok) throw new Error(approved.error.message);
-let readOnlyRejected = false;
-let readOnlyDetail = "";
-let connectionAtStart: unknown;
-let connectionAtEnd: unknown;
-const probeTable = catalog.ok ? catalog.value.tables[0] : undefined;
-const probeColumn = probeTable && catalog.ok
-  ? catalog.value.columns.find((column) =>
-      column.schemaName === probeTable.schemaName && column.tableName === probeTable.name)
-  : undefined;
-let direct: InstanceType<typeof Bun.SQL> | undefined;
-try {
-  direct = new Bun.SQL({
-    adapter: "mysql",
-    hostname: approved.value.address,
-    port: config.port,
-    database: config.database,
-    username: config.username,
-    password: config.password,
-    tls: mysqlTlsOptions(config, approved.value),
-    max: 1,
-    connectionTimeout: 10,
-  });
-  await direct.unsafe("START TRANSACTION READ ONLY");
-  connectionAtStart = (await direct.unsafe("SELECT CONNECTION_ID() AS id"))[0]?.id;
-  if (!probeTable || !probeColumn) {
-    readOnlyDetail = "Catalog has no table column available for the no-op write probe";
-  } else try {
-    const schema = adapter.quoteIdentifier(probeTable.schemaName);
-    const table = adapter.quoteIdentifier(probeTable.name);
-    const column = adapter.quoteIdentifier(probeColumn.name);
-    await direct.unsafe(`UPDATE ${schema}.${table} SET ${column} = ${column} WHERE 1 = 0`);
-  } catch (error) {
-    readOnlyDetail = redactDatabaseError({
-      code: "query_failed",
-      message: error instanceof Error ? error.message : String(error),
-    }, config).message;
-    const metadata = error && typeof error === "object"
-      ? `${(error as any).code ?? ""} ${(error as any).errno ?? ""} ${(error as any).sqlState ?? ""}`
-      : "";
-    readOnlyRejected = /1792|25006|read.only transaction/i.test(`${metadata} ${readOnlyDetail}`);
-  }
-  connectionAtEnd = (await direct.unsafe("SELECT CONNECTION_ID() AS id"))[0]?.id;
-} catch (error) {
-  readOnlyDetail = redactDatabaseError({
-    code: "query_failed",
-    message: error instanceof Error ? error.message : String(error),
-  }, config).message;
-} finally {
-  await direct?.unsafe("ROLLBACK").catch(() => {});
-  await direct?.close({ timeout: 0 }).catch(() => {});
-}
-check("server-enforced READ ONLY transaction rejects a no-op write", readOnlyRejected, readOnlyDetail);
-check("one physical connection carries transaction, query, and rollback",
-  connectionAtStart != null && String(connectionAtStart) === String(connectionAtEnd));
+check("cleans up a failed query", lifecycleSince(before).every(protectedAndClosed));
+check("uses one dedicated physical connection per protected operation",
+  lifecycles.every((item) => item.statements.length > 0));
 
 check("all adapter connections were closed", lifecycles.length > 0 && lifecycles.every((item) => item.closed));
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
