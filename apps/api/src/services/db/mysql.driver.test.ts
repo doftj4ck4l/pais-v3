@@ -4,9 +4,11 @@ import {
   boundMysqlCap,
   createMysqlAdapter,
   guardMysqlStatement,
+  mysqlConnectionOptions,
   mysqlAdapter,
   mysqlTlsOptions,
   parseMysqlServerVersion,
+  queryMysqlWithTimeout,
   type MysqlSqlClient,
 } from "./mysql.driver";
 import { DATABASE_ROW_CAP } from "./query-policy";
@@ -22,20 +24,23 @@ const config: DatabaseConnectionConfig = {
 };
 const target = { originalHost: config.host, address: "10.20.30.40", family: 4 as const };
 
-type FakeState = { calls: { statement: string; values?: unknown[] }[]; closed: number; cancelled: number };
+type FakeState = { calls: { statement: string; values?: unknown[] }[]; closed: number; destroyed: number };
 
 function fakeClient(
   handler: (statement: string, values?: unknown[]) => unknown = () => [],
+  databaseName = config.database,
 ): { client: MysqlSqlClient; state: FakeState } {
-  const state: FakeState = { calls: [], closed: 0, cancelled: 0 };
+  const state: FakeState = { calls: [], closed: 0, destroyed: 0 };
   const client: MysqlSqlClient = {
-    unsafe<T>(statement: string, values?: unknown[]) {
+    async query<T>(statement: string, values?: unknown[]) {
       state.calls.push({ statement, values });
-      const promise = Promise.resolve().then(() => handler(statement, values)) as Promise<T> & { cancel?: () => void };
-      promise.cancel = () => { state.cancelled++; };
-      return promise;
+      if (/^SHOW DATABASES$/i.test(statement.trim())) {
+        return [[{ Database: databaseName }] as T, []];
+      }
+      return [await handler(statement, values) as T, []];
     },
-    async close() { state.closed++; },
+    async end() { state.closed++; },
+    destroy() { state.destroyed++; },
   };
   return { client, state };
 }
@@ -74,6 +79,7 @@ describe("MySQL adapter validation", () => {
     ["password", { password: "bad\npassword" }],
     ["ssl.mode", { ssl: { mode: "prefer" } }],
     ["ssl.serverName", { ssl: { mode: "verify-full", serverName: "bad/name" } }],
+    ["ssl.serverName", { host: "10.20.30.40", ssl: { mode: "verify-full" } }],
   ] as const) {
     it(`rejects malformed ${field}`, () => {
       const candidate = {
@@ -86,15 +92,33 @@ describe("MySQL adapter validation", () => {
   }
 
   it("maps TLS modes while retaining the original host for SNI", () => {
-    expect(mysqlTlsOptions(config, target)).toBe(false);
-    expect(mysqlTlsOptions({ ...config, ssl: { mode: "require" } }, target)).toEqual({
+    expect(mysqlTlsOptions(config)).toBeUndefined();
+    expect(mysqlTlsOptions({ ...config, ssl: { mode: "require" } })).toEqual({
       rejectUnauthorized: false,
-      serverName: "db.internal",
+      verifyIdentity: false,
     });
     expect(mysqlTlsOptions({
       ...config,
       ssl: { mode: "verify-full", ca: "test CA", serverName: "db-tls.internal" },
-    }, target)).toEqual({ rejectUnauthorized: true, serverName: "db-tls.internal", ca: "test CA" });
+    })).toEqual({ rejectUnauthorized: true, verifyIdentity: true, ca: "test CA" });
+
+    const options = mysqlConnectionOptions({
+      ...config,
+      ssl: { mode: "verify-full", serverName: "db-tls.internal" },
+    }, target);
+    expect(options).toMatchObject({
+      host: "db-tls.internal",
+      port: 3306,
+      user: "reader",
+      connectTimeout: 10_000,
+      multipleStatements: false,
+      flags: ["-LOCAL_FILES"],
+    });
+    expect(options.database).toBeUndefined();
+    expect(options.infileStreamFactory).toBeUndefined();
+    expect(options.authPlugins).toBeUndefined();
+    expect(options.insecureAuth).toBeUndefined();
+    expect(options.enableCleartextPlugin).toBeUndefined();
   });
 });
 
@@ -103,19 +127,21 @@ describe("MySQL and MariaDB versions", () => {
     expect(parseMysqlServerVersion("8.0.46-commercial")?.product).toBe("MySQL");
     expect(parseMysqlServerVersion("8.0.46-commercial")?.version).toBe("8.0.46");
     expect(parseMysqlServerVersion("5.5.64-MariaDB")?.product).toBe("MariaDB");
+    expect(parseMysqlServerVersion("5.5.56-MariaDB")?.version).toBe("5.5.56");
     expect(parseMysqlServerVersion("5.5.5-10.5.17-MariaDB-1:10.5.17+maria")?.version).toBe("10.5.17");
   });
 
-  it("rejects MySQL 4.x after reading the required server identity", async () => {
+  it("does not admit MySQL 4.x without verifiable grants", async () => {
     const { adapter, state } = adapterWith((statement) => {
       if (/SELECT VERSION/i.test(statement)) return identity("4.1.24");
       return [];
     });
     const result = await adapter.testConnection(config, target);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe("unsupported_version");
+    if (!result.ok) expect(result.error.code).toBe("unsupported_capability");
     expect(state.calls.some((call) => /CURRENT_USER/i.test(call.statement))).toBe(true);
     expect(state.calls.some((call) => /START TRANSACTION/i.test(call.statement))).toBe(false);
+    expect(state.calls.some((call) => /SHOW GRANTS FOR CURRENT_USER/i.test(call.statement))).toBe(true);
     expect(state.closed).toBe(1);
   });
 
@@ -156,6 +182,73 @@ describe("MySQL and MariaDB versions", () => {
     if (!result.ok) expect(result.error.code).toBe("unsupported_capability");
     expect(state.closed).toBe(1);
   });
+
+  it("accepts MySQL 4.1 only after verifying SELECT-only grants", async () => {
+    const { adapter, state } = adapterWith((statement) => {
+      if (/SELECT VERSION/i.test(statement)) return identity("4.1.24");
+      if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
+        return [
+          { "Grants for reader@%": "GRANT USAGE ON *.* TO 'reader'@'%'" },
+          { "Grants for reader@%": "GRANT SELECT ON `inventory`.* TO 'reader'@'%'" },
+        ];
+      }
+      return [];
+    });
+    const result = await adapter.testConnection(config, target);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { serverProduct: "MySQL", serverVersion: "4.1.24" },
+    });
+    expect(state.calls.some((call) => /SHOW GRANTS FOR CURRENT_USER/i.test(call.statement))).toBe(true);
+    expect(state.calls.some((call) => /START TRANSACTION READ ONLY/i.test(call.statement))).toBe(false);
+    expect(state.closed).toBe(1);
+  });
+
+  it("uses verified compatibility mode for MariaDB 5.5 without READ ONLY transactions", async () => {
+    const { adapter, state } = adapterWith((statement) => {
+      if (/SELECT VERSION/i.test(statement)) return identity("5.5.64-MariaDB");
+      if (/START TRANSACTION READ ONLY/i.test(statement)) throw new Error("syntax error near READ ONLY");
+      if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
+        return [{ "Grants for reader@%": "GRANT SELECT ON `inventory`.* TO 'reader'@'%'" }];
+      }
+      return [];
+    });
+    const result = await adapter.testConnection(config, target);
+    expect(result).toMatchObject({
+      ok: true,
+      value: { serverProduct: "MariaDB", serverVersion: "5.5.64" },
+    });
+    expect(state.calls.some((call) => /SHOW GRANTS FOR CURRENT_USER/i.test(call.statement))).toBe(true);
+    expect(state.closed).toBe(1);
+  });
+
+  for (const grant of [
+    "GRANT INSERT ON `inventory`.* TO 'reader'@'%'",
+    "GRANT UPDATE ON `inventory`.* TO 'reader'@'%'",
+    "GRANT DELETE ON `inventory`.* TO 'reader'@'%'",
+    "GRANT CREATE ON `inventory`.* TO 'reader'@'%'",
+    "GRANT DROP ON `inventory`.* TO 'reader'@'%'",
+    "GRANT ALTER ON `inventory`.* TO 'reader'@'%'",
+    "GRANT FILE ON *.* TO 'reader'@'%'",
+    "GRANT EXECUTE ON *.* TO 'reader'@'%'",
+    "GRANT SELECT ON `inventory`.* TO 'reader'@'%' WITH GRANT OPTION",
+    "GRANT SOMETHING_NEW ON *.* TO 'reader'@'%'",
+    "GRANT SELECT ON *.* TO 'reader'@'%' WITH SOMETHING_NEW 1",
+    "this is not a grant",
+  ]) {
+    it(`rejects an unsafe or malformed legacy grant: ${grant.slice(0, 42)}`, async () => {
+      const { adapter, state } = adapterWith((statement) => {
+        if (/SELECT VERSION/i.test(statement)) return identity("4.1.24");
+        if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) return [{ grant }];
+        return [];
+      });
+      const result = await adapter.testConnection(config, target);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("unsupported_capability");
+      expect(JSON.stringify(result)).not.toContain(grant);
+      expect(state.closed).toBe(1);
+    });
+  }
 });
 
 describe("MySQL query policy", () => {
@@ -233,6 +326,46 @@ describe("MySQL query policy", () => {
 });
 
 describe("MySQL execution and catalog lifecycle", () => {
+  it("destroys the dedicated connection when the client deadline fires", async () => {
+    const state: FakeState = { calls: [], closed: 0, destroyed: 0 };
+    const client: MysqlSqlClient = {
+      query(statement) {
+        state.calls.push({ statement });
+        return new Promise(() => {});
+      },
+      async end() { state.closed++; },
+      destroy() { state.destroyed++; },
+    };
+    await expect(queryMysqlWithTimeout(client, "SELECT 1", undefined, 1)).rejects.toThrow("timeout");
+    expect(state.destroyed).toBe(1);
+  });
+
+  it("destroys and closes the adapter connection after a user-query timeout", async () => {
+    const { client, state } = fakeClient((statement) => {
+      if (/SELECT VERSION/i.test(statement)) return identity("8.0.46");
+      if (/AS `_capped`/i.test(statement)) return new Promise(() => {});
+      return [];
+    });
+    client.statementTimeoutMs = 1;
+    const result = await createMysqlAdapter(() => client).executeReadOnly(config, target, "SELECT 1");
+    expect(result).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(state.destroyed).toBe(1);
+    expect(state.calls.at(-1)?.statement).toBe("ROLLBACK");
+    expect(state.closed).toBe(1);
+  });
+
+  it("validates the configured database against SHOW DATABASES", async () => {
+    const { client, state } = fakeClient(() => [], "another_database");
+    const result = await createMysqlAdapter(() => client).testConnection(config, target);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "invalid_configuration", field: "database" },
+    });
+    expect(state.calls.some((call) => /^SHOW DATABASES$/i.test(call.statement))).toBe(true);
+    expect(state.calls.some((call) => /^USE /i.test(call.statement))).toBe(false);
+    expect(state.closed).toBe(1);
+  });
+
   it("wraps ordinary queries and reports row truncation", async () => {
     const { adapter, state } = adapterWith((statement) => {
       if (/SELECT VERSION/i.test(statement)) return identity("8.0.46");
@@ -306,6 +439,19 @@ describe("MySQL execution and catalog lifecycle", () => {
     });
   });
 
+  it("classifies mysql2 authentication failures without returning driver details", async () => {
+    const error = Object.assign(new Error("Access denied for user 'reader'@'10.0.0.1' (using password: YES)"), {
+      code: "ER_ACCESS_DENIED_ERROR",
+      errno: 1045,
+      sqlState: "28000",
+    });
+    const result = await createMysqlAdapter(async () => { throw error; }).testConnection(config, target);
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "authentication_failed", message: "Database authentication failed" },
+    });
+  });
+
   it("restricts every catalog query and reports all five stages", async () => {
     const { adapter, state } = adapterWith((statement) => {
       if (/SELECT VERSION/i.test(statement)) return identity("8.0.46");
@@ -329,6 +475,73 @@ describe("MySQL execution and catalog lifecycle", () => {
     expect(catalogCalls.every((call) => /TABLE_SCHEMA = \?/i.test(call.statement) && call.values?.[0] === config.database)).toBe(true);
     expect(catalogCalls.every((call) => /information_schema.*performance_schema.*sys/is.test(call.statement))).toBe(true);
     expect(state.calls.at(-1)?.statement).toBe("ROLLBACK");
+    expect(state.closed).toBe(1);
+  });
+
+  it("discovers a MySQL 4.1 catalog with escaped SHOW statements", async () => {
+    const legacyConfig = { ...config, database: "odd`catalog" };
+    const { client, state } = fakeClient((statement) => {
+      if (/SELECT VERSION/i.test(statement)) return identity("4.1.24", legacyConfig.database);
+      if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
+        return [{ grant: "GRANT SELECT ON *.* TO 'reader'@'%'" }];
+      }
+      if (/SHOW TABLE STATUS/i.test(statement)) {
+        return [{ Name: "order`items", Engine: "MyISAM", Rows: 2, Comment: "orders" }];
+      }
+      if (/SHOW FULL COLUMNS/i.test(statement)) {
+        return [
+          { Field: "id", Type: "int(11)", Null: "NO", Key: "PRI", Comment: "" },
+          { Field: "order_id", Type: "int(11)", Null: "YES", Key: "MUL", Comment: "" },
+        ];
+      }
+      if (/SHOW INDEX/i.test(statement)) {
+        return [{ Table: "order`items", Non_unique: 0, Key_name: "PRIMARY", Seq_in_index: 1, Column_name: "id", Sub_part: null, Collation: "A" }];
+      }
+      if (/SHOW CREATE TABLE/i.test(statement)) {
+        return [{
+          Table: "order`items",
+          "Create Table": "CREATE TABLE `order``items` (`id` int(11), `order_id` int(11), CONSTRAINT `fk_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`))",
+        }];
+      }
+      return [];
+    }, legacyConfig.database);
+    const adapter = createMysqlAdapter(() => client);
+    const stages: string[] = [];
+    const result = await adapter.fetchCatalog(legacyConfig, target, (stage) => stages.push(stage.step));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.tables[0]).toMatchObject({ schemaName: "odd`catalog", name: "order`items" });
+      expect(result.value.primaryKeys).toEqual([{ schemaName: "odd`catalog", tableName: "order`items", columnName: "id" }]);
+      expect(result.value.foreignKeys).toEqual([{
+        schemaName: "odd`catalog",
+        tableName: "order`items",
+        columnName: "order_id",
+        refSchema: "odd`catalog",
+        refTable: "orders",
+        refColumn: "id",
+      }]);
+    }
+    expect(stages).toEqual(["tables", "columns", "primaryKeys", "foreignKeys", "indexes"]);
+    expect(state.calls.some((call) => call.statement.includes("`odd``catalog`"))).toBe(true);
+    expect(state.calls.some((call) => call.statement.includes("`order``items`"))).toBe(true);
+    expect(state.closed).toBe(1);
+  });
+
+  it("fails closed instead of inventing unparseable legacy foreign keys", async () => {
+    const { adapter, state } = adapterWith((statement) => {
+      if (/SELECT VERSION/i.test(statement)) return identity("4.1.24");
+      if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
+        return [{ grant: "GRANT SELECT ON `inventory`.* TO 'reader'@'%'" }];
+      }
+      if (/SHOW TABLE STATUS/i.test(statement)) return [{ Name: "items", Rows: 1 }];
+      if (/SHOW FULL COLUMNS/i.test(statement)) return [{ Field: "id", Type: "int", Null: "NO", Key: "PRI" }];
+      if (/SHOW CREATE TABLE/i.test(statement)) {
+        return [{ "Create Table": "CREATE TABLE `items` (`id` int, FOREIGN KEY (id) REFERENCES orders (id))" }];
+      }
+      return [];
+    });
+    const result = await adapter.fetchCatalog(config, target);
+    expect(result).toMatchObject({ ok: false, error: { code: "unsupported_capability" } });
     expect(state.closed).toBe(1);
   });
 });
