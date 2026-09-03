@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import type { RawCatalog } from "./database-adapter";
-import { buildSnapshot } from "./introspect.service";
+import type { DatabaseConnectionConfig, RawCatalog } from "./database-adapter";
+import type { DatabaseConnectionStore } from "../../repositories/database-connection.repository";
+import type { DatabaseConnectorService } from "./database-connector.service";
+import { buildSnapshot, introspectConnection, type IntrospectPhase } from "./introspect.service";
 
 /**
  * `buildSnapshot` merges five flat catalog result sets into the nested
@@ -162,5 +164,51 @@ describe("buildSnapshot", () => {
     expect(refundsCode.isPrimaryKey).toBe(false);
     expect(refundsCode.fkTable).toBe("public.orders");
     expect(refundsCode.fkColumn).toBe("code");
+  });
+});
+
+describe("introspection progress", () => {
+  it("labels a legacy foreign-key parse failure as reading foreign keys", async () => {
+    const phases: IntrospectPhase[] = [];
+    const statuses: string[] = [];
+    const store = {
+      async markStatus(_workspaceId: string, _connectionId: string, _status: string, error: string | null) {
+        if (error) statuses.push(error);
+      },
+    } as unknown as DatabaseConnectionStore;
+    const connector = {
+      async fetchCatalog(_config: DatabaseConnectionConfig, onStep?: (step: { step: "tables" | "columns" | "primaryKeys" | "foreignKeys" | "indexes"; count: number }) => void) {
+        onStep?.({ step: "tables", count: 491 });
+        onStep?.({ step: "columns", count: 4_028 });
+        onStep?.({ step: "primaryKeys", count: 448 });
+        onStep?.({ step: "foreignKeys", count: 0 });
+        return {
+          ok: false as const,
+          error: {
+            code: "unsupported_capability" as const,
+            message: "The legacy MySQL server returned foreign-key metadata that could not be parsed safely",
+          },
+        };
+      },
+    } as unknown as DatabaseConnectorService;
+    const mysqlConfig: DatabaseConnectionConfig = {
+      engine: "mysql",
+      host: "db.internal",
+      port: 3306,
+      database: "ekpdefaultdb",
+      username: "reader",
+      password: "test-only",
+      ssl: { mode: "disable" },
+    };
+
+    const result = await introspectConnection("connection-id", "workspace-id", mysqlConfig, {
+      store,
+      connector,
+      onPhase: (phase) => phases.push(phase),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(statuses).toHaveLength(1);
+    expect(phases.at(-1)).toMatchObject({ phase: "failed", step: "reading foreign keys" });
   });
 });
