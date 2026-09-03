@@ -119,8 +119,9 @@ jobs:
           archive="$(ls dist/pixelspace-*-${{ matrix.arch }}.tar.gz | head -1)"
           [ -n "$archive" ] || { echo "no ${{ matrix.arch }} bundle produced"; exit 1; }
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$archive")" >> "$GITHUB_OUTPUT"
-          ls -lh "$archive"
+          [ -f "$archive.sha256" ] || { echo "bundle checksum is missing"; exit 1; }
+          echo "checksum=$archive.sha256" >> "$GITHUB_OUTPUT"
+          ls -lh "$archive" "$archive.sha256"
 
       - name: Attach to the release
         env:
@@ -129,16 +130,19 @@ jobs:
           REPO: ${{ github.repository }}
           TAG: ${{ needs.release.outputs.tag }}
           ARCHIVE: ${{ steps.build.outputs.archive }}
-          NAME: ${{ steps.build.outputs.name }}
+          CHECKSUM: ${{ steps.build.outputs.checksum }}
         run: |
           set -euo pipefail
           api="$SERVER/api/v1/repos/$REPO"; auth="Authorization: token $TOKEN"
           id="$(curl -fsS -H "$auth" "$api/releases/tags/$TAG" | jq -r '.id')"
           [ -n "$id" ] && [ "$id" != null ] || { echo "release $TAG not found"; exit 1; }
-          old="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
-            | jq -r --arg n "$NAME" '.[] | select(.name==$n) | .id')"
-          [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$old"
-          curl -fsS -X POST -H "$auth" \
-            -F "attachment=@$ARCHIVE;type=application/gzip" \
-            "$api/releases/$id/assets?name=$NAME"
-          echo "Attached $NAME to $TAG."
+          for asset in "$ARCHIVE" "$CHECKSUM"; do
+            name="$(basename "$asset")"
+            old="$(curl -fsS -H "$auth" "$api/releases/$id/assets" \
+              | jq -r --arg n "$name" '.[] | select(.name==$n) | .id')"
+            [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$id/assets/$old"
+            curl -fsS -X POST -H "$auth" \
+              -F "attachment=@$asset;type=application/octet-stream" \
+              "$api/releases/$id/assets?name=$name"
+            echo "Attached $name to $TAG."
+          done

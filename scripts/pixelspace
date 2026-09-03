@@ -45,6 +45,10 @@ PURGE=0
 PACKAGE_OUTPUT=""
 PACKAGE_SKIP_IMAGES=0
 PACKAGE_WITH_MODEL=0
+UPDATE_MANIFEST_URL_OVERRIDE=""
+UPDATE_AUTH_HEADER_FILE_OVERRIDE=""
+UPDATE_STAGE=""
+UPDATE_ACTIVE=0
 POSITIONAL=()
 
 say() { printf '%s\n' "$*"; }
@@ -68,6 +72,9 @@ Commands:
   backup      Stop stateful services briefly and create a consistent archive
   restore     Restore an archive (requires --yes)
   upgrade     Back up, refresh images/builds, recreate, and verify (--dry-run to preview)
+  configure-update  Configure a private HTTPS release channel
+  check-update      Check the configured release channel without changing anything
+  update      Download, verify, back up, activate, and roll back on failure
   uninstall   Stop Pixelspace; data is preserved unless --purge --yes is used
   reset-admin-password  Reset a local admin password and revoke its sessions
   package     Build a self-contained offline install bundle (no per-host clone)
@@ -89,6 +96,9 @@ Install options:
                                optional Compose-managed DGX model
   --deploy-mode build|images   default: build
   --env-file PATH
+  --update-manifest-url URL    stable private HTTPS channel manifest
+  --update-auth-header-file PATH
+                               mode 600/400 file containing one Authorization: or Cookie: header
   --no-interactive             skip the guided prompts; use flags/defaults only
   --dry-run
 
@@ -125,6 +135,8 @@ while [[ $# -gt 0 ]]; do
     --model-pack) MODEL_PACK_OVERRIDE="${2:?missing model pack}"; shift 2 ;;
     --deploy-mode) DEPLOY_MODE_OVERRIDE="${2:?missing deploy mode}"; shift 2 ;;
     --env-file) ENV_FILE="${2:?missing env file}"; shift 2 ;;
+    --update-manifest-url) UPDATE_MANIFEST_URL_OVERRIDE="${2:?missing update manifest URL}"; shift 2 ;;
+    --update-auth-header-file) UPDATE_AUTH_HEADER_FILE_OVERRIDE="${2:?missing update auth header file}"; shift 2 ;;
     --no-interactive) NONINTERACTIVE=1; shift ;;
     --output) PACKAGE_OUTPUT="${2:?missing output path}"; shift 2 ;;
     --skip-images) PACKAGE_SKIP_IMAGES=1; shift ;;
@@ -141,8 +153,8 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}"
 
-if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" && "$COMMAND" != "upgrade" ]]; then
-  die "--dry-run is supported only for install and upgrade"
+if [[ "$DRY_RUN" -eq 1 && "$COMMAND" != "install" && "$COMMAND" != "upgrade" && "$COMMAND" != "update" ]]; then
+  die "--dry-run is supported only for install, upgrade, and update"
 fi
 
 env_value_from_allow_empty() {
@@ -225,6 +237,10 @@ is_digest_image() {
   [[ "$1" =~ @sha256:[0-9a-fA-F]{64}$ ]]
 }
 
+is_immutable_image() {
+  is_digest_image "$1" || [[ "$1" =~ ^sha256:[0-9a-fA-F]{64}$ ]]
+}
+
 # The app version, from the repo-root VERSION file (the same file baked into the
 # API image). A missing or malformed file reads as 0.0.0-dev so a partial
 # checkout still installs; the app itself falls back the same way.
@@ -253,6 +269,118 @@ semver_compare() {
     if ((10#$x > 10#$y)); then printf '1'; return; fi
   done
   printf '0'
+}
+
+update_manifest_url() {
+  if [[ -n "$UPDATE_MANIFEST_URL_OVERRIDE" ]]; then
+    printf '%s' "$UPDATE_MANIFEST_URL_OVERRIDE"
+  else
+    env_value PIXELSPACE_UPDATE_MANIFEST_URL
+  fi
+}
+
+update_auth_header_file() {
+  if [[ -n "$UPDATE_AUTH_HEADER_FILE_OVERRIDE" ]]; then
+    printf '%s' "$UPDATE_AUTH_HEADER_FILE_OVERRIDE"
+  else
+    env_value PIXELSPACE_UPDATE_AUTH_HEADER_FILE 2>/dev/null || true
+  fi
+}
+
+validate_update_url() {
+  local url="$1"
+  [[ -n "$url" && "$url" != *$'\n'* && "$url" != *$'\r'* ]] ||
+    die "update URLs must be non-empty single-line values"
+  [[ "$url" == https://* ]] || die "update URLs must use HTTPS"
+}
+
+validate_update_auth_header_file() {
+  local file="$1" mode
+  [[ -z "$file" ]] && return 0
+  [[ "$file" == /* ]] || die "update auth header file must use an absolute path"
+  [[ -f "$file" && ! -L "$file" ]] || die "update auth header file must be a regular non-symlink file"
+  mode="$(stat -c '%a' "$file" 2>/dev/null || printf unknown)"
+  [[ "$mode" == "600" || "$mode" == "400" ]] ||
+    die "update auth header file must be mode 600 or 400 (currently $mode)"
+  awk 'NR == 1 && /^(Authorization|Cookie): [^[:cntrl:]]+$/ { valid=1 } END { exit !(NR == 1 && valid) }' "$file" ||
+    die "update auth header file must contain exactly one Authorization: or Cookie: header"
+}
+
+validate_update_config() {
+  local url auth_file
+  url="$(update_manifest_url 2>/dev/null || true)"
+  [[ -n "$url" ]] || die "no update channel is configured; run configure-update with --update-manifest-url"
+  validate_update_url "$url"
+  auth_file="$(update_auth_header_file)"
+  validate_update_auth_header_file "$auth_file"
+}
+
+curl_config_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+# Keep signed query strings and authorization material out of process arguments,
+# shell traces, and error messages. curl reads the URL/output from a private
+# temporary config and the optional secret header directly from its mode-600
+# file.
+download_update_file() {
+  local url="$1" output="$2" auth_file request_config error_file xtrace_enabled=0
+  validate_update_url "$url"
+  auth_file="$(update_auth_header_file)"
+  validate_update_auth_header_file "$auth_file"
+  request_config="$(mktemp "$(dirname -- "$output")/.curl-request.XXXXXX")"
+  error_file="$(mktemp "$(dirname -- "$output")/.curl-error.XXXXXX")"
+  chmod 600 "$request_config" "$error_file"
+  if [[ $- == *x* ]]; then xtrace_enabled=1; set +x; fi
+  printf 'url = "%s"\noutput = "%s"\n' \
+    "$(curl_config_escape "$url")" "$(curl_config_escape "$output")" > "$request_config"
+  local -a command=(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  --proto-redir '=https' --retry 3 --retry-all-errors --connect-timeout 10 --max-time 1800)
+  [[ -z "$auth_file" ]] || command+=(--header "@$auth_file")
+  command+=(--config "$request_config")
+  if ! "${command[@]}" >/dev/null 2>"$error_file"; then
+    rm -f -- "$request_config" "$error_file"
+    [[ "$xtrace_enabled" -eq 0 ]] || set -x
+    die "private update download failed; verify the channel URL, authorization, and network access"
+  fi
+  rm -f -- "$request_config" "$error_file"
+  [[ "$xtrace_enabled" -eq 0 ]] || set -x
+  [[ -f "$output" ]] || die "private update download completed without producing a file"
+}
+
+release_manifest_value() {
+  local file="$1" key="$2"
+  awk -F= -v key="$key" '
+    $1 == key { count++; value=substr($0, length(key)+2) }
+    END { if (count != 1 || value == "") exit 1; print value }
+  ' "$file"
+}
+
+RELEASE_VERSION=""
+RELEASE_BUNDLE_URL=""
+RELEASE_BUNDLE_SHA256=""
+
+parse_release_manifest() {
+  local file="$1" arch key_prefix
+  [[ -f "$file" ]] || die "release channel returned no manifest"
+  RELEASE_VERSION="$(release_manifest_value "$file" PIXELSPACE_RELEASE_VERSION 2>/dev/null || true)"
+  [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] ||
+    die "release manifest has an invalid PIXELSPACE_RELEASE_VERSION"
+  arch="$(host_arch)"
+  case "$arch" in
+    amd64) key_prefix=PIXELSPACE_RELEASE_AMD64 ;;
+    arm64) key_prefix=PIXELSPACE_RELEASE_ARM64 ;;
+    *) die "the release channel does not support architecture $arch" ;;
+  esac
+  RELEASE_BUNDLE_URL="$(release_manifest_value "$file" "${key_prefix}_URL" 2>/dev/null || true)"
+  RELEASE_BUNDLE_SHA256="$(release_manifest_value "$file" "${key_prefix}_SHA256" 2>/dev/null || true)"
+  validate_update_url "$RELEASE_BUNDLE_URL"
+  [[ "$RELEASE_BUNDLE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] ||
+    die "release manifest has an invalid ${key_prefix}_SHA256"
+  RELEASE_BUNDLE_SHA256="${RELEASE_BUNDLE_SHA256,,}"
 }
 
 is_ipv6_loopback_literal() {
@@ -582,6 +710,15 @@ generate_env() {
   ensure_env LOCAL_SESSION_TTL_HOURS "168"
   ensure_env PIXELSPACE_PROFILE "$PROFILE"
 
+  [[ -z "$UPDATE_MANIFEST_URL_OVERRIDE" ]] || {
+    validate_update_url "$UPDATE_MANIFEST_URL_OVERRIDE"
+    set_env PIXELSPACE_UPDATE_MANIFEST_URL "$UPDATE_MANIFEST_URL_OVERRIDE"
+  }
+  [[ -z "$UPDATE_AUTH_HEADER_FILE_OVERRIDE" ]] || {
+    validate_update_auth_header_file "$UPDATE_AUTH_HEADER_FILE_OVERRIDE"
+    set_env PIXELSPACE_UPDATE_AUTH_HEADER_FILE "$UPDATE_AUTH_HEADER_FILE_OVERRIDE"
+  }
+
   [[ -z "$DATA_ROOT_OVERRIDE" ]] || {
     set_env PIXELSPACE_DATA_ROOT "$DATA_ROOT_OVERRIDE/data"
     set_env SANDBOX_ROOT "$DATA_ROOT_OVERRIDE/workspaces"
@@ -706,7 +843,7 @@ doctor() {
       local image_key image_ref
       for image_key in PIXELSPACE_API_IMAGE PIXELSPACE_WEB_IMAGE SANDBOX_IMAGE RUSTFS_IMAGE; do
         image_ref="$(env_value "$image_key" || true)"
-        if ! is_digest_image "$image_ref"; then
+        if ! is_immutable_image "$image_ref"; then
           warn "$image_key must use an immutable @sha256 digest in image mode"
           failures=$((failures + 1))
         fi
@@ -728,7 +865,7 @@ doctor() {
         [[ "$(runtime_env_value CUSTOM_MODEL || true)" == "$BUNDLED_MODEL_PACK" ]] || { warn "the bundled model ID must be $BUNDLED_MODEL_PACK"; failures=$((failures + 1)); }
         model_image="$(env_value PIXELSPACE_MODEL_IMAGE || true)"
         if [[ "$offline_bundle" != "1" ]]; then
-          is_digest_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest"; failures=$((failures + 1)); }
+          is_immutable_image "$model_image" || { warn "PIXELSPACE_MODEL_IMAGE must use an immutable digest or local image ID"; failures=$((failures + 1)); }
         fi
         model_cache="$(env_value PIXELSPACE_MODEL_CACHE_ROOT || true)"
         [[ "$model_cache" == /* ]] || { warn "PIXELSPACE_MODEL_CACHE_ROOT must be an absolute path"; failures=$((failures + 1)); }
@@ -748,6 +885,12 @@ doctor() {
     if [[ "$mode" != "600" && "$mode" != "400" ]]; then
       warn "$ENV_FILE contains secrets and should be mode 600 (currently $mode)"
       warnings=$((warnings + 1))
+    fi
+    if env_has_key PIXELSPACE_UPDATE_MANIFEST_URL; then
+      if ! (validate_update_config) 2>/dev/null; then
+        warn "private update channel configuration is invalid; run configure-update again"
+        failures=$((failures + 1))
+      fi
     fi
     if [[ "$docker_installed" -eq 1 && "$docker_reachable" -eq 1 ]]; then
       compose config -q >/dev/null 2>&1 || { warn "docker compose configuration is invalid"; failures=$((failures + 1)); }
@@ -1014,8 +1157,8 @@ validate_backup_helper_policy() {
   local mode helper_image
   mode="$(env_value PIXELSPACE_DEPLOY_MODE || printf 'build')"
   helper_image="$(env_value SANDBOX_IMAGE || printf 'pixelspace-sandbox:1')"
-  if [[ "$mode" == "images" ]] && ! is_digest_image "$helper_image"; then
-    die "SANDBOX_IMAGE must use an immutable @sha256 digest before it can access backups"
+  if [[ "$mode" == "images" ]] && ! is_immutable_image "$helper_image"; then
+    die "SANDBOX_IMAGE must use an immutable digest or local image ID before it can access backups"
   fi
 }
 
@@ -1177,10 +1320,13 @@ package_bundle() {
 
   mkdir -p "$(dirname -- "$out")"
   run tar -C "$stage" -czf "$out" "pixelspace-${version}" || die "could not write the bundle archive"
+  sha256sum "$out" | awk -v name="$(basename -- "$out")" '{ print $1 "  " name }' > "$out.sha256"
+  chmod 644 "$out" "$out.sha256"
   rm -rf "$stage"
   trap - EXIT
   say ""
   say "Wrote $out"
+  say "Wrote $out.sha256"
   say "On the target host: extract it, then run  cd pixelspace-${version} && ./install.sh"
 }
 
@@ -1202,6 +1348,19 @@ apply_offline_bundle() {
       [[ -n "$key" && "$key" != \#* ]] || continue
       set_env "$key" "$val"
     done < "$ROOT/images/manifest.env"
+  fi
+  # Local tags are convenient archive labels but can later be overwritten.
+  # Once the exact bundle bytes are loaded, persist Docker's content-addressed
+  # image IDs so backups and subsequent starts cannot resolve a different tag.
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    local image_key image_ref image_id
+    for image_key in PIXELSPACE_API_IMAGE PIXELSPACE_WEB_IMAGE SANDBOX_IMAGE RUSTFS_IMAGE; do
+      image_ref="$(env_value "$image_key")"
+      image_id="$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null || true)"
+      [[ "$image_id" =~ ^sha256:[0-9a-fA-F]{64}$ ]] ||
+        die "bundled image is unavailable or has an invalid image ID: $image_key"
+      set_env "$image_key" "$image_id"
+    done
   fi
   # The loaded tars are the immutability guarantee, so doctor accepts these
   # image tags without an @sha256 digest — see the image-mode check.
@@ -1452,6 +1611,9 @@ backup_cleanup() {
   if [[ -n "${RESTORE_STAGE:-}" ]]; then
     rm -rf -- "$RESTORE_STAGE"
     RESTORE_STAGE=""
+  fi
+  if [[ "$UPDATE_ACTIVE" -eq 1 && -n "$UPDATE_STAGE" ]]; then
+    rm -rf -- "$UPDATE_STAGE"
   fi
   rmdir "${LOCK_DIR:-}" 2>/dev/null || true
   return "$code"
@@ -1725,7 +1887,231 @@ restore_stack() {
   say "Restore complete. Host paths and exposure settings were preserved; stored-data secrets were restored."
 }
 
+configure_update_channel() {
+  local auth_file
+  [[ -f "$ENV_FILE" ]] || die "Pixelspace is not installed; run install first"
+  [[ -n "$UPDATE_MANIFEST_URL_OVERRIDE" ]] ||
+    die "configure-update requires --update-manifest-url"
+  validate_update_url "$UPDATE_MANIFEST_URL_OVERRIDE"
+  auth_file="${UPDATE_AUTH_HEADER_FILE_OVERRIDE:-$(update_auth_header_file)}"
+  validate_update_auth_header_file "$auth_file"
+  set_env PIXELSPACE_UPDATE_MANIFEST_URL "$UPDATE_MANIFEST_URL_OVERRIDE"
+  [[ -z "$UPDATE_AUTH_HEADER_FILE_OVERRIDE" ]] ||
+    set_env PIXELSPACE_UPDATE_AUTH_HEADER_FILE "$UPDATE_AUTH_HEADER_FILE_OVERRIDE"
+  validate_update_config
+  say "Private update channel configured. Credentials remain in the protected header file."
+}
+
+fetch_release_manifest() {
+  local destination="$1" url xtrace_enabled=0
+  if [[ $- == *x* ]]; then xtrace_enabled=1; set +x; fi
+  validate_update_config
+  url="$(update_manifest_url)"
+  download_update_file "$url" "$destination"
+  [[ "$(stat -c '%s' "$destination")" -le 65536 ]] || die "release manifest exceeds 64 KiB"
+  parse_release_manifest "$destination"
+  [[ "$xtrace_enabled" -eq 0 ]] || set -x
+}
+
+download_release_bundle() {
+  local destination="$1" xtrace_enabled=0
+  if [[ $- == *x* ]]; then xtrace_enabled=1; set +x; fi
+  download_update_file "$RELEASE_BUNDLE_URL" "$destination"
+  [[ "$xtrace_enabled" -eq 0 ]] || set -x
+}
+
+check_update() {
+  [[ -f "$ENV_FILE" ]] || die "Pixelspace is not installed; run install first"
+  command -v curl >/dev/null 2>&1 || die "curl is required to check for updates"
+  local stage current comparison
+  stage="$(mktemp -d)"
+  trap "rm -rf -- $(printf '%q' "$stage")" EXIT
+  fetch_release_manifest "$stage/channel.env"
+  current="$(env_value PIXELSPACE_VERSION 2>/dev/null || printf '0.0.0-dev')"
+  comparison="$(semver_compare "$RELEASE_VERSION" "$current")"
+  if [[ "$comparison" == "1" ]]; then
+    say "Pixelspace $RELEASE_VERSION is available (installed: $current)."
+  elif [[ "$comparison" == "0" ]]; then
+    say "Pixelspace is up to date at $current."
+  else
+    say "Release channel is at $RELEASE_VERSION; installed version $current is newer."
+  fi
+}
+
+remove_runtime_path() {
+  local path="$1"
+  [[ ! -e "$path" && ! -L "$path" ]] || find "$path" -depth -delete
+}
+
+move_runtime_path() {
+  local source_root="$1" destination_root="$2" relative="$3"
+  [[ -e "$source_root/$relative" || -L "$source_root/$relative" ]] || return 0
+  mkdir -p "$(dirname -- "$destination_root/$relative")"
+  mv -- "$source_root/$relative" "$destination_root/$relative"
+}
+
+readonly -a UPDATE_RUNTIME_PATHS=(
+  install.sh
+  scripts/pixelspace
+  docker-compose.yml
+  VERSION
+  .pixelspace-bundle
+  images
+  apps/api/skills
+)
+
+restore_runtime_snapshot() {
+  local snapshot="$1" relative
+  for relative in "${UPDATE_RUNTIME_PATHS[@]}"; do
+    remove_runtime_path "$ROOT/$relative" || return
+  done
+  for relative in "${UPDATE_RUNTIME_PATHS[@]}"; do
+    move_runtime_path "$snapshot" "$ROOT" "$relative" || return
+  done
+}
+
+activate_release_runtime() {
+  local release_root="$1" snapshot="$2" relative
+  for relative in "${UPDATE_RUNTIME_PATHS[@]}"; do
+    move_runtime_path "$ROOT" "$snapshot" "$relative" || return
+  done
+  for relative in "${UPDATE_RUNTIME_PATHS[@]}"; do
+    move_runtime_path "$release_root" "$ROOT" "$relative" || return
+  done
+  chmod +x "$ROOT/install.sh" "$ROOT/scripts/pixelspace"
+}
+
+validate_release_bundle() {
+  local release_root="$1" marker_version marker_arch marker_images required
+  [[ -f "$release_root/.pixelspace-bundle" ]] || die "download is not a Pixelspace release bundle"
+  marker_version="$(release_manifest_value "$release_root/.pixelspace-bundle" version 2>/dev/null || true)"
+  marker_arch="$(release_manifest_value "$release_root/.pixelspace-bundle" arch 2>/dev/null || true)"
+  marker_images="$(release_manifest_value "$release_root/.pixelspace-bundle" images 2>/dev/null || true)"
+  [[ "$marker_version" == "$RELEASE_VERSION" ]] || die "bundle version does not match the release manifest"
+  [[ "$marker_arch" == "$(host_arch)" ]] || die "bundle architecture does not match this host"
+  [[ "$marker_images" == "included" ]] || die "remote updates require a bundle with images included"
+  for required in install.sh scripts/pixelspace docker-compose.yml VERSION images/manifest.env \
+    images/api.tar images/web.tar images/sandbox.tar images/rustfs.tar apps/api/skills; do
+    [[ -e "$release_root/$required" ]] || die "release bundle is incomplete: missing $required"
+  done
+  [[ "$(tr -d '[:space:]' < "$release_root/VERSION")" == "$RELEASE_VERSION" ]] ||
+    die "bundle VERSION does not match the release manifest"
+  bash -n "$release_root/install.sh" "$release_root/scripts/pixelspace" ||
+    die "release bundle contains an invalid operator script"
+}
+
+activate_downloaded_release() {
+  [[ "${PIXELSPACE_TEST_UPDATE_ACTIVATION_FAIL:-0}" != "1" ]] || return 1
+  apply_offline_bundle
+  doctor
+  migrate_legacy_compose_resources
+  prepare_model_pack
+  refresh_stack
+  wait_for_model
+  wait_for_health
+  complete_legacy_compose_migration
+  set_env PIXELSPACE_VERSION "$RELEASE_VERSION"
+}
+
+update_cleanup() {
+  local code=$?
+  trap - EXIT
+  [[ -z "$UPDATE_STAGE" ]] || rm -rf -- "$UPDATE_STAGE"
+  rmdir "${LOCK_DIR:-}" 2>/dev/null || true
+  return "$code"
+}
+
+update_stack() {
+  [[ -f "$ROOT/.pixelspace-bundle" ]] ||
+    die "managed updates are supported for packaged installs; update this source checkout and run upgrade"
+  [[ -f "$ENV_FILE" ]] || die "Pixelspace is not installed; run install first"
+  command -v curl >/dev/null 2>&1 || die "curl is required to download updates"
+  command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to verify updates"
+
+  local stage current comparison bundle actual_digest helper_image extract_root release_root snapshot
+  local backup_root backup_archive stamp
+  stage="$(mktemp -d "$(dirname -- "$ROOT")/.pixelspace-update.XXXXXX")"
+  chmod 700 "$stage"
+  UPDATE_STAGE="$stage"
+  UPDATE_ACTIVE=1
+  trap update_cleanup EXIT
+  fetch_release_manifest "$stage/channel.env"
+  current="$(env_value PIXELSPACE_VERSION 2>/dev/null || printf '0.0.0-dev')"
+  comparison="$(semver_compare "$RELEASE_VERSION" "$current")"
+  [[ "$comparison" != "-1" ]] || die "refusing to downgrade from $current to channel version $RELEASE_VERSION"
+  if [[ "$comparison" == "0" ]]; then
+    say "Pixelspace is already up to date at $current."
+    return 0
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    say "Update available: Pixelspace $current -> $RELEASE_VERSION."
+    note "dry-run: the verified bundle would be downloaded, current state backed up, then activated with automatic rollback on failure"
+    return 0
+  fi
+
+  bundle="$stage/release.tar.gz"
+  say "Downloading Pixelspace $RELEASE_VERSION…"
+  download_release_bundle "$bundle"
+  actual_digest="$(sha256sum "$bundle" | awk '{ print $1 }')"
+  [[ "$actual_digest" == "$RELEASE_BUNDLE_SHA256" ]] ||
+    die "release checksum mismatch; the current installation was not changed"
+
+  doctor
+  prepare_backup_helper
+  helper_image="$(env_value SANDBOX_IMAGE)"
+  validate_archive "$bundle" "$helper_image" || die "release bundle contains unsafe archive paths"
+  extract_root="$stage/extracted"
+  mkdir -p "$extract_root"
+  safe_extract_archive "$bundle" "$extract_root" "$helper_image"
+  local -a release_roots=()
+  while IFS= read -r -d '' release_root; do release_roots+=("$release_root"); done \
+    < <(find "$extract_root" -mindepth 1 -maxdepth 1 -type d -print0)
+  [[ "${#release_roots[@]}" -eq 1 ]] || die "release bundle must contain exactly one top-level directory"
+  release_root="${release_roots[0]}"
+  validate_release_bundle "$release_root"
+
+  # Older packaged installs recorded local tags. Re-load their trusted bundle
+  # bytes and pin the exact image IDs before the backup helper reads any data.
+  apply_offline_bundle
+
+  backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_archive="$backup_root/pixelspace-pre-update-${current}-to-${RELEASE_VERSION}-${stamp}.tar.gz"
+  say "Creating the pre-update recovery point…"
+  backup_stack "$backup_archive"
+  trap update_cleanup EXIT
+
+  snapshot="$stage/previous-runtime"
+  mkdir -p "$snapshot"
+  cp -- "$ENV_FILE" "$stage/previous.env"
+  chmod 600 "$stage/previous.env"
+  if ! activate_release_runtime "$release_root" "$snapshot"; then
+    restore_runtime_snapshot "$snapshot" ||
+      die "runtime cutover failed and automatic file rollback was incomplete; recover from $backup_archive"
+    die "could not activate the downloaded runtime; data was not changed"
+  fi
+
+  say "Activating Pixelspace $RELEASE_VERSION…"
+  if (activate_downloaded_release); then
+    say "Update complete (now at $RELEASE_VERSION). Recovery backup: $backup_archive"
+    return 0
+  fi
+
+  warn "update activation failed; restoring the previous runtime and data"
+  restore_runtime_snapshot "$snapshot" ||
+    die "update failed and automatic file rollback was incomplete; recover manually from $backup_archive"
+  cp -- "$stage/previous.env" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  if (UPDATE_ACTIVE=0 UPDATE_STAGE="" ASSUME_YES=1 RESTORE_CONFIG=1 restore_stack "$backup_archive"); then
+    die "update failed and Pixelspace was rolled back to $current"
+  fi
+  die "update failed and automatic rollback was incomplete; recover manually from $backup_archive"
+}
+
 upgrade_stack() {
+  # A newly activated offline release may contain different image tarballs and
+  # image references. Load/pin them before doctor evaluates image mode.
+  apply_offline_bundle
   doctor
   local current new
   current="$(env_value PIXELSPACE_VERSION 2>/dev/null || printf '0.0.0-dev')"
@@ -1861,6 +2247,9 @@ case "$COMMAND" in
   backup) acquire_lock; backup_stack "${1:-}" ;;
   restore) acquire_lock; restore_stack "${1:-}" ;;
   upgrade) acquire_lock; upgrade_stack ;;
+  configure-update) acquire_lock; configure_update_channel ;;
+  check-update) check_update ;;
+  update) acquire_lock; update_stack ;;
   uninstall) acquire_lock; uninstall_stack ;;
   reset-admin-password) acquire_lock; reset_admin_password ;;
   package) package_bundle ;;

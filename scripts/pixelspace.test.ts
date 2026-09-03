@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -84,7 +85,8 @@ case "$command" in
     [[ "\${PIXELSPACE_TEST_SANDBOX_RESTART_FAIL:-0}" != "1" ]]
     ;;
   image)
-    [[ "\${1:-}" != "inspect" || "\${PIXELSPACE_TEST_MISSING_IMAGES:-0}" != "1" || -f "\${PIXELSPACE_TEST_IMAGE_STATE:-/nonexistent}" ]]
+    [[ "\${1:-}" != "inspect" || "\${PIXELSPACE_TEST_MISSING_IMAGES:-0}" != "1" || -f "\${PIXELSPACE_TEST_IMAGE_STATE:-/nonexistent}" ]] || exit 1
+    [[ " $* " != *" --format {{.Id}} "* ]] || printf 'sha256:%064d\n' 1
     ;;
   inspect)
     if [[ -n "\${PIXELSPACE_TEST_MODEL_STATE:-}" ]]; then
@@ -189,7 +191,20 @@ esac
   const curl = path.join(bin, "curl");
   writeFileSync(curl, `#!/usr/bin/env bash
 printf '%s\n' "$*" >> "\${PIXELSPACE_TEST_CURL_LOG:?}"
-exit 0
+[[ "\${PIXELSPACE_TEST_CURL_FAIL:-0}" != "1" ]] || exit 22
+request_config=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--config" ]]; then request_config="\${2:?}"; shift 2; else shift; fi
+done
+[[ -n "$request_config" ]] || exit 0
+url="$(awk -F'"' '$1 == "url = " { print $2 }' "$request_config")"
+output="$(awk -F'"' '$1 == "output = " { print $2 }' "$request_config")"
+case "$url" in
+  https://updates.example.test/channel.env*) source_file="\${PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE:?}" ;;
+  https://updates.example.test/*.tar.gz*) source_file="\${PIXELSPACE_TEST_UPDATE_BUNDLE_SOURCE:?}" ;;
+  *) exit 22 ;;
+esac
+cp "$source_file" "$output"
 `);
   chmodSync(curl, 0o755);
   for (const command of ["nvidia-ctk", "nvidia-smi"]) {
@@ -271,6 +286,58 @@ function createTar(source: string, archive: string, gzip = false) {
   });
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
+}
+
+function createPackagedRuntime(parent: string, version: string, arch = "amd64") {
+  const releaseRoot = path.join(parent, `pixelspace-${version}`);
+  mkdirSync(path.join(releaseRoot, "scripts"), { recursive: true });
+  mkdirSync(path.join(releaseRoot, "apps", "api"), { recursive: true });
+  mkdirSync(path.join(releaseRoot, "images"), { recursive: true });
+  copyFileSync(path.join(root, "install.sh"), path.join(releaseRoot, "install.sh"));
+  copyFileSync(script, path.join(releaseRoot, "scripts", "pixelspace"));
+  copyFileSync(path.join(root, "docker-compose.yml"), path.join(releaseRoot, "docker-compose.yml"));
+  cpSync(path.join(root, "apps", "api", "skills"), path.join(releaseRoot, "apps", "api", "skills"), { recursive: true });
+  chmodSync(path.join(releaseRoot, "install.sh"), 0o755);
+  chmodSync(path.join(releaseRoot, "scripts", "pixelspace"), 0o755);
+  writeFileSync(path.join(releaseRoot, "VERSION"), `${version}\n`);
+  writeFileSync(
+    path.join(releaseRoot, ".pixelspace-bundle"),
+    `version=${version}\narch=${arch}\nimages=included\n`,
+  );
+  writeFileSync(path.join(releaseRoot, "images", "manifest.env"), [
+    `PIXELSPACE_API_IMAGE=pixelspace-api:${version}`,
+    `PIXELSPACE_WEB_IMAGE=pixelspace-web:${version}`,
+    "SANDBOX_IMAGE=pixelspace-sandbox:1",
+    "RUSTFS_IMAGE=rustfs/rustfs:test",
+    "PIXELSPACE_MODEL_IMAGE=vllm/vllm-openai:test",
+    "",
+  ].join("\n"));
+  for (const image of ["api", "web", "sandbox", "rustfs"]) {
+    writeFileSync(path.join(releaseRoot, "images", `${image}.tar`), "test image");
+  }
+  return releaseRoot;
+}
+
+function createReleaseArchive(parent: string, version: string) {
+  const source = path.join(parent, "source");
+  mkdirSync(source, { recursive: true });
+  createPackagedRuntime(source, version);
+  const archive = path.join(parent, `pixelspace-${version}-amd64.tar.gz`);
+  const result = Bun.spawnSync(["tar", "-C", source, "-czf", archive, `pixelspace-${version}`]);
+  expect(result.exitCode).toBe(0);
+  const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
+  return { archive, digest };
+}
+
+function writeReleaseManifest(file: string, version: string, amd64Digest: string) {
+  writeFileSync(file, [
+    `PIXELSPACE_RELEASE_VERSION=${version}`,
+    `PIXELSPACE_RELEASE_AMD64_URL=https://updates.example.test/pixelspace-${version}-amd64.tar.gz?signature=private`,
+    `PIXELSPACE_RELEASE_AMD64_SHA256=${amd64Digest}`,
+    "PIXELSPACE_RELEASE_ARM64_URL=https://updates.example.test/pixelspace-arm64.tar.gz",
+    `PIXELSPACE_RELEASE_ARM64_SHA256=${"a".repeat(64)}`,
+    "",
+  ].join("\n"));
 }
 
 describe("Pixelspace on-prem operator", () => {
@@ -522,7 +589,7 @@ describe("Pixelspace on-prem operator", () => {
         PIXELSPACE_AUTH_MODE: undefined,
         PIXELSPACE_TEST_ADMIN_PASSWORD_CAPTURE: passwordCapture,
       },
-      "",
+      "\n\n\n\n",
     );
 
     expect(result.exitCode).toBe(0);
@@ -760,7 +827,7 @@ describe("Pixelspace on-prem operator", () => {
     const invalid = run(["doctor"], env);
     expect(invalid.exitCode).toBe(1);
     expect(invalid.stderr.toString()).toContain(
-      "PIXELSPACE_MODEL_IMAGE must use an immutable @sha256 digest",
+      "PIXELSPACE_MODEL_IMAGE must use an immutable digest or local image ID",
     );
 
     setEnvValue(
@@ -978,7 +1045,7 @@ describe("Pixelspace on-prem operator", () => {
     setEnvValue(fx.envFile, "PIXELSPACE_DEPLOY_MODE", "images");
     const result = run(["backup", path.join(fx.home, "mutable-helper.tar.gz")], fx.env);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr.toString()).toContain("immutable @sha256 digest before it can access backups");
+    expect(result.stderr.toString()).toContain("immutable digest or local image ID before it can access backups");
     expect(readFileSync(fx.dockerLog, "utf8")).not.toContain(" stop ");
   });
 
@@ -1590,6 +1657,195 @@ describe("Pixelspace on-prem operator", () => {
     ]) {
       expect(listing).toContain(entry);
     }
+    const digest = readFileSync(path.join(outDir, `${archive}.sha256`), "utf8").trim().split(/\s+/)[0];
+    expect(digest).toBe(createHash("sha256").update(readFileSync(path.join(outDir, archive!))).digest("hex"));
+  });
+
+  test("checks a private update channel without exposing its auth or signed URL", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const authFile = path.join(fx.home, "update-header");
+    const secret = "Bearer never-print-this-token";
+    writeFileSync(authFile, `Authorization: ${secret}\n`, { mode: 0o600 });
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "9.9.9", "b".repeat(64));
+
+    const configured = run([
+      "configure-update",
+      "--update-manifest-url", "https://updates.example.test/channel.env",
+      "--update-auth-header-file", authFile,
+    ], fx.env);
+    expect(configured.exitCode).toBe(0);
+    const result = run(["check-update"], {
+      ...fx.env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+    }, ["-x"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Pixelspace 9.9.9 is available");
+    expect(result.stderr.toString()).not.toContain(secret);
+    expect(result.stderr.toString()).not.toContain("signature=private");
+    expect(readFileSync(fx.curlLog, "utf8")).not.toContain(secret);
+    expect(readFileSync(fx.curlLog, "utf8")).not.toContain("signature=private");
+  });
+
+  test("rejects insecure update configuration and permissive credential files", () => {
+    const fx = fixture();
+    expect(run(["install", "--dry-run"], fx.env).exitCode).toBe(0);
+    const authFile = path.join(fx.home, "update-header");
+    writeFileSync(authFile, "Authorization: Bearer test-only\n", { mode: 0o644 });
+
+    const insecure = run([
+      "configure-update", "--update-manifest-url", "http://updates.example.test/channel.env",
+    ], fx.env);
+    expect(insecure.exitCode).toBe(1);
+    expect(insecure.stderr.toString()).toContain("must use HTTPS");
+    const permissive = run([
+      "configure-update",
+      "--update-manifest-url", "https://updates.example.test/channel.env",
+      "--update-auth-header-file", authFile,
+    ], fx.env);
+    expect(permissive.exitCode).toBe(1);
+    expect(permissive.stderr.toString()).toContain("mode 600 or 400");
+  });
+
+  test("refuses a tampered update before backup or runtime cutover", () => {
+    const fx = fixture();
+    const installedParent = path.join(fx.home, "installed");
+    mkdirSync(installedParent);
+    const installedRoot = createPackagedRuntime(installedParent, "1.0.0");
+    const env = { ...fx.env, PIXELSPACE_ROOT_OVERRIDE: installedRoot };
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    const release = createReleaseArchive(path.join(fx.home, "release"), "1.1.0");
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "1.1.0", "0".repeat(64));
+    expect(run([
+      "configure-update", "--update-manifest-url", "https://updates.example.test/channel.env",
+    ], env).exitCode).toBe(0);
+    writeFileSync(fx.dockerLog, "");
+
+    const result = run(["update"], {
+      ...env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+      PIXELSPACE_TEST_UPDATE_BUNDLE_SOURCE: release.archive,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("checksum mismatch");
+    expect(readFileSync(path.join(installedRoot, "VERSION"), "utf8").trim()).toBe("1.0.0");
+    expect(readFileSync(fx.dockerLog, "utf8")).not.toContain(" stop ");
+  });
+
+  test("refuses a release-channel downgrade before downloading a bundle", () => {
+    const fx = fixture();
+    const installedParent = path.join(fx.home, "installed");
+    mkdirSync(installedParent);
+    const installedRoot = createPackagedRuntime(installedParent, "2.0.0");
+    const env = { ...fx.env, PIXELSPACE_ROOT_OVERRIDE: installedRoot };
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "1.9.0", "b".repeat(64));
+    expect(run([
+      "configure-update", "--update-manifest-url", "https://updates.example.test/channel.env",
+    ], env).exitCode).toBe(0);
+    writeFileSync(fx.curlLog, "");
+
+    const result = run(["update"], {
+      ...env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("refusing to downgrade from 2.0.0");
+    expect(readFileSync(fx.curlLog, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(readFileSync(path.join(installedRoot, "VERSION"), "utf8").trim()).toBe("2.0.0");
+  });
+
+  test("activates a verified packaged update after creating a recovery backup", () => {
+    const fx = fixture();
+    const installedParent = path.join(fx.home, "installed");
+    mkdirSync(installedParent);
+    const installedRoot = createPackagedRuntime(installedParent, "1.0.0");
+    const env = { ...fx.env, PIXELSPACE_ROOT_OVERRIDE: installedRoot };
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    const release = createReleaseArchive(path.join(fx.home, "release"), "1.1.0");
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "1.1.0", release.digest);
+    expect(run([
+      "configure-update", "--update-manifest-url", "https://updates.example.test/channel.env",
+    ], env).exitCode).toBe(0);
+
+    const result = run(["update"], {
+      ...env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+      PIXELSPACE_TEST_UPDATE_BUNDLE_SOURCE: release.archive,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("Update complete (now at 1.1.0)");
+    expect(readFileSync(path.join(installedRoot, "VERSION"), "utf8").trim()).toBe("1.1.0");
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_VERSION="1.1.0"');
+    expect(readdirSync(path.join(fx.home, "pixelspace-backups")))
+      .toContainEqual(expect.stringContaining("pixelspace-pre-update-1.0.0-to-1.1.0"));
+  });
+
+  test("cleans downloaded update staging when the pre-update backup fails", () => {
+    const fx = fixture();
+    const installedParent = path.join(fx.home, "installed");
+    mkdirSync(installedParent);
+    const installedRoot = createPackagedRuntime(installedParent, "1.0.0");
+    const env = { ...fx.env, PIXELSPACE_ROOT_OVERRIDE: installedRoot };
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    const release = createReleaseArchive(path.join(fx.home, "release"), "1.1.0");
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "1.1.0", release.digest);
+    expect(run([
+      "configure-update", "--update-manifest-url", "https://updates.example.test/channel.env",
+    ], env).exitCode).toBe(0);
+
+    const result = run(["update"], {
+      ...env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+      PIXELSPACE_TEST_UPDATE_BUNDLE_SOURCE: release.archive,
+      PIXELSPACE_TEST_COMPOSE_PS_FAIL: "1",
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(readdirSync(installedParent).filter((name) => name.startsWith(".pixelspace-update")))
+      .toEqual([]);
+    expect(readFileSync(path.join(installedRoot, "VERSION"), "utf8").trim()).toBe("1.0.0");
+  });
+
+  test("restores the previous packaged runtime and data when activation fails", () => {
+    const fx = fixture();
+    const installedParent = path.join(fx.home, "installed");
+    mkdirSync(installedParent);
+    const installedRoot = createPackagedRuntime(installedParent, "1.0.0");
+    const env = { ...fx.env, PIXELSPACE_ROOT_OVERRIDE: installedRoot };
+    expect(run(["install", "--dry-run"], env).exitCode).toBe(0);
+    const dataRoot = path.join(fx.home, ".local", "share", "pixelspace", "data");
+    mkdirSync(dataRoot, { recursive: true });
+    writeFileSync(path.join(dataRoot, "app.db"), "pre-update-data");
+    const release = createReleaseArchive(path.join(fx.home, "release"), "1.1.0");
+    const manifest = path.join(fx.home, "channel.env");
+    writeReleaseManifest(manifest, "1.1.0", release.digest);
+    expect(run([
+      "configure-update", "--update-manifest-url", "https://updates.example.test/channel.env",
+    ], env).exitCode).toBe(0);
+
+    const result = run(["update"], {
+      ...env,
+      PIXELSPACE_TEST_UPDATE_MANIFEST_SOURCE: manifest,
+      PIXELSPACE_TEST_UPDATE_BUNDLE_SOURCE: release.archive,
+      PIXELSPACE_TEST_UPDATE_ACTIVATION_FAIL: "1",
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("rolled back to 1.0.0");
+    expect(readFileSync(path.join(installedRoot, "VERSION"), "utf8").trim()).toBe("1.0.0");
+    expect(readFileSync(path.join(dataRoot, "app.db"), "utf8")).toBe("pre-update-data");
+    expect(readFileSync(fx.envFile, "utf8")).toContain('PIXELSPACE_VERSION="1.0.0"');
+    expect(readFileSync(fx.envFile, "utf8")).toContain(`PIXELSPACE_API_IMAGE="sha256:${"0".repeat(63)}1"`);
   });
 
   test("installing from an offline bundle uses image mode without a registry digest", () => {
@@ -1616,6 +1872,6 @@ describe("Pixelspace on-prem operator", () => {
     expect(env).toContain('PIXELSPACE_DEPLOY_MODE="images"');
     expect(env).toContain('PIXELSPACE_OFFLINE_BUNDLE="1"');
     // A loaded local tag is accepted; doctor did not demand an @sha256 digest.
-    expect(env).toContain('PIXELSPACE_API_IMAGE="pixelspace-api:');
+    expect(env).toContain(`PIXELSPACE_API_IMAGE="sha256:${"0".repeat(63)}1"`);
   });
 });
