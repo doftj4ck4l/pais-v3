@@ -7,6 +7,7 @@ import {
   mysqlConnectionOptions,
   mysqlAdapter,
   mysqlTlsOptions,
+  parseLegacyMysqlForeignKeys,
   parseMysqlServerVersion,
   queryMysqlWithTimeout,
   type MysqlSqlClient,
@@ -251,6 +252,80 @@ describe("MySQL and MariaDB versions", () => {
   }
 });
 
+describe("legacy MySQL SHOW CREATE TABLE parsing", () => {
+  const noForeignKeys = "CREATE TABLE `QRTZ_BLOB_TRIGGERS` (`TRIGGER_NAME` varchar(80) NOT NULL)";
+  const oneForeignKey = "CREATE TABLE `child` (`parent_id` int, CONSTRAINT `fk_parent` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`))";
+
+  it("accepts string DDL without foreign keys", () => {
+    expect(parseLegacyMysqlForeignKeys(noForeignKeys, "inventory", "QRTZ_BLOB_TRIGGERS")).toEqual([]);
+  });
+
+  it("accepts Buffer DDL without foreign keys", () => {
+    expect(parseLegacyMysqlForeignKeys(
+      Buffer.from(noForeignKeys, "utf8"),
+      "inventory",
+      "QRTZ_BLOB_TRIGGERS",
+      "utf8",
+    )).toEqual([]);
+  });
+
+  it("parses one foreign key from Buffer DDL", () => {
+    expect(parseLegacyMysqlForeignKeys(Buffer.from(oneForeignKey), "inventory", "child", "utf8")).toEqual([{
+      schemaName: "inventory",
+      tableName: "child",
+      columnName: "parent_id",
+      refSchema: "inventory",
+      refTable: "parent",
+      refColumn: "id",
+    }]);
+  });
+
+  it("preserves each column pair in a composite Buffer foreign key", () => {
+    const ddl = "CREATE TABLE `child` (`parent_id` int, `region_id` int, FOREIGN KEY (`parent_id`, `region_id`) REFERENCES `parent` (`id`, `region_id`))";
+    expect(parseLegacyMysqlForeignKeys(Buffer.from(ddl), "inventory", "child", "utf8")).toEqual([
+      {
+        schemaName: "inventory",
+        tableName: "child",
+        columnName: "parent_id",
+        refSchema: "inventory",
+        refTable: "parent",
+        refColumn: "id",
+      },
+      {
+        schemaName: "inventory",
+        tableName: "child",
+        columnName: "region_id",
+        refSchema: "inventory",
+        refTable: "parent",
+        refColumn: "region_id",
+      },
+    ]);
+  });
+
+  it("decodes Latin-1 identifiers with the server connection character set", () => {
+    const ddl = "CREATE TABLE `child` (`référence_id` int, FOREIGN KEY (`référence_id`) REFERENCES `références` (`id`))";
+    expect(parseLegacyMysqlForeignKeys(Buffer.from(ddl, "latin1"), "inventory", "child", "latin1")).toEqual([{
+      schemaName: "inventory",
+      tableName: "child",
+      columnName: "référence_id",
+      refSchema: "inventory",
+      refTable: "références",
+      refColumn: "id",
+    }]);
+  });
+
+  it("rejects malformed or only partially parseable foreign-key clauses", () => {
+    const ddl = "CREATE TABLE `child` (`one` int, `two` int, FOREIGN KEY (`one`) REFERENCES `parent` (`id`), FOREIGN KEY (two) REFERENCES parent (id))";
+    expect(parseLegacyMysqlForeignKeys(ddl, "inventory", "child")).toBeNull();
+    expect(parseLegacyMysqlForeignKeys("not SHOW CREATE TABLE output", "inventory", "child")).toBeNull();
+  });
+
+  it("rejects unsupported values and unknown Buffer character sets", () => {
+    expect(parseLegacyMysqlForeignKeys({ ddl: oneForeignKey }, "inventory", "child", "utf8")).toBeNull();
+    expect(parseLegacyMysqlForeignKeys(Buffer.from(oneForeignKey), "inventory", "child", "not-a-charset")).toBeNull();
+  });
+});
+
 describe("MySQL query policy", () => {
   for (const sql of [
     "SELECT * FROM orders INTO OUTFILE '/tmp/orders'",
@@ -485,6 +560,9 @@ describe("MySQL execution and catalog lifecycle", () => {
       if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
         return [{ grant: "GRANT SELECT ON *.* TO 'reader'@'%'" }];
       }
+      if (/@@character_set_results/i.test(statement)) {
+        return [{ resultCharacterSet: "binary", connectionCharacterSet: "latin1", serverCharacterSet: "latin1" }];
+      }
       if (/SHOW TABLE STATUS/i.test(statement)) {
         return [{ Name: "order`items", Engine: "MyISAM", Rows: 2, Comment: "orders" }];
       }
@@ -500,7 +578,7 @@ describe("MySQL execution and catalog lifecycle", () => {
       if (/SHOW CREATE TABLE/i.test(statement)) {
         return [{
           Table: "order`items",
-          "Create Table": "CREATE TABLE `order``items` (`id` int(11), `order_id` int(11), CONSTRAINT `fk_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`))",
+          "Create Table": Buffer.from("CREATE TABLE `order``items` (`id` int(11), `order_id` int(11), CONSTRAINT `fk_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`))", "latin1"),
         }];
       }
       return [];
@@ -528,6 +606,7 @@ describe("MySQL execution and catalog lifecycle", () => {
   });
 
   it("fails closed instead of inventing unparseable legacy foreign keys", async () => {
+    const stages: string[] = [];
     const { adapter, state } = adapterWith((statement) => {
       if (/SELECT VERSION/i.test(statement)) return identity("4.1.24");
       if (/SHOW GRANTS FOR CURRENT_USER/i.test(statement)) {
@@ -540,8 +619,9 @@ describe("MySQL execution and catalog lifecycle", () => {
       }
       return [];
     });
-    const result = await adapter.fetchCatalog(config, target);
+    const result = await adapter.fetchCatalog(config, target, (stage) => stages.push(stage.step));
     expect(result).toMatchObject({ ok: false, error: { code: "unsupported_capability" } });
+    expect(stages.at(-1)).toBe("foreignKeys");
     expect(state.closed).toBe(1);
   });
 });

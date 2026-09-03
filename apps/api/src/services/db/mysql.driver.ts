@@ -544,18 +544,39 @@ function parseQuotedIdentifierList(value: string): string[] | null {
   return identifiers.length ? identifiers : null;
 }
 
+const LEGACY_BUFFER_ENCODINGS: Readonly<Record<string, BufferEncoding>> = {
+  ascii: "ascii",
+  latin1: "latin1",
+  utf8: "utf8",
+  utf8mb3: "utf8",
+  utf8mb4: "utf8",
+};
+
+/** mysql2 deliberately returns binary SHOW CREATE fields as Buffers. */
+function normalizeLegacyMysqlCreateSql(value: unknown, characterSet?: string | null): string | null {
+  if (typeof value === "string") return value;
+  if (!Buffer.isBuffer(value) || !characterSet) return null;
+  const encoding = LEGACY_BUFFER_ENCODINGS[characterSet.trim().toLowerCase()];
+  return encoding ? value.toString(encoding) : null;
+}
+
 export function parseLegacyMysqlForeignKeys(
   createSql: unknown,
   schemaName: string,
   tableName: string,
+  characterSet?: string | null,
 ): RawCatalog["foreignKeys"] | null {
-  if (typeof createSql !== "string") return null;
-  const foreignKeyCount = [...createSql.matchAll(/\bFOREIGN\s+KEY\b/gi)].length;
+  const normalized = normalizeLegacyMysqlCreateSql(createSql, characterSet);
+  if (!normalized) return null;
+  const tableDdl = /^\s*CREATE\s+(?:TEMPORARY\s+)?TABLE\s+`(?:``|[^`])+`\s*\(/i.test(normalized);
+  const viewDdl = /^\s*CREATE\b[\s\S]*?\bVIEW\s+`(?:``|[^`])+`\s+AS\b/i.test(normalized);
+  if (!tableDdl && !viewDdl) return null;
+  const foreignKeyCount = [...normalized.matchAll(/\bFOREIGN\s+KEY\b/gi)].length;
   if (!foreignKeyCount) return [];
   const clause = /(?:CONSTRAINT\s+`(?:``|[^`])+`\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+(?:(`(?:``|[^`])+`)\s*\.\s*)?(`(?:``|[^`])+`)\s*\(([^)]+)\)/gi;
   const foreignKeys: RawCatalog["foreignKeys"] = [];
   let parsedCount = 0;
-  for (const match of createSql.matchAll(clause)) {
+  for (const match of normalized.matchAll(clause)) {
     parsedCount++;
     const columns = parseQuotedIdentifierList(match[1]!);
     const refColumns = parseQuotedIdentifierList(match[4]!);
@@ -575,6 +596,25 @@ export function parseLegacyMysqlForeignKeys(
     }
   }
   return parsedCount === foreignKeyCount ? foreignKeys : null;
+}
+
+async function readLegacyMysqlCharacterSet(sql: MysqlSqlClient): Promise<string | null> {
+  const rows = await queryWithTimeout<Record<string, unknown>[]>(sql, `
+    SELECT @@character_set_results AS resultCharacterSet,
+           @@character_set_connection AS connectionCharacterSet,
+           @@character_set_server AS serverCharacterSet
+  `);
+  const row = rows[0];
+  if (!row) return null;
+  const resultCharacterSet = rowValue(row, "resultCharacterSet");
+  const resultName = resultCharacterSet == null ? "" : String(resultCharacterSet).trim();
+  if (resultName && resultName.toLowerCase() !== "binary") return resultName;
+  for (const name of ["connectionCharacterSet", "serverCharacterSet"] as const) {
+    const value = rowValue(row, name);
+    const normalized = value == null ? "" : String(value).trim();
+    if (normalized && normalized.toLowerCase() !== "binary") return normalized;
+  }
+  return null;
 }
 
 async function fetchLegacyCatalog(
@@ -641,21 +681,32 @@ async function fetchLegacyCatalog(
   onStep?.({ step: "primaryKeys", count: primaryKeys.length });
 
   const foreignKeys: RawCatalog["foreignKeys"] = [];
-  for (const table of tables) {
-    const rows = await queryWithTimeout<Record<string, unknown>[]>(
-      sql,
-      `SHOW CREATE TABLE ${quoteIdentifier(schemaName)}.${quoteIdentifier(table.name)}`,
-    );
-    const row = rows[0];
-    const createSql = row && (rowValue(row, "Create Table") ?? rowValue(row, "Create View"));
-    const parsed = parseLegacyMysqlForeignKeys(createSql, schemaName, table.name);
-    if (!parsed) {
-      throw new MysqlAdapterError({
-        code: "unsupported_capability",
-        message: "The legacy MySQL server returned foreign-key metadata that could not be parsed safely",
-      });
+  let bufferCharacterSet: string | null | undefined;
+  try {
+    for (const table of tables) {
+      const rows = await queryWithTimeout<Record<string, unknown>[]>(
+        sql,
+        `SHOW CREATE TABLE ${quoteIdentifier(schemaName)}.${quoteIdentifier(table.name)}`,
+      );
+      const row = rows[0];
+      const createSql = row && (rowValue(row, "Create Table") ?? rowValue(row, "Create View"));
+      if (Buffer.isBuffer(createSql) && bufferCharacterSet === undefined) {
+        bufferCharacterSet = await readLegacyMysqlCharacterSet(sql);
+      }
+      const parsed = parseLegacyMysqlForeignKeys(createSql, schemaName, table.name, bufferCharacterSet);
+      if (!parsed) {
+        throw new MysqlAdapterError({
+          code: "unsupported_capability",
+          message: "The legacy MySQL server returned foreign-key metadata that could not be parsed safely",
+        });
+      }
+      foreignKeys.push(...parsed);
     }
-    foreignKeys.push(...parsed);
+  } catch (error) {
+    // A stage callback normally marks completion. On failure, report the active
+    // stage so the UI does not attribute SHOW CREATE parsing to primary keys.
+    onStep?.({ step: "foreignKeys", count: foreignKeys.length });
+    throw error;
   }
   onStep?.({ step: "foreignKeys", count: foreignKeys.length });
 
