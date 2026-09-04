@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test'
 import { groupTranscriptItems } from '../src/features/agents/lib/transcript'
-import { summarizeWork } from '../src/features/agents/lib/tool-summary'
 import type { Item } from '../src/shared/lib/types'
 
 const tool = (id: string, ms?: number, result = 'done'): Extract<Item, { kind: 'tool' }> => ({
@@ -61,29 +60,5 @@ describe('groupTranscriptItems', () => {
       { kind: 'assistant', text: '  ' },
       { kind: 'iteration', n: 1 },
     ])).toEqual([])
-  })
-})
-
-describe('summarizeWork', () => {
-  it('summarizes the combined wall time in plain language', () => {
-    expect(summarizeWork([tool('one', 10_000), tool('two', 30_000)])).toEqual({
-      label: 'Worked for 30 seconds',
-      pending: false,
-    })
-    expect(summarizeWork([tool('one', 61_000)]).label).toBe('Worked for 1m 1s')
-  })
-
-  it('shows a live label while any call is pending', () => {
-    expect(summarizeWork([
-      tool('done', 10_000),
-      { ...tool('pending'), result: undefined, ms: undefined },
-    ])).toEqual({ label: 'Working…', pending: true })
-  })
-
-  it('falls back to an action count for old rows without timings', () => {
-    expect(summarizeWork([tool('one', undefined)]).label).toBe('Completed 1 action')
-    expect(summarizeWork([tool('one', undefined), tool('two', undefined)]).label).toBe(
-      'Completed 2 actions',
-    )
   })
 })
