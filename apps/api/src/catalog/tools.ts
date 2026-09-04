@@ -100,28 +100,6 @@ export const TOOLS: Tool[] = [
     },
   },
   {
-    name: "fetch_url",
-    description:
-      "Fetch a URL over HTTP(S) and return the first ~1000 chars of the response body (as text). Useful for looking up live info.",
-    parameters: {
-      type: "object",
-      properties: { url: { type: "string", description: "absolute http(s) URL to fetch" } },
-      required: ["url"],
-    },
-    run: async (args) => {
-      const url = String(args.url ?? "").trim();
-      if (!/^https?:\/\/.+/i.test(url)) return "error: must be an absolute http(s) URL";
-      try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) return `error: fetch_url returned HTTP ${res.status}`;
-        const text = await res.text();
-        return `fetch_url(${url}) returned ${res.status}, ${text.length} chars:\n${text.slice(0, 1000)}`;
-      } catch (e) {
-        return `error fetching ${url}: ${(e as Error).message}`;
-      }
-    },
-  },
-  {
     name: "render_ui",
     description:
       "Render a rich UI component inline in your answer to the user: a chart, a sortable table, a KPI stat tile, or a titled card. " +

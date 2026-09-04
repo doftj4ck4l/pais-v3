@@ -29,4 +29,4 @@ Search results for "malaysia gdp 2026":
 ...
 ```
 
-Use the URL from a result with the `web-fetch` skill to read the page content.
+Use the URL from a result with the `fetch_url` tool to read the page content.

@@ -92,6 +92,22 @@ export const conversationRepository = {
       .where(eq(conversations.id, conversationId));
   },
 
+  /** Mirror startup recovery on conversation rows orphaned by a dead process. */
+  async stopInterrupted(at = Date.now(), dbImpl: typeof db = db): Promise<number> {
+    const found = await dbImpl
+      .select({ count: sql<number>`count(*)` })
+      .from(conversations)
+      .where(eq(conversations.status, "running"));
+    const count = Number(found[0]?.count ?? 0);
+    if (!count) return 0;
+
+    await dbImpl
+      .update(conversations)
+      .set({ status: "stopped", updatedAt: at })
+      .where(eq(conversations.status, "running"));
+    return count;
+  },
+
   /** Append a whole transcript in one statement. No-op when empty. */
   async appendMessages(
     conversationId: string,

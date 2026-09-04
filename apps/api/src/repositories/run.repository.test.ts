@@ -41,6 +41,27 @@ function run(id: string, conversationId: string, workspaceId: string) {
     .run(id, conversationId, workspaceId, "pi", "m", Date.now(), "done");
 }
 
+describe("runRepository.stopInterrupted", () => {
+  it("stops only unfinished rows and records when recovery happened", async () => {
+    conversation("c1", "ws1");
+    run("r1", "c1", "ws1");
+    run("r2", "c1", "ws1");
+    sqlite.query("update runs set status = 'running', ended_at = null where id = 'r1'").run();
+
+    expect(await runRepository.stopInterrupted(12_345, db)).toBe(1);
+    expect(sqlite.query("select status, ended_at, error from runs where id = 'r1'").get()).toEqual({
+      status: "stopped",
+      ended_at: 12_345,
+      error: "API restarted before this run completed.",
+    });
+    expect(sqlite.query("select status, ended_at, error from runs where id = 'r2'").get()).toEqual({
+      status: "done",
+      ended_at: null,
+      error: null,
+    });
+  });
+});
+
 /** A `tool` span exactly as `pi.service` writes one. */
 function toolSpan(conversationId: string, runId: string | null, name: string) {
   sqlite

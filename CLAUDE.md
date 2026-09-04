@@ -109,13 +109,28 @@ running in any of these:
 | Where | What runs there |
 | --- | --- |
 | **API process** | MCP tools (stdio child or HTTP fetch), `calculator`, `remember`, `search_docs` |
-| **Sandbox container** (`pixelspace-<workspaceId>`) | `bash`, `read`, `write`, `edit`, `call_skill`, via `docker exec` |
+| **Sandbox container** (`pixelspace-<workspaceId>`) | `bash`, `read`, `write`, `edit`, `call_skill`, `fetch_url`, via `docker exec` |
 | **Model provider** | the turn itself |
 
 **MCP never touches the sandbox.** stdio MCP servers are child processes of the
 API, which is why `apps/api/Dockerfile` installs `npx`, `uvx` and `node` — the
 allowlist in `services/mcp/allowlist.ts` says what is *permitted*, but the
 launcher still has to exist where the API runs.
+
+`fetch_url` is a first-class wrapper around the sandboxed `web-fetch` skill.
+The indirection is deliberate: an arbitrary URL must not be fetched with the
+API process's filesystem and network identity. The script extracts useful HTML
+before applying its output cap; returning the first bytes of raw markup caused
+17 of 25 recent staging conversations to retry with the skill or rebuild the
+same reader with `curl` and BeautifulSoup.
+
+App-owned tools may return an `error:` string so the model can correct the
+call. `pi.service` promotes that established result contract to a thrown tool
+error at the harness boundary; otherwise pi records the call as successful and
+the run ledger undercounts tool failures. Built-in and MCP tools are excluded
+because their successful output can be arbitrary external text. On API startup,
+any run and conversation still marked `running` is changed to `stopped`, since
+the new process cannot still own work started by the previous one.
 
 `sandbox.acquire` runs before the tool list is built, unconditionally when
 `SANDBOX_BACKEND=docker`. A run that only calls MCP tools still pays for it.

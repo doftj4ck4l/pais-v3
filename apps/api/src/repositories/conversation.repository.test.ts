@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { applySchema } from "../db/client";
+import { conversationRepository } from "./conversation.repository";
 
 /**
  * `conversationRepository` binds the app-wide database handle directly, so
@@ -55,5 +57,21 @@ describe("conversation scoping", () => {
       .all()
       .map((c) => c.name);
     expect(cols).toContain("workspace_id");
+  });
+});
+
+describe("conversationRepository.stopInterrupted", () => {
+  it("stops only conversations orphaned in running state", async () => {
+    const sqlite = seeded();
+    sqlite.run("UPDATE conversations SET status = 'running' WHERE id = 'c1'");
+    const db = drizzle(sqlite) as any;
+
+    expect(await conversationRepository.stopInterrupted(12_345, db)).toBe(1);
+    expect(
+      sqlite.query("SELECT status, updated_at FROM conversations WHERE id = 'c1'").get(),
+    ).toEqual({ status: "stopped", updated_at: 12_345 });
+    expect(
+      sqlite.query("SELECT status, updated_at FROM conversations WHERE id = 'c2'").get(),
+    ).toEqual({ status: "done", updated_at: 1 });
   });
 });
