@@ -1,11 +1,12 @@
 ---
 name: web-fetch
-description: Fetch a URL over HTTP(S) and return up to ~3000 characters of its visible text content (HTML stripped). Use to read a specific page, article, or search result.
+description: Low-level page reader used by the first-class fetch_url tool. Prefer fetch_url so errors and arguments are traced correctly.
 ---
 
 # web-fetch
 
-Fetch a URL and extract its visible text. No API key is required.
+Fetch a URL and extract its useful visible text. No API key is required. The
+`fetch_url` tool wraps this skill and is the normal model-facing interface.
 
 ## How to use
 
@@ -13,16 +14,20 @@ Fetch a URL and extract its visible text. No API key is required.
 node web-fetch.cjs "https://example.com/article" [maxChars]
 ```
 
-`maxChars` caps the returned characters (default 3000).
+`maxChars` caps the returned page text (default 12000, maximum 20000). The
+script also accepts one JSON argument with `url` and `maxChars`, which is how
+the `fetch_url` tool calls it.
 
 ## Output
 
-Prints the page's text content, plain text with tags stripped:
+Prints the page's title and useful text. For HTML, script, style, navigation,
+header, footer, and other page chrome are removed before the result is capped:
 
 ```text
 Title: Example Article
-https://example.com/article
---------------------------------------------------
+URL: https://example.com/article
+Content-Type: text/html
+----------------------------------------
 The article text follows here...
 ```
 

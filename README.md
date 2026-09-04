@@ -106,7 +106,7 @@ console renders inline — the run is never silently swapped for another model.
 | `get_current_time` | Current UTC time (ISO 8601)                     |
 | `get_weather`    | Deterministic mock forecast for a city             |
 | `random_number`  | Random integer in a range                          |
-| `fetch_url`      | Fetch a URL and return the first ~1000 chars       |
+| `fetch_url`      | Fetch a URL and return its readable page text      |
 | `echo`           | Echo text back                                     |
 | `search_schema`  | Find tables/columns by keyword across connected databases |
 | `describe_table` | Columns, types, primary key, foreign keys, indexes for one table |
@@ -229,9 +229,9 @@ each agent.
 
 | Status    | Means                                              | Sidebar        |
 | --------- | -------------------------------------------------- | -------------- |
-| `running` | in flight (a row left here means the server died)   | pulsing dot    |
+| `running` | in flight (interrupted rows become stopped on restart) | pulsing dot |
 | `done`    | finished and produced output                        | hollow ring    |
-| `stopped` | you hit Stop, or the client hung up mid-run         | dashed ring    |
+| `stopped` | you hit Stop, the client hung up, or the API restarted | dashed ring |
 | `error`   | the run reported a failure, or produced no output   | alert icon     |
 
 Two cases are easy to get wrong, so they are handled explicitly. The agent loop

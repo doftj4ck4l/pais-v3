@@ -57,6 +57,7 @@ import { GEN_UI_PROMPT } from "./gen-ui-prompt";
 import { usableWindow } from "../context/context-window.service";
 import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
+import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
 
 type Emit = (event: AgentEvent) => void;
 
@@ -493,6 +494,36 @@ export async function runPiAgent(opts: {
       },
     });
 
+    // URL reads are implemented by the sandboxed web-fetch skill rather than
+    // catalog/tools.ts, whose tools run in the API process. Besides keeping an
+    // arbitrary remote fetch away from the API host, this gives the model the
+    // article text it wanted in the first place: the old tool returned only the
+    // first 1,000 bytes of raw HTML, so 17 of 25 recent staging conversations
+    // that used it had to retry with this skill or rebuild it with curl.
+    if (skills.some((s) => s.name === "web-fetch")) {
+      agentTools.push({
+        name: "fetch_url",
+        description:
+          "Read a specific HTTP(S) page and return its title and useful text. " +
+          "HTML, scripts, styles, and page chrome are removed automatically. Use this directly " +
+          "after web_search; do not fetch the same page again with bash, curl, or web-fetch. " +
+          "Set max_chars higher only when the default 12,000 characters are not enough.",
+        parameters: Type.Object({
+          url: Type.String(),
+          max_chars: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 20_000 })),
+        }),
+        label: "fetch_url",
+        execute: async (_id: string, params: any) => {
+          const request = JSON.stringify({
+            url: String(params?.url ?? ""),
+            maxChars: Number(params?.max_chars ?? 12_000),
+          });
+          const out = await invokeSkill("web-fetch", request, execEnv);
+          return { content: [{ type: "text" as const, text: out }], details: { output: out } };
+        },
+      });
+    }
+
     // web_search is a skill, but the model reaches for it as a bare tool and
     // burns a turn discovering it isn't one ("Tool web-search not found",
     // measured in the DGX traces). Surface it as a first-class tool that runs
@@ -645,8 +676,18 @@ export async function runPiAgent(opts: {
   // affordable: every local tool stays on, and the MCP catalog contributes only
   // the handful this workspace actually uses, plus `search_tools` to reach the
   // rest. The floor this removes was measured at 36,512 tokens per turn.
-  const allTools = [...builtinTools, ...agentTools];
   const mcpCatalog = new Set<string>((mcp?.tools ?? []).map((t: any) => t.name));
+  // App-owned tools use concise text results so the model can repair bad
+  // arguments, but many predate pi and encode failure as `error: ...` instead
+  // of throwing. Promote that established contract at the runtime boundary so
+  // pi, the UI, and the trace ledger all agree the call failed. Built-ins and
+  // MCP tools are excluded because their results are arbitrary external text
+  // and they already report execution failures through pi's native channel.
+  const normalizedAgentTools = agentTools.map((tool: any) => {
+    if (mcpCatalog.has(tool.name) || typeof tool.execute !== "function") return tool;
+    return promoteSemanticToolFailures(tool);
+  });
+  const allTools = [...builtinTools, ...normalizedAgentTools];
   const mcpActive = new Set<string>(mcp?.activeToolNames ?? []);
   const activeToolNames = allTools
     .map((tool) => tool.name)
@@ -875,7 +916,7 @@ export async function runPiAgent(opts: {
           emit({ type: "tool_call", id: event.toolCallId, name: event.toolName, args: event.args ?? {} });
           break;
         case "tool_execution_end": {
-          const text = extractResultText(event.result);
+          const text = toolResultText(event.result);
           const startedAt = toolStartedAt.get(event.toolCallId);
           const args = toolArgs.get(event.toolCallId) ?? "{}";
           toolStartedAt.delete(event.toolCallId);
@@ -1160,18 +1201,6 @@ function toPiMessage(m: ChatMessage): any {
     };
   }
   return undefined;
-}
-
-/** Flatten a pi tool result (content blocks) into a single string for the UI. */
-function extractResultText(result: any): string {
-  try {
-    const blocks = result?.content ?? [];
-    return blocks
-      .map((b: any) => (b?.type === "text" || b?.type === "thinking" ? (b.text ?? b.thinking ?? "") : ""))
-      .join("\n");
-  } catch {
-    return String(result ?? "");
-  }
 }
 
 // The JSON-Schema -> typebox conversion moved to lib/typebox-schema.ts when MCP

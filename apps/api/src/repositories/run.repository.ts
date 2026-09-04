@@ -19,9 +19,9 @@ import type { RunRow, RunStatus, TraceRow } from "../models/schema";
  * began.
  *
  * The row is written twice — `start` before the agent runs so an in-flight or
- * crashed run is still visible, and `finish` after. A run that never reaches
- * `finish` stays `running` forever, which is the honest record of a process
- * that died mid-answer.
+ * crashed run is still visible, and `finish` after. On the next API start,
+ * unfinished rows are marked stopped so a process death remains visible
+ * without pretending the run is still active forever.
  */
 
 export type NewRun = {
@@ -190,6 +190,26 @@ export const runRepository = {
         error: outcome.error ?? null,
       })
       .where(eq(runs.id, runId));
+  },
+
+  /** Close rows orphaned by a previous API process before accepting traffic. */
+  async stopInterrupted(at = Date.now(), dbImpl: typeof db = db): Promise<number> {
+    const found = await dbImpl
+      .select({ count: sql<number>`count(*)` })
+      .from(runs)
+      .where(eq(runs.status, "running"));
+    const count = Number(found[0]?.count ?? 0);
+    if (!count) return 0;
+
+    await dbImpl
+      .update(runs)
+      .set({
+        endedAt: at,
+        status: "stopped",
+        error: "API restarted before this run completed.",
+      })
+      .where(eq(runs.status, "running"));
+    return count;
   },
 
   /** A workspace's runs, newest first. */
