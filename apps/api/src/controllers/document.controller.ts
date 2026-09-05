@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { documentStore } from "../repositories/document.repository";
 import { ingestPdf } from "../services/documents/ingest.service";
+import { transcribeToDocs } from "../services/documents/transcribe.service";
 import { searchDocuments } from "../services/documents/search.service";
 import { env } from "../config/env";
 import { logger } from "../lib/logger";
@@ -22,6 +23,12 @@ const workspaceIdOf = async (c: Context) => {
 
 /** Cap per file. Generous for a document, small enough to bound a bad upload. */
 const MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Cap an audio upload. A recording is bigger than a page: an hour of MP3 at
+ * 128kbps is ~57MB, and whisper wants the whole file, not a clip.
+ */
+const MAX_TRANSCRIBE_BYTES = 100 * 1024 * 1024;
 
 /** GET /api/documents — a workspace's uploads, newest first. */
 export async function index(c: Context) {
@@ -76,6 +83,55 @@ export async function create(c: Context) {
   }
 
   return c.json({ results }, 201);
+}
+
+/**
+ * POST /api/documents/transcribe — one audio file, transcript indexed as a doc.
+ *
+ * Separate from `create` because an audio file is not a PDF and should not be
+ * sent through the PDF extractor blind: the two pipelines have different size
+ * caps, different failure modes, and a whisper upload that fell into the PDF
+ * path would fail as "unreadable" without ever naming whisper.
+ */
+export async function transcribe(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: "Expected a multipart/form-data body" }, 400);
+  }
+
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return c.json({ error: "No audio file supplied under the 'file' field" }, 400);
+  }
+
+  if (file.size > MAX_TRANSCRIBE_BYTES) {
+    return c.json(
+      {
+        results: [
+          {
+            title: file.name,
+            status: "error" as const,
+            pages: 0,
+            chunks: 0,
+            error: `file is ${(file.size / 1e6).toFixed(1)}MB, over the ${MAX_TRANSCRIBE_BYTES / 1e6}MB limit`,
+          },
+        ],
+      },
+      201,
+    );
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const result = await transcribeToDocs(workspaceId, file.name, {
+    bytes,
+    contentType: file.type,
+    filename: file.name,
+  });
+  return c.json({ results: [result] }, 201);
 }
 
 /** DELETE /api/documents/:id — removes its chunks and its search index entries. */

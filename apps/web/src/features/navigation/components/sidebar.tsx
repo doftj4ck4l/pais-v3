@@ -5,6 +5,7 @@ import { BrandMark } from '@/shared/components/brand'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
 import { RunStats } from '@/features/agents/components/run-stats'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
+import { TranscribeControl } from '@/features/navigation/components/transcribe-control'
 import { UserMenu } from '@/features/navigation/components/user-menu'
 import { WorkspacePicker } from '@/features/navigation/components/workspace-picker'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
@@ -131,6 +132,10 @@ export function Sidebar({
               </button>
             ) : null}
           </div>
+
+          {/* The audio upload lives with the run list: it is an action a chat
+              column naturally sits beside, not a destination of its own. */}
+          <TranscribeControl />
 
           <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-4 pb-2">
             <AgentList

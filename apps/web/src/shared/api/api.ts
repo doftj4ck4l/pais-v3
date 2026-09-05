@@ -392,6 +392,20 @@ export async function deleteDocument(scope: Scope, id: string): Promise<void> {
 }
 
 /**
+ * Send one audio file to be transcribed and indexed. The server reports the
+ * outcome in the same shape as a PDF upload, so the two can share a results
+ * view even though they took different pipelines.
+ */
+export async function transcribeAudio(scope: Scope, file: File): Promise<IngestResult> {
+  const body = new FormData()
+  body.append('file', file)
+  const { results } = await json<{ results: IngestResult[] }>(
+    await fetch(`/api/documents/transcribe?${scoped(scope)}`, { method: 'POST', body }),
+  )
+  return results[0] ?? { title: file.name, status: 'error', pages: 0, chunks: 0, error: 'no result' }
+}
+
+/**
  * Attach an image the user pasted into the composer.
  *
  * Uploaded before the message is sent, not with it: the composer shows a
