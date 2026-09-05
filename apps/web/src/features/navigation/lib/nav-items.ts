@@ -8,6 +8,7 @@ import {
   PlugIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { TranslationKey } from '@/shared/lib/i18n'
 
 /**
  * The console's destinations, in the order they appear on the rail.
@@ -22,29 +23,29 @@ import type { LucideIcon } from 'lucide-react'
  */
 export type NavItem = {
   to: string
-  label: string
+  label: TranslationKey
   /** What the page is, for the tooltip — the rail itself is icons only. */
-  hint: string
+  hint: TranslationKey
   icon: LucideIcon
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Chat', hint: 'Agents and transcripts', icon: MessageSquareIcon },
-  { to: '/agents', label: 'Agents', hint: 'Build reusable prompt agents', icon: BotIcon },
-  { to: '/docs', label: 'Docs', hint: 'Uploaded documents', icon: FileTextIcon },
+  { to: '/', label: 'chat', hint: 'navChatHint', icon: MessageSquareIcon },
+  { to: '/agents', label: 'agents', hint: 'navAgentsHint', icon: BotIcon },
+  { to: '/docs', label: 'docs', hint: 'navDocsHint', icon: FileTextIcon },
   // Sources is deliberately absent, not deleted: connectors are unfinished, and
   // a destination that half works is worse than one that is not offered yet.
   // The route and its panel are still here — put the entry back to restore it.
-  { to: '/data', label: 'Data', hint: 'Database connections', icon: DatabaseIcon },
+  { to: '/data', label: 'data', hint: 'navDataHint', icon: DatabaseIcon },
   // Labelled for what it does, not for the protocol that does it. "MCP" names
   // a wire format; what the reader is choosing is which of their own services
   // the agent can reach. The route, the tables and the code stay MCP — that is
   // the accurate name for the thing being spoken.
-  { to: '/connectors', label: 'Connectors', hint: 'Services the agent can use', icon: PlugIcon },
+  { to: '/connectors', label: 'connectors', hint: 'navConnectorsHint', icon: PlugIcon },
   // The route stays `/files`: it is in links and bookmarks, and the label is
   // what anyone actually reads. "Assets" because the page holds pictures as
   // well as documents, and because the chat's own panel is the per-session view.
-  { to: '/files', label: 'Assets', hint: 'Everything the agent has written', icon: FileIcon },
+  { to: '/files', label: 'assets', hint: 'navAssetsHint', icon: FileIcon },
   // Last, and the only page nothing is attached to: it fills itself.
-  { to: '/learned', label: 'Learned', hint: 'What this workspace has learned', icon: BrainIcon },
+  { to: '/learned', label: 'learned', hint: 'navLearnedHint', icon: BrainIcon },
 ]

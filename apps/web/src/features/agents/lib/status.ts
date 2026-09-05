@@ -1,11 +1,12 @@
 import type { AgentStatus } from '@/features/agents/hooks/use-agent-board'
+import type { TranslationKey } from '@/shared/lib/i18n'
 
-/** One vocabulary for run status, used by the sidebar and the agent header. */
-export const STATUS_LABEL: Record<AgentStatus, string> = {
-  running: 'Working…',
-  done: 'Done',
-  stopped: 'Stopped',
-  error: 'Error',
+/** One translatable vocabulary for run status, used throughout the console. */
+export const STATUS_KEY: Record<AgentStatus, TranslationKey> = {
+  running: 'statusRunning',
+  done: 'statusDone',
+  stopped: 'statusStopped',
+  error: 'statusError',
 }
 
 /** Error is the only status that earns full contrast; the rest stay quiet. */

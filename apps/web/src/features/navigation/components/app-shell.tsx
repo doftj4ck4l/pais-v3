@@ -13,6 +13,7 @@ import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
 import { Brand } from '@/shared/components/brand'
 import type { ReactNode } from 'react'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * The frame every page is drawn inside: one sidebar, then the page.
@@ -44,6 +45,7 @@ export function AppShell({
   const onChats = useOnChats()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const { t } = usePreferences()
 
   // Before any workspace exists there is nothing to show and nothing for an
   // agent to act on, so onboarding replaces the whole screen rather than
@@ -92,7 +94,7 @@ export function AppShell({
             <button
               type="button"
               onClick={() => (isWide() ? sidebar.toggle() : setSheetOpen(true))}
-              aria-label="Toggle navigation and chat list"
+              aria-label={t('toggleNavigation')}
               // The icon rail is always visible, including on narrow screens.
               // Only Chats needs this separate control for its session list.
               className={cn(
@@ -119,7 +121,7 @@ export function AppShell({
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="left" className="w-[19.5rem] gap-0 p-0 sm:max-w-[19.5rem]">
-          <SheetTitle className="sr-only">Navigation and agents</SheetTitle>
+          <SheetTitle className="sr-only">{t('navigationAndAgents')}</SheetTitle>
           <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={null} />
         </SheetContent>
       </Sheet>

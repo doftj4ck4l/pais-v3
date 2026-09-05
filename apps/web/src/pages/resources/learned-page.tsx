@@ -1,11 +1,13 @@
 import { PlaybookPanel } from '@/features/resources/components/playbook-panel'
 import { ResourcePage } from '@/pages/resources/resource-page'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 export function LearnedPage() {
+  const { t } = usePreferences()
   return (
     <ResourcePage
-      title="Learned"
-      description="What this workspace has worked out about its own work, written after each run rather than by anyone typing."
+      title={t('learned')}
+      description={t('learnedPageDescription')}
     >
       <PlaybookPanel />
     </ResourcePage>

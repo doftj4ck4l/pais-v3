@@ -1,3 +1,5 @@
+import type { Language } from '@/shared/lib/i18n'
+
 export type Suggestion = { text: string; hint: string }
 
 /**
@@ -37,7 +39,8 @@ const SLOTS = 4
  * file in the Files panel, which is the thing people do not expect a chat box
  * to do.
  */
-const ALWAYS: Suggestion[] = [
+const ALWAYS: Record<Language, Suggestion[]> = {
+  en: [
   {
     text: 'Build a 12-month cash flow spreadsheet with formulas, and save it to my files.',
     hint: 'xlsx skill · writes to the workspace',
@@ -54,24 +57,47 @@ const ALWAYS: Suggestion[] = [
     text: 'Generate 200 rows of realistic test data as CSV, then show me the summary statistics.',
     hint: 'python · runs in the sandbox',
   },
-]
+  ],
+  ms: [
+    {
+      text: 'Bina hamparan aliran tunai 12 bulan dengan formula, kemudian simpan ke fail saya.',
+      hint: 'kemahiran xlsx · menulis ke ruang kerja',
+    },
+    {
+      text: 'Cari di web perubahan Akta AI EU tahun ini dan ringkaskannya bersama sumber.',
+      hint: 'kemahiran web-search · hasil langsung',
+    },
+    {
+      text: 'Draf ringkasan projek satu halaman sebagai dokumen Word yang boleh saya muat turun.',
+      hint: 'kemahiran docx · menulis ke ruang kerja',
+    },
+    {
+      text: 'Jana 200 baris data ujian realistik sebagai CSV, kemudian tunjukkan statistik ringkasan.',
+      hint: 'python · berjalan dalam kotak pasir',
+    },
+  ],
+}
 
-export function buildSuggestions(context: SuggestionContext): Suggestion[] {
+export function buildSuggestions(context: SuggestionContext, language: Language = 'en'): Suggestion[] {
   const contextual: Suggestion[] = []
 
   const [document] = context.documents
   if (document) {
     contextual.push({
-      text: `Summarise "${document}" and list every commitment in it with its deadline.`,
-      hint: 'your documents',
+      text: language === 'ms'
+        ? `Ringkaskan “${document}” dan senaraikan setiap komitmen berserta tarikh akhirnya.`
+        : `Summarise "${document}" and list every commitment in it with its deadline.`,
+      hint: language === 'ms' ? 'dokumen anda' : 'your documents',
     })
   }
 
   const [database] = context.databases
   if (database) {
     contextual.push({
-      text: `In ${database}, find the largest tables and show me how they join.`,
-      hint: 'read-only sql',
+      text: language === 'ms'
+        ? `Dalam ${database}, cari jadual terbesar dan tunjukkan cara jadual itu disambungkan.`
+        : `In ${database}, find the largest tables and show me how they join.`,
+      hint: language === 'ms' ? 'sql baca sahaja' : 'read-only sql',
     })
   }
 
@@ -80,10 +106,12 @@ export function buildSuggestions(context: SuggestionContext): Suggestion[] {
   const [server] = context.mcpServers
   if (server) {
     contextual.push({
-      text: `What can the ${server} server do? Show me its tools, then use the most useful one.`,
+      text: language === 'ms'
+        ? `Apakah yang boleh dilakukan oleh pelayan ${server}? Tunjukkan alatnya, kemudian gunakan alat yang paling berguna.`
+        : `What can the ${server} server do? Show me its tools, then use the most useful one.`,
       hint: `mcp · ${server}`,
     })
   }
 
-  return [...contextual, ...ALWAYS].slice(0, SLOTS)
+  return [...contextual, ...ALWAYS[language]].slice(0, SLOTS)
 }

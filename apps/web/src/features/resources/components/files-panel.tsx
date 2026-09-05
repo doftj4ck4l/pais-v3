@@ -6,6 +6,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { listWorkspaceFiles, workspaceFileUrl } from '@/shared/api/api'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { WorkspaceFile } from '@/shared/lib/types'
 
 /**
@@ -39,6 +40,7 @@ export function FilesPanel({
   const scope = useScope()
   const board = useBoard()
   const navigate = useNavigate()
+  const { t } = usePreferences()
 
   // Same move as the sidebar's run list: choosing a chat has to navigate as
   // well as select, or it would change what an invisible page is showing.
@@ -67,17 +69,24 @@ export function FilesPanel({
   return (
     <div className="flex flex-col">
       <PanelHeader
-        summary={files.length ? `${files.length} file${files.length === 1 ? '' : 's'}` : null}
+        summary={
+          files.length
+            ? t('filesSummary', {
+                count: files.length,
+                files: t(files.length === 1 ? 'fileSingular' : 'filePlural'),
+              })
+            : null
+        }
         action={
           <Button
             variant="outline"
             size="sm"
             onClick={() => void refresh()}
             disabled={busy}
-            aria-label="Refresh files"
+            aria-label={t('refreshFiles')}
           >
             <RefreshCwIcon data-icon="inline-start" className={busy ? 'animate-spin' : undefined} />
-            Refresh
+            {t('refresh')}
           </Button>
         }
       />
@@ -114,7 +123,7 @@ export function FilesPanel({
                         title={file.origin.title}
                         className="relative z-10 min-w-0 truncate text-left underline-offset-2 hover:text-foreground hover:underline"
                       >
-                        from “{shortTitle(file.origin.title)}”
+                        {t('fromChat', { name: shortTitle(file.origin.title) })}
                       </button>
                     </>
                   ) : null}
@@ -127,8 +136,8 @@ export function FilesPanel({
       ) : (
         <PanelEmpty
           icon={FileIcon}
-          title="No files yet"
-          description="Anything the agent writes in this workspace — a spreadsheet, a document, a script — lands here to download."
+          title={t('noFiles')}
+          description={t('noFilesDescription')}
         />
       )}
     </div>

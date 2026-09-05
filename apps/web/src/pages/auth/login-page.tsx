@@ -7,6 +7,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Spinner } from '@/shared/ui/spinner'
 import type { AuthConfig, UserProfile } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * The one screen shown before a session exists.
@@ -23,16 +24,17 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { t } = usePreferences()
 
   useEffect(() => {
     let live = true
     fetchAuthConfig()
       .then((value) => live && setConfig(value))
-      .catch((cause: unknown) => live && setError(cause instanceof Error ? cause.message : 'Unable to load sign-in.'))
+      .catch((cause: unknown) => live && setError(cause instanceof Error ? cause.message : t('unableLoadSignIn')))
     return () => {
       live = false
     }
-  }, [])
+  }, [t])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -41,7 +43,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
     try {
       onSignedIn(await loginWithPassword(email, password))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
+      setError(cause instanceof Error ? cause.message : t('signInFailed'))
     } finally {
       setBusy(false)
     }
@@ -65,21 +67,21 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
             <LockKeyholeIcon className="size-5" />
           </div>
           <p className="mt-8 font-mono text-[0.6875rem] uppercase tracking-[0.24em] text-muted-foreground">
-            Operator access
+            {t('operatorAccess')}
           </p>
           <h2 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] sm:text-[2.4rem]">
-            Sign in
+            {t('signIn')}
           </h2>
 
           {!config && !error ? (
             <div className="mt-10 flex items-center gap-3 text-sm text-muted-foreground">
-              <Spinner className="size-4" /> Checking this deployment…
+              <Spinner className="size-4" /> {t('checkingDeployment')}
             </div>
           ) : config?.passwordLogin ? (
             <form className="mt-9 space-y-5" onSubmit={submit}>
               <Field
                 id="login-email"
-                label="Email"
+                label={t('email')}
                 type="email"
                 autoComplete="username"
                 autoFocus
@@ -88,7 +90,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
               />
               <Field
                 id="login-password"
-                label="Password"
+                label={t('password')}
                 type="password"
                 autoComplete="current-password"
                 value={password}
@@ -105,7 +107,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
                 disabled={busy}
                 className="group h-12 w-full justify-between px-5 text-sm"
               >
-                <span>{busy ? 'Signing in…' : 'Sign in'}</span>
+                <span>{busy ? t('signingIn') : t('signIn')}</span>
                 {busy ? (
                   <Spinner className="size-4" />
                 ) : (
@@ -115,13 +117,12 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
             </form>
           ) : (
             <div className="mt-9 border-l-2 border-foreground pl-5">
-              <p className="text-sm font-medium">Sign-in is managed by this deployment’s identity provider.</p>
+              <p className="text-sm font-medium">{t('managedSignIn')}</p>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Return through your organization’s Pixelspace link. If this page keeps appearing, ask the operator
-                to renew the proxy session.
+                {t('managedSignInHelp')}
               </p>
               <Button type="button" variant="outline" className="mt-5" onClick={() => window.location.reload()}>
-                Try again
+                {t('tryAgain')}
               </Button>
             </div>
           )}
@@ -133,7 +134,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
           ) : null}
 
           <p className="mt-14 font-mono text-[0.625rem] uppercase tracking-[0.18em] text-muted-foreground/70">
-            Pixelspace control plane · this machine
+            {t('controlPlaneMachine')}
           </p>
         </div>
       </section>
@@ -179,6 +180,7 @@ function Field({
  * tech and frozen flat under reduced-motion.
  */
 function MachinePanel() {
+  const { t } = usePreferences()
   return (
     <section
       className="relative hidden overflow-hidden lg:flex lg:min-h-screen lg:flex-col lg:justify-between"
@@ -209,29 +211,28 @@ function MachinePanel() {
       </div>
 
       <div className="relative max-w-xl px-10 pb-4 lg:px-14">
-        <p className="font-mono text-[0.6875rem] uppercase tracking-[0.26em] text-[#5fd7c9]">Private deployment</p>
+        <p className="font-mono text-[0.6875rem] uppercase tracking-[0.26em] text-[#5fd7c9]">{t('privateDeployment')}</p>
         <h1 className="mt-5 text-[clamp(2.4rem,4.4vw,4.4rem)] font-semibold leading-[0.95] tracking-[-0.055em] text-white">
-          Your models.
+          {t('yourModels')}
           <br />
           <span
             className="bg-clip-text text-transparent"
             style={{ backgroundImage: 'linear-gradient(92deg, #6fe6d4, #3aa6cc)' }}
           >
-            Your infrastructure.
+            {t('yourInfrastructure')}
           </span>
         </h1>
         <p className="mt-6 max-w-md text-[0.95rem] leading-7 text-white/55">
-          The Pixelspace control plane runs on this machine. Nothing leaves it — models, data, and every run stay
-          inside your own walls.
+          {t('privateDeploymentHelp')}
         </p>
       </div>
 
       <div className="relative flex flex-wrap gap-x-6 gap-y-3 px-10 pb-12 font-mono text-[0.6875rem] uppercase tracking-[0.14em] text-white/45 lg:px-14">
         <span className="inline-flex items-center gap-2">
-          <ServerIcon className="size-3.5 text-[#5fd7c9]" /> On-prem
+          <ServerIcon className="size-3.5 text-[#5fd7c9]" /> {t('onPrem')}
         </span>
         <span className="inline-flex items-center gap-2">
-          <ShieldCheckIcon className="size-3.5 text-[#5fd7c9]" /> Private session
+          <ShieldCheckIcon className="size-3.5 text-[#5fd7c9]" /> {t('privateSession')}
         </span>
       </div>
     </section>

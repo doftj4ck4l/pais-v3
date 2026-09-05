@@ -13,6 +13,7 @@ import { ItemCard, PanelEmpty, PanelGrid, PanelHeader } from '@/features/resourc
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { deleteDocument, listDocuments, uploadDocuments } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { DocumentRow, IngestResult } from '@/shared/lib/types'
 import { cn } from '@/shared/lib/utils'
 
@@ -32,6 +33,7 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
   /** What the last upload made of each file, shown in the dialog it happened in. */
   const [results, setResults] = useState<IngestResult[]>([])
   const scope = useScope()
+  const { t } = usePreferences()
 
   const refresh = useCallback(async () => {
     try {
@@ -100,15 +102,18 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
       <PanelHeader
         busy={busy}
         summary={
-          indexed.length
-            ? `${indexed.length} doc${indexed.length === 1 ? '' : 's'} · ${chunkTotal} chunks`
+              indexed.length
+            ? t('documentsSummary', {
+                documents: `${indexed.length} ${t(indexed.length === 1 ? 'documentSingular' : 'documentPlural')}`,
+                chunks: chunkTotal,
+              })
             : null
         }
         action={
           docs.length ? (
             <Button size="sm" onClick={openUpload}>
               <UploadIcon data-icon="inline-start" />
-              Upload PDFs
+              {t('uploadPdfs')}
             </Button>
           ) : null
         }
@@ -123,12 +128,12 @@ export function DocumentPanel({ onCountChange }: { onCountChange?: (n: number) =
       ) : (
         <PanelEmpty
           icon={FileTextIcon}
-          title="No documents yet"
-          description="Upload a PDF and the agent can search it with search_docs — or drop one anywhere on this page."
+          title={t('noDocuments')}
+          description={t('noDocumentsDescription')}
           action={
             <Button size="sm" onClick={openUpload}>
               <UploadIcon data-icon="inline-start" />
-              Upload PDFs
+              {t('uploadPdfs')}
             </Button>
           }
         />
@@ -170,15 +175,14 @@ function UploadDialog({
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
+  const { t } = usePreferences()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload documents</DialogTitle>
-          <DialogDescription>
-            PDFs only. Each one is split into chunks the agent can find with search_docs.
-          </DialogDescription>
+          <DialogTitle>{t('uploadDocuments')}</DialogTitle>
+          <DialogDescription>{t('uploadDocumentsDescription')}</DialogDescription>
         </DialogHeader>
 
         <input
@@ -215,7 +219,7 @@ function UploadDialog({
           )}
         >
           {busy ? <Spinner className="size-5" /> : <UploadIcon className="size-5" />}
-          <span>{busy ? 'Indexing…' : 'Drop PDFs here, or click to browse'}</span>
+          <span>{busy ? t('indexing') : t('dropPdfs')}</span>
         </button>
 
         {results.length ? (
@@ -231,8 +235,8 @@ function UploadDialog({
                   <span className="block truncate">{result.title}</span>
                   <span className="readout block text-muted-foreground">
                     {result.status === 'indexed'
-                      ? `${result.pages}p · ${result.chunks} chunks`
-                      : (result.error ?? 'could not be read')}
+                      ? t('pagesAndChunks', { pages: result.pages, chunks: result.chunks })
+                      : (result.error ?? t('couldNotRead'))}
                   </span>
                 </span>
               </li>
@@ -242,7 +246,7 @@ function UploadDialog({
 
         <div className="flex justify-end">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            Done
+            {t('statusDone')}
           </Button>
         </div>
       </DialogContent>
@@ -251,6 +255,7 @@ function UploadDialog({
 }
 
 function DocumentItem({ doc, onRemove }: { doc: DocumentRow; onRemove: () => void }) {
+  const { t } = usePreferences()
   const failed = doc.status !== 'indexed'
   // An indexed document can still carry a note — pages that needed OCR were
   // skipped. Worth the same warning icon: partial coverage looks exactly like
@@ -275,16 +280,16 @@ function DocumentItem({ doc, onRemove }: { doc: DocumentRow; onRemove: () => voi
       meta={
         failed
           ? doc.status === 'empty'
-            ? 'no text layer, needs OCR'
-            : 'could not be read'
-          : `${doc.pages}p · ${doc.chunkCount} chunks${partial ? ' · partial' : ''}`
+            ? t('noTextLayer')
+            : t('couldNotRead')
+          : `${t('pagesAndChunks', { pages: doc.pages, chunks: doc.chunkCount })}${partial ? ` · ${t('partial')}` : ''}`
       }
       actions={
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={onRemove}
-          aria-label={`Remove ${doc.title}`}
+          aria-label={t('removeDocument', { name: doc.title })}
           className="text-muted-foreground hover:text-destructive"
         >
           <Trash2Icon />

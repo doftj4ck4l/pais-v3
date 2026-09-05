@@ -6,6 +6,7 @@ import {
   DialogTitle,
 } from '@/shared/ui/dialog'
 import { Button } from '@/shared/ui/button'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * A last check before something irreversible.
@@ -33,6 +34,7 @@ export function ConfirmDialog({
   confirmLabel?: string
   onConfirm: () => void
 }) {
+  const { t } = usePreferences()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
@@ -44,7 +46,7 @@ export function ConfirmDialog({
         <div className="flex justify-end gap-2">
           {/* Focused on open, so Enter dismisses rather than deletes. */}
           <Button variant="ghost" size="sm" autoFocus onClick={() => onOpenChange(false)}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button
             variant="destructive"

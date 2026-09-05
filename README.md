@@ -92,11 +92,14 @@ console renders inline — the run is never silently swapped for another model.
   users do not have to choose a specialised harness first.
 - **Tool-calling loop** – the agent streams text, calls tools, feeds results back
   in, and iterates until it answers (or hits the harness max-iterations).
-- **The loop rail** – every reasoning pass, tool call, and result lands as a node
-  on a single vertical rail, in the order the agent produced it.
+- **Optional tool trace** – chats stay focused on the answer by default. Users
+  can turn on tool-call details in Settings to inspect calls, results, timings,
+  and failures in the order the agent produced them.
 - **Trace** – the raw step/timing lines the runtime emitted, per agent.
 - **Runs survive a refresh** – every run is written to SQLite and the board is
   rebuilt from it on load.
+- **Per-browser display preferences** – Settings switches the interface between
+  English and Bahasa Melayu and remembers whether tool details are visible.
 
 ## Tools
 

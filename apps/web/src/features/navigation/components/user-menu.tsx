@@ -10,6 +10,7 @@ import {
 import { ProfileDialog } from '@/features/workspace/components/profile-dialog'
 import { useMe } from '@/features/workspace/hooks/use-me'
 import { logoutLocalSession } from '@/shared/api/api'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Who you are signed in as, and how to stop being them.
@@ -20,6 +21,7 @@ import { logoutLocalSession } from '@/shared/api/api'
 export function UserMenu() {
   const me = useMe()
   const [profileOpen, setProfileOpen] = useState(false)
+  const { t } = usePreferences()
 
   if (!me) return null
 
@@ -33,7 +35,7 @@ export function UserMenu() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          aria-label={`Signed in as ${label}`}
+          aria-label={t('signedInAs', { name: label })}
           className="flex size-8 items-center justify-center rounded-full bg-muted text-[0.6875rem] font-semibold uppercase text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {label.slice(0, 2)}
@@ -49,18 +51,18 @@ export function UserMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setProfileOpen(true)}>
             <UserIcon className="size-4 text-muted-foreground" />
-            Profile
+            {t('profile')}
           </DropdownMenuItem>
           {me.authMode === 'local' ? (
             <DropdownMenuItem onSelect={localSignOut}>
               <LogOutIcon className="size-4 text-muted-foreground" />
-              Sign out
+              {t('signOut')}
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem asChild>
               <a href="/outpost.goauthentik.io/sign_out">
                 <LogOutIcon className="size-4 text-muted-foreground" />
-                Sign out
+                {t('signOut')}
               </a>
             </DropdownMenuItem>
           )}

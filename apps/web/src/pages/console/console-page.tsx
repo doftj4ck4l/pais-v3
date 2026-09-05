@@ -14,11 +14,13 @@ import { useBoard } from '@/features/agents/hooks/use-agent-board'
 import { useSessionArtifacts } from '@/features/agents/hooks/use-session-artifacts'
 import { useStickToBottom } from '@/shared/hooks/use-stick-to-bottom'
 import { cn } from '@/shared/lib/utils'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 export function Console() {
   // Provided by __root, so an open agent and its live stream survive a trip to
   // any other page in the sidebar.
   const board = useBoard()
+  const { showToolTrace, t } = usePreferences()
 
   const { selected } = board
   // Keyed on the agent, so switching to another transcript starts at its end
@@ -116,7 +118,10 @@ export function Console() {
                   <Transcript
                     items={selected.items}
                     running={selected.status === 'running'}
-                    runSummary={`Working… ${(selected.elapsed / 1000).toFixed(1)}s`}
+                    runSummary={t('workingTime', {
+                      seconds: (selected.elapsed / 1000).toFixed(1),
+                    })}
+                    showToolTrace={showToolTrace}
                   />
                 ) : (
                   <Greeting />
@@ -129,14 +134,14 @@ export function Console() {
                   size="sm"
                   variant="secondary"
                   onClick={() => scroll.scrollToBottom()}
-                  aria-label="Scroll to the latest message"
+                  aria-label={t('scrollLatest')}
                   className={cn(
                     'absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 rounded-full',
                     'border shadow-md',
                   )}
                 >
                   <ArrowDownIcon className="size-3.5" />
-                  {selected.status === 'running' ? 'Following paused' : 'Latest'}
+                  {selected.status === 'running' ? t('followingPaused') : t('latest')}
                 </Button>
               ) : null}
             </div>
@@ -194,7 +199,7 @@ export function Console() {
           a sheet — reached from the header's count, never opened on its own. */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-80 gap-0 p-0 sm:max-w-80">
-          <SheetTitle className="sr-only">Files in this chat</SheetTitle>
+          <SheetTitle className="sr-only">{t('filesInChat')}</SheetTitle>
           <ArtifactPanel
             artifacts={artifacts}
             onClose={() => setSheetOpen(false)}

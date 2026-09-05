@@ -1,7 +1,8 @@
 import { memo } from 'react'
-import { FileSpreadsheetIcon } from 'lucide-react'
+import { ChevronRightIcon, FileSpreadsheetIcon, WrenchIcon } from 'lucide-react'
 import { Spinner } from '@/shared/ui/spinner'
-import { groupTranscriptItems } from '@/features/agents/lib/transcript'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
+import { visibleTranscriptItems } from '@/features/agents/lib/transcript'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
 import { parseMessage, hasUiBlock, validateSpec } from '@/features/agents/lib/ui-blocks'
 import { SegmentView } from '@/features/agents/components/ui-blocks'
@@ -11,25 +12,29 @@ import {
   withoutAttachmentNote,
 } from '@/features/agents/lib/attachment-notes'
 import { cn } from '@/shared/lib/utils'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Item } from '@/shared/lib/types'
 import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
 
 /**
  * The transcript reads as a conversation: what the user asked, what the agent
- * said, and — while it is working — one quiet loading line. Reasoning, tool
- * calls, and web searches are deliberately hidden: they are the machinery, not
- * the answer, and readers follow the answer. `render_ui` is the one tool left
- * visible because its whole purpose is to draw something into the reply.
+ * said, and — while it is working — one quiet loading line. Reasoning stays
+ * hidden. Tool calls and web searches are hidden by default, but a user can opt
+ * into their exact execution details in Settings. `render_ui` stays visible in
+ * either mode because its whole purpose is to draw something into the reply.
  */
 export function Transcript({
   items,
   running,
   runSummary,
+  showToolTrace = false,
 }: {
   items: Item[]
   running: boolean
   runSummary: string | null
+  showToolTrace?: boolean
 }) {
+  const { t } = usePreferences()
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
   // not by this component. Following from in here would mean scrolling an
   // ancestor it does not own, and would override the reader unconditionally.
@@ -37,7 +42,7 @@ export function Transcript({
     // Top-aligned: the agent header anchors the top of this column, so the
     // transcript starts right under it rather than floating above the composer.
     <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
-      <TranscriptBody items={items} running={running} />
+      <TranscriptBody items={items} running={running} showToolTrace={showToolTrace} />
 
       {running ? (
         <div
@@ -46,7 +51,7 @@ export function Transcript({
         >
           <Spinner className="size-4" />
           <span className="shimmer text-[0.8125rem] font-medium">
-            {runSummary ?? 'Working…'}
+            {runSummary ?? t('statusRunning')}
           </span>
         </div>
       ) : null}
@@ -57,20 +62,16 @@ export function Transcript({
 const TranscriptBody = memo(function TranscriptBody({
   items,
   running,
+  showToolTrace,
 }: {
   items: Item[]
   running: boolean
+  showToolTrace: boolean
 }) {
-  // Reasoning and working tool calls (web searches included) draw no rows at
-  // all. Only the text of the conversation and `render_ui` output remain.
-  const visible = groupTranscriptItems(
-    items.filter(
-      (item) =>
-        item.kind === 'user' ||
-        item.kind === 'assistant' ||
-        (item.kind === 'tool' && item.name === 'render_ui'),
-    ),
-  )
+  // Reasoning draws no rows. Tool calls (web searches included) are admitted
+  // only by the user's trace preference; conversation text and `render_ui`
+  // output always remain.
+  const visible = visibleTranscriptItems(items, showToolTrace)
 
   return visible.map((item, i) => (
     <TranscriptRow key={i} item={item} streaming={running && i === visible.length - 1} />
@@ -134,8 +135,98 @@ function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; strea
   // arguments *are* the component, and they are rendered inline here.
   if (item.kind === 'tool') return <RenderUiLine item={item} />
 
+  if (item.kind === 'tool-group') return <ToolActivityGroup tools={item.tools} />
+
   if (item.kind === 'assistant') return <AssistantMessage text={item.text} streaming={streaming} />
   return null
+}
+
+/**
+ * Opt-in execution detail. One disclosure keeps the normal reading rhythm;
+ * opening it reveals the exact machine-shaped payloads without truncating the
+ * answer or inventing a friendlier meaning for an unfamiliar MCP tool.
+ */
+function ToolActivityGroup({ tools }: { tools: Array<Extract<Item, { kind: 'tool' }>> }) {
+  const { t } = usePreferences()
+  const pending = tools.some((tool) => tool.result === undefined)
+  const failed = tools.filter((tool) => tool.ok === false).length
+  const label = t('toolCalls', {
+    count: tools.length,
+    calls: t(tools.length === 1 ? 'callSingular' : 'callPlural'),
+  })
+
+  return (
+    <div className="my-2 rounded-lg border bg-muted/20">
+      <Collapsible>
+        <CollapsibleTrigger className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+          <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+            {pending ? <Spinner className="size-3.5" /> : <WrenchIcon className="size-3.5" />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-medium">{label}</span>
+            <span className="mt-0.5 block text-[0.6875rem] text-muted-foreground">
+              {failed
+                ? `${failed} ${t('toolFailed')}`
+                : pending
+                  ? t('toolRunning')
+                  : t('toolComplete')}
+            </span>
+          </span>
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <div className="divide-y border-t">
+            {tools.map((tool) => (
+              <ToolCallDetail key={tool.id} tool={tool} />
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  )
+}
+
+function ToolCallDetail({ tool }: { tool: Extract<Item, { kind: 'tool' }> }) {
+  const { t } = usePreferences()
+  const pending = tool.result === undefined
+  const state = pending
+    ? t('toolRunning')
+    : tool.ok === false
+      ? t('toolFailed')
+      : t('toolComplete')
+
+  return (
+    <div className="px-3 py-3">
+      <div className="flex items-baseline gap-2">
+        <span className="readout min-w-0 flex-1 truncate font-medium">{tool.name}</span>
+        <span className={cn('text-[0.6875rem] text-muted-foreground', tool.ok === false && 'text-destructive')}>
+          {state}
+        </span>
+        {tool.ms !== undefined ? (
+          <span className="readout text-[0.625rem] text-muted-foreground">
+            {tool.ms >= 1000 ? `${(tool.ms / 1000).toFixed(1)}s` : `${tool.ms}ms`}
+          </span>
+        ) : null}
+      </div>
+
+      {tool.args !== '{}' ? (
+        <Payload label={t('arguments')} value={tool.args} />
+      ) : null}
+      {!pending ? <Payload label={t('result')} value={tool.result ?? ''} /> : null}
+    </div>
+  )
+}
+
+function Payload({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mt-2 grid gap-1">
+      <span className="label text-[0.625rem] text-muted-foreground">{label}</span>
+      <pre className="readout max-h-64 overflow-auto rounded-md border bg-background px-2.5 py-2 leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  )
 }
 
 /**
@@ -186,6 +277,7 @@ function AssistantMessage({ text, streaming }: { text: string; streaming: boolea
  * props; its failed attempt collapses to a quiet note rather than a broken box.
  */
 function RenderUiLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
+  const { t } = usePreferences()
   const spec = parseSpecFromArgs(item.args)
 
   if (item.ok === false || !spec) {
@@ -193,10 +285,10 @@ function RenderUiLine({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
     // only a spec that will not parse waits. This keeps the common path instant.
     if (item.result === undefined && spec) return <SegmentView segment={{ kind: 'ui', spec }} />
     if (item.result === undefined) {
-      return <div className="my-4 h-[260px] animate-pulse rounded-lg border bg-muted/30" aria-label="Preparing…" />
+      return <div className="my-4 h-[260px] animate-pulse rounded-lg border bg-muted/30" aria-label={t('preparing')} />
     }
     return (
-      <p className="my-2 text-xs text-muted-foreground/70 italic">Adjusting the component…</p>
+      <p className="my-2 text-xs text-muted-foreground/70 italic">{t('adjustingComponent')}</p>
     )
   }
 

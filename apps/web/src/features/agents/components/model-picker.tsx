@@ -10,6 +10,7 @@ import { ChatOnlyBadge } from '@/shared/components/chat-only-badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/shared/lib/utils'
 import type { Model } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Which model the next run uses, chosen where the question is asked.
@@ -41,6 +42,7 @@ export function ModelPicker({
    */
   lockedId?: string | null
 }) {
+  const { t } = usePreferences()
   // Before /api/meta answers there is nothing to name and nothing to pick, and
   // a trigger reading "Loading…" would be a button that does nothing.
   if (!models.length) return null
@@ -56,7 +58,7 @@ export function ModelPicker({
             {locked?.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
           </span>
         </TooltipTrigger>
-        <TooltipContent>Start a new chat to use a different model</TooltipContent>
+        <TooltipContent>{t('differentModel')}</TooltipContent>
       </Tooltip>
     )
   }
@@ -73,7 +75,7 @@ export function ModelPicker({
         )}
       >
         <ModelLogo model={current} size={14} className="rounded-[3px]" />
-        <span className="readout">{current?.label ?? 'Pick a model'}</span>
+        <span className="readout">{current?.label ?? t('pickModel')}</span>
         {current?.mode === 'chat-only' ? <ChatOnlyBadge /> : null}
         <ChevronDownIcon className="size-3" />
       </DropdownMenuTrigger>
@@ -96,9 +98,9 @@ export function ModelPicker({
                     letting it be chosen and fail on send. */}
                 {m.ready
                   ? m.mode === 'chat-only'
-                    ? 'Text prompts only · no tools or images'
+                    ? t('textOnlyModel')
                     : m.hint
-                  : 'Needs an API key'}
+                  : t('needsApiKey')}
               </span>
             </span>
             {m.id === modelId ? <CheckIcon className="mt-1 size-3.5 shrink-0" /> : null}

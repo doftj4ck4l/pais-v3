@@ -12,6 +12,7 @@ import { useCloseAside } from '@/features/navigation/lib/aside-context'
 import { useOnChats } from '@/features/navigation/lib/rail'
 import { cn } from '@/shared/lib/utils'
 import { useMe } from '@/features/workspace/hooks/use-me'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Two columns: where you can go, and what is in the place you are.
@@ -39,6 +40,7 @@ export function Sidebar({
   const closeAside = useCloseAside()
   const navigate = useNavigate()
   const me = useMe()
+  const { t } = usePreferences()
 
   /**
    * Opening a run is also a navigation: the sessions list is reachable from
@@ -56,7 +58,7 @@ export function Sidebar({
   return (
     <div className="flex h-full bg-sidebar text-sidebar-foreground">
       <nav
-        aria-label="Console"
+        aria-label={t('console')}
         className="flex w-14 shrink-0 flex-col items-center gap-1 border-r py-3"
       >
         {/* The mark, not the lockup: at rail width the wordmark is a smear.
@@ -74,26 +76,26 @@ export function Sidebar({
         <WorkspacePicker compact />
 
         <RailButton
-          label="Chats"
+          label={t('chats')}
           icon={MessageSquareIcon}
           active={onChat}
           onClick={() => openAgent(board.selectedId)}
         />
 
         {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
-          <RailLink key={item.to} to={item.to} label={item.label} icon={item.icon} />
+          <RailLink key={item.to} to={item.to} label={t(item.label)} icon={item.icon} />
         ))}
 
         {me?.canAdministerOrganizations ? (
           <RailLink
             to="/admin"
-            label="Admin panel"
+            label={t('adminPanel')}
             icon={ShieldCheckIcon}
           />
         ) : null}
 
         <div className="mt-auto flex flex-col items-center gap-1">
-          <RailButton label="Settings" icon={SettingsIcon} onClick={onOpenSettings} />
+          <RailButton label={t('settings')} icon={SettingsIcon} onClick={onOpenSettings} />
           <UserMenu />
         </div>
       </nav>
@@ -105,7 +107,7 @@ export function Sidebar({
       {onChat ? (
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-2 px-3 py-3">
-            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">Chats</h2>
+            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t('chats')}</h2>
             <button
               type="button"
               onClick={() => openAgent(null)}
@@ -116,13 +118,13 @@ export function Sidebar({
               )}
             >
               <PlusIcon className="size-3.5" />
-              New
+              {t('new')}
             </button>
             {onCollapse ? (
               <button
                 type="button"
                 onClick={onCollapse}
-                aria-label="Hide the chat list"
+                aria-label={t('hideChatList')}
                 className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
               >
                 <PanelLeftIcon className="size-4" />
@@ -142,7 +144,7 @@ export function Sidebar({
 
           {board.selected ? (
             <div className="border-t px-4 py-3">
-              <h2 className="label mb-2 text-muted-foreground">This agent</h2>
+              <h2 className="label mb-2 text-muted-foreground">{t('thisAgent')}</h2>
               <RunStats agent={board.selected} />
             </div>
           ) : null}

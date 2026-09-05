@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { listConnections, listDocuments, listMcpServers } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { buildSuggestions, type Suggestion } from '@/features/agents/lib/suggestions'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * The starter prompts, tailored to what this workspace actually holds.
@@ -16,8 +17,9 @@ import { buildSuggestions, type Suggestion } from '@/features/agents/lib/suggest
  */
 export function useSuggestions(): Suggestion[] {
   const scope = useScope()
+  const { language } = usePreferences()
   const [suggestions, setSuggestions] = useState<Suggestion[]>(() =>
-    buildSuggestions({ documents: [], databases: [], mcpServers: [] }),
+    buildSuggestions({ documents: [], databases: [], mcpServers: [] }, language),
   )
 
   useEffect(() => {
@@ -31,22 +33,25 @@ export function useSuggestions(): Suggestion[] {
     ]).then(([documents, databases, servers]) => {
       if (!live) return
       setSuggestions(
-        buildSuggestions({
-          // Only indexed documents can be searched; one still being ingested
-          // would be suggested and then not found.
-          documents: documents.filter((d) => d.status === 'indexed').map((d) => d.title),
-          databases: databases.filter((d) => d.status === 'connected').map((d) => d.name),
-          mcpServers: servers
-            .filter((s) => s.enabled && s.status === 'connected')
-            .map((s) => s.name),
-        }),
+        buildSuggestions(
+          {
+            // Only indexed documents can be searched; one still being ingested
+            // would be suggested and then not found.
+            documents: documents.filter((d) => d.status === 'indexed').map((d) => d.title),
+            databases: databases.filter((d) => d.status === 'connected').map((d) => d.name),
+            mcpServers: servers
+              .filter((s) => s.enabled && s.status === 'connected')
+              .map((s) => s.name),
+          },
+          language,
+        ),
       )
     })
 
     return () => {
       live = false
     }
-  }, [scope])
+  }, [language, scope])
 
   return suggestions
 }
