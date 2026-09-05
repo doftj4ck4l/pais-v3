@@ -6,6 +6,7 @@ import { XIcon } from "lucide-react"
 
 import { cn } from "@/shared/lib/utils"
 import { Button } from "@/shared/ui/button"
+import { usePreferences } from "@/shared/hooks/use-preferences"
 
 /**
  * A centred modal. Sheet already wraps the same Radix primitive but slides from
@@ -45,6 +46,7 @@ function DialogContent({
   children,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  const { t } = usePreferences()
   return (
     <DialogPrimitive.Portal data-slot="dialog-portal">
       <DialogOverlay />
@@ -64,7 +66,7 @@ function DialogContent({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Close"
+            aria-label={t('close')}
             className="absolute top-3 right-3 text-muted-foreground"
           >
             <XIcon />

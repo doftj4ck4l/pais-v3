@@ -40,6 +40,26 @@ export function groupTranscriptItems(items: Item[]): TranscriptDisplayItem[] {
 }
 
 /**
+ * Apply the user's transcript preference without dropping tool data from the
+ * live board or persisted conversation. `render_ui` always remains visible
+ * because its arguments are the visual answer, not diagnostic machinery.
+ */
+export function visibleTranscriptItems(
+  items: Item[],
+  showToolTrace: boolean,
+): TranscriptDisplayItem[] {
+  return groupTranscriptItems(
+    items.filter(
+      (item) =>
+        item.kind === 'user' ||
+        item.kind === 'assistant' ||
+        (showToolTrace && item.kind === 'tool') ||
+        (item.kind === 'tool' && item.name === 'render_ui'),
+    ),
+  )
+}
+
+/**
  * How tool arguments are shown: short argument sets read better on one line
  * than pretty-printed. Used for both live events and restored rows so a
  * reloaded transcript is identical to the one you just watched.

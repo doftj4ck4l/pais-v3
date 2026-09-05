@@ -3,6 +3,8 @@ import { useMe } from '@/features/workspace/hooks/use-me'
 import { useSuggestions } from '@/features/agents/hooks/use-suggestions'
 import { useNow } from '@/shared/hooks/use-now'
 import { firstName, partOfDay } from './greeting'
+import { localeFor } from '@/shared/lib/i18n'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * The console with nothing open yet.
@@ -18,6 +20,7 @@ import { firstName, partOfDay } from './greeting'
 export function Greeting() {
   const me = useMe()
   const name = firstName(me)
+  const { t } = usePreferences()
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 pb-5 sm:px-6">
@@ -29,7 +32,7 @@ export function Greeting() {
       </h1>
 
       <p className="mt-3 max-w-lg text-[0.9375rem] text-muted-foreground">
-        Every question starts its own agent. Watch them all from the sidebar.
+        {t('greetingDescription')}
       </p>
     </div>
   )
@@ -73,11 +76,23 @@ export function Suggestions({
  */
 function Salutation() {
   const part = partOfDay(useNow(60_000))
+  const { t } = usePreferences()
+  const greeting = t(
+    part === 'morning'
+      ? 'greetingMorning'
+      : part === 'afternoon'
+        ? 'greetingAfternoon'
+        : part === 'evening'
+          ? 'greetingEvening'
+          : 'greetingNight',
+  )
+  const words = greeting.split(' ')
+  const accent = words.pop()
   return (
     <>
-      Good{' '}
+      {words.join(' ')}{' '}
       <span className="bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-transparent">
-        {part}
+        {accent}
       </span>
     </>
   )
@@ -97,10 +112,12 @@ function Salutation() {
  */
 function Clock() {
   const now = useNow()
+  const { language } = usePreferences()
+  const locale = localeFor(language)
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const hhmm = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
-  const ss = now.toLocaleTimeString([], { second: '2-digit' }).padStart(2, '0')
-  const date = now.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  const hhmm = now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
+  const ss = now.toLocaleTimeString(locale, { second: '2-digit' }).padStart(2, '0')
+  const date = now.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })
 
   return (
     <div className="readout flex items-center gap-2.5 text-[0.8125rem] tracking-[0.01em] text-muted-foreground">

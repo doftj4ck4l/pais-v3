@@ -13,6 +13,7 @@ import { NewWorkspaceDialog } from '@/features/workspace/components/new-workspac
 import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
 import type { WorkspaceRow } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Which body of work the console is showing. Everything under it — agents,
@@ -24,6 +25,7 @@ import type { WorkspaceRow } from '@/shared/lib/types'
 export function WorkspacePicker({ compact = false }: { compact?: boolean } = {}) {
   const { workspaces, current, loading, setCurrent, create } = useWorkspace()
   const [adding, setAdding] = useState(false)
+  const { t } = usePreferences()
 
   const open = workspaces.find((w) => w.id === current) ?? null
 
@@ -53,7 +55,7 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
             still reachable, as the menu's own heading. */}
         <DropdownMenuTrigger
           disabled={loading}
-          aria-label={open ? `Workspace: ${open.name}` : 'Workspace'}
+          aria-label={open ? t('workspaceNamed', { name: open.name }) : t('workspace')}
           className={cn(
             'transition-colors hover:bg-accent',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
@@ -66,7 +68,7 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
           {compact ? null : (
             <>
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {open?.name ?? (loading ? 'Loading…' : 'No workspace')}
+                {open?.name ?? (loading ? t('loading') : t('noWorkspace'))}
               </span>
               <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
             </>
@@ -74,7 +76,7 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
         </DropdownMenuTrigger>
 
         <DropdownMenuContent side="bottom" align="start" className="min-w-60">
-          <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+          <DropdownMenuLabel>{t('workspaces')}</DropdownMenuLabel>
           {workspaces.map((workspace, i) => (
             <WorkspaceItem
               key={workspace.id}
@@ -93,7 +95,7 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
             >
               <PlusIcon className="size-3.5" />
             </span>
-            Add workspace
+            {t('addWorkspace')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

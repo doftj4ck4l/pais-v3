@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { groupTranscriptItems } from '../src/features/agents/lib/transcript'
+import { groupTranscriptItems, visibleTranscriptItems } from '../src/features/agents/lib/transcript'
 import type { Item } from '../src/shared/lib/types'
 
 const tool = (id: string, ms?: number, result = 'done'): Extract<Item, { kind: 'tool' }> => ({
@@ -10,6 +10,29 @@ const tool = (id: string, ms?: number, result = 'done'): Extract<Item, { kind: '
   result,
   ms,
   ok: true,
+})
+
+describe('visibleTranscriptItems', () => {
+  const items: Item[] = [
+    { kind: 'user', text: 'Please investigate' },
+    tool('one', 10),
+    { kind: 'assistant', text: 'Finished' },
+  ]
+
+  it('keeps tool calls hidden by default', () => {
+    expect(visibleTranscriptItems(items, false).map((item) => item.kind)).toEqual([
+      'user',
+      'assistant',
+    ])
+  })
+
+  it('restores grouped tool calls when the preference is enabled', () => {
+    expect(visibleTranscriptItems(items, true).map((item) => item.kind)).toEqual([
+      'user',
+      'tool-group',
+      'assistant',
+    ])
+  })
 })
 
 describe('groupTranscriptItems', () => {

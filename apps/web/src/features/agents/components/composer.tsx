@@ -8,6 +8,7 @@ import { uploadChatDataFile, uploadChatImage } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
 import type { ChatAttachments, Model, UploadedDataFile, UploadedImage } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 const DATA_FILE_ACCEPT =
   '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -67,6 +68,7 @@ export function Composer({
   const workspaceIdRef = useRef(scope.workspaceId)
   const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
   const chatOnly = activeModel?.mode === 'chat-only'
+  const { t } = usePreferences()
 
   useEffect(() => {
     if (chatOnly) attachmentGeneration.current += 1
@@ -87,8 +89,8 @@ export function Composer({
     setImages([])
     setFiles([])
     dataFileSlots.current = 0
-    setError('Attachments were removed because this model supports text chat only.')
-  }, [chatOnly, files.length, images.length])
+    setError(t('filesRemovedChatOnly'))
+  }, [chatOnly, files.length, images.length, t])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -136,9 +138,9 @@ export function Composer({
         selected,
         (file) => uploadChatImage(scope, file, conversationId),
         (uploaded) => setImages((prev) => [...prev, ...uploaded]),
-        'This model supports text chat only. Choose an agent model to use images.',
+        t('chooseAgentImages'),
       ),
-    [conversationId, scope, uploadBatch],
+    [conversationId, scope, t, uploadBatch],
   )
 
   const attachDataFiles = useCallback(
@@ -151,7 +153,7 @@ export function Composer({
         accepted,
         (file) => uploadChatDataFile(scope, file),
         (uploaded) => setFiles((prev) => [...prev, ...uploaded]),
-        'This model supports text chat only. Choose an agent model to analyze files.',
+        t('chooseAgentAnalyze'),
       )
       if (attachmentGeneration.current !== generation) return
       dataFileSlots.current = Math.max(
@@ -159,10 +161,10 @@ export function Composer({
         dataFileSlots.current - (accepted.length - completed),
       )
       if (selected.length > accepted.length) {
-        setError((current) => current ?? 'Attach up to 6 data files per message.')
+        setError((current) => current ?? t('attachLimit'))
       }
     },
-    [scope, uploadBatch],
+    [scope, t, uploadBatch],
   )
 
   const submit = () => {
@@ -172,9 +174,9 @@ export function Composer({
     if (uploading > 0) return
     const fallback = files.length
       ? files.length === 1
-        ? 'Analyze this data file.'
-        : 'Analyze these data files.'
-      : 'What is in this image?'
+        ? t('analyzeFile')
+        : t('analyzeFiles')
+      : t('whatsInImage')
     onSend(value.trim() || fallback, { images, dataFiles: files })
     setValue('')
     setImages([])
@@ -196,7 +198,7 @@ export function Composer({
             onClick={onDismissNotice}
             className="-mr-1 text-muted-foreground"
           >
-            Dismiss
+            {t('dismiss')}
           </Button>
         </div>
       ) : null}
@@ -261,8 +263,8 @@ export function Composer({
               size="icon"
               disabled={chatOnly || uploading > 0}
               onClick={() => fileInputRef.current?.click()}
-              aria-label="Attach CSV or Excel file"
-              title={chatOnly ? 'Choose an agent model to analyze files' : 'Attach CSV or Excel file'}
+              aria-label={t('attachData')}
+              title={chatOnly ? t('chooseAgentFiles') : t('attachData')}
               className="mb-0.5 text-muted-foreground"
             >
               <PaperclipIcon />
@@ -303,9 +305,15 @@ export function Composer({
                 }
               }}
               placeholder={
-                composerPlaceholder(files.length > 0, images.length > 0, chatOnly)
+                files.length
+                  ? t('askAnalyze')
+                  : images.length
+                    ? t('askImage')
+                    : chatOnly
+                      ? t('askAnythingChatOnly')
+                      : t('askAnything')
               }
-              aria-label="Start a new agent"
+              aria-label={t('startAgent')}
               className="max-h-[200px] min-h-0 resize-none border-0 bg-transparent px-0 py-2 text-[0.9375rem] shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
 
@@ -313,7 +321,7 @@ export function Composer({
               type="submit"
               disabled={(!value.trim() && !images.length && !files.length) || uploading > 0}
             >
-              <span className="hidden sm:inline">Send</span>
+              <span className="hidden sm:inline">{t('send')}</span>
               <ArrowUpIcon data-icon="inline-end" />
             </Button>
           </div>
@@ -352,11 +360,11 @@ export function Composer({
 
           <p className="hidden min-w-0 items-center gap-1.5 truncate sm:flex">
             {chatOnly ? (
-              <span>Chat only · no tools, connected resources, or attachments</span>
+              <span>{t('chatOnlyHint')}</span>
             ) : (
               <>
                 <PaperclipIcon className="size-3 shrink-0" />
-                Attach CSV/XLSX · paste or drop an image
+                {t('attachmentHint')}
               </>
             )}
           </p>
@@ -367,6 +375,7 @@ export function Composer({
 }
 
 function DataFileChip({ file, onRemove }: { file: UploadedDataFile; onRemove: () => void }) {
+  const { t } = usePreferences()
   return (
     <span className="group flex h-14 max-w-64 items-center gap-2 rounded-md border bg-background px-2.5">
       <FileSpreadsheetIcon className="size-5 shrink-0 text-muted-foreground" />
@@ -379,7 +388,7 @@ function DataFileChip({ file, onRemove }: { file: UploadedDataFile; onRemove: ()
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Remove ${file.name}`}
+        aria-label={t('removeFile', { name: file.name })}
         className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <XIcon className="size-3" />
@@ -392,13 +401,6 @@ function formatBytes(bytes: number): string {
   return bytes >= 1_000_000
     ? `${(bytes / 1_000_000).toFixed(1)}MB`
     : `${Math.max(1, Math.round(bytes / 1000))}KB`
-}
-
-function composerPlaceholder(hasFiles: boolean, hasImages: boolean, chatOnly: boolean): string {
-  if (hasFiles) return 'Ask what to analyze…'
-  if (hasImages) return 'Ask about the image…'
-  if (chatOnly) return 'Ask anything (chat only)…'
-  return 'Ask anything…'
 }
 
 async function settleWithConcurrency<T>(
@@ -426,13 +428,14 @@ async function settleWithConcurrency<T>(
 }
 
 function Thumbnail({ image, onRemove }: { image: UploadedImage; onRemove: () => void }) {
+  const { t } = usePreferences()
   return (
     <span className="group relative block size-14 overflow-hidden rounded-md border">
       <img src={image.url} alt={image.name} className="size-full object-cover" />
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Remove ${image.name}`}
+        aria-label={t('removeFile', { name: image.name })}
         className="absolute top-0.5 right-0.5 grid size-4 place-items-center rounded-full bg-background/90 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
       >
         <XIcon className="size-3" />
@@ -457,11 +460,12 @@ function EffortControl({
   value: string
   onChange: (level: string) => void
 }) {
+  const { t } = usePreferences()
   return (
     <div
       className="flex shrink-0 items-center gap-0.5 rounded-full border p-0.5"
       role="radiogroup"
-      aria-label="Reasoning effort"
+      aria-label={t('reasoningEffort')}
     >
       {levels.map((level) => (
         <button

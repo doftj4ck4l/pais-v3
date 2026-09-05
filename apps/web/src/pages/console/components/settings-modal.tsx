@@ -20,6 +20,7 @@ import {
 import { Separator } from '@/shared/ui/separator'
 import { ModelLogo } from '@/shared/components/model-logo'
 import { ChatOnlyBadge } from '@/shared/components/chat-only-badge'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Meta } from '@/shared/lib/types'
 
 /**
@@ -56,20 +57,21 @@ export function SettingsModal({
 }) {
   const [confirmClear, setConfirmClear] = useState(false)
   const model = meta?.models.find((m) => m.id === modelId)
+  const { language, setLanguage, showToolTrace, setShowToolTrace, t } = usePreferences()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Applies to the next agent you start.</DialogDescription>
+          <DialogTitle>{t('settings')}</DialogTitle>
+          <DialogDescription>{t('settingsDescription')}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 px-5 py-4">
-          <Field label="Model">
+          <Field label={t('model')}>
             <Select value={modelId} onValueChange={onModelChange}>
               <SelectTrigger className="h-9 w-full">
-                <SelectValue placeholder="Loading…" />
+                <SelectValue placeholder={t('loading')} />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -87,11 +89,11 @@ export function SettingsModal({
             </Select>
             {model?.mode === 'chat-only' ? (
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Text prompts only. Tools, connected resources, and images are unavailable.
+                {t('modelChatOnly')}
               </p>
             ) : model && !model.ready ? (
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Add an API key to use this model.
+                {t('modelNeedsKey')}
               </p>
             ) : null}
           </Field>
@@ -99,21 +101,52 @@ export function SettingsModal({
 
         <Separator />
 
-        <div className="flex items-center gap-3 px-5 py-3.5">
-          <span className="label text-muted-foreground">Appearance</span>
-          <Button variant="outline" size="sm" onClick={onToggleTheme} className="ml-auto gap-1.5">
-            {theme === 'dark' ? <SunIcon data-icon="inline-start" /> : <MoonIcon data-icon="inline-start" />}
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </Button>
+        <div className="px-5 py-4">
+          <h2 className="label mb-3 text-muted-foreground">{t('display')}</h2>
+          <div className="divide-y rounded-lg border">
+            <PreferenceRow label={t('language')} description={t('languageDescription')}>
+              <Select value={language} onValueChange={(value) => setLanguage(value === 'ms' ? 'ms' : 'en')}>
+                <SelectTrigger className="h-8 min-w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="en">{t('english')}</SelectItem>
+                  <SelectItem value="ms">{t('malay')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </PreferenceRow>
+
+            <PreferenceRow label={t('toolTrace')} description={t('toolTraceDescription')}>
+              <Select
+                value={showToolTrace ? 'shown' : 'hidden'}
+                onValueChange={(value) => setShowToolTrace(value === 'shown')}
+              >
+                <SelectTrigger className="h-8 min-w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="hidden">{t('hidden')}</SelectItem>
+                  <SelectItem value="shown">{t('shown')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </PreferenceRow>
+
+            <PreferenceRow label={t('appearance')}>
+              <Button variant="outline" size="sm" onClick={onToggleTheme} className="gap-1.5">
+                {theme === 'dark' ? <SunIcon data-icon="inline-start" /> : <MoonIcon data-icon="inline-start" />}
+                {theme === 'dark' ? t('light') : t('dark')}
+              </Button>
+            </PreferenceRow>
+          </div>
         </div>
 
         <Separator />
 
         <div className="flex items-center gap-3 px-5 py-3.5">
           <span className="min-w-0">
-            <span className="label block text-muted-foreground">Agents</span>
+            <span className="label block text-muted-foreground">{t('agents')}</span>
             <span className="readout text-[0.6875rem] text-muted-foreground">
-              {agentCount} stored on this browser
+              {t('agentsStored', { count: agentCount })}
             </span>
           </span>
           {/* Destructive and irreversible — it deletes stored conversations, not
@@ -126,7 +159,7 @@ export function SettingsModal({
             className="ml-auto gap-1.5 text-destructive hover:text-destructive"
           >
             <Trash2Icon data-icon="inline-start" />
-            Remove all
+            {t('removeAll')}
           </Button>
         </div>
       </DialogContent>
@@ -137,12 +170,39 @@ export function SettingsModal({
       <ConfirmDialog
         open={confirmClear}
         onOpenChange={setConfirmClear}
-        title="Remove all agents?"
-        description={`All ${agentCount} agent${agentCount === 1 ? '' : 's'} and their transcripts will be deleted from this workspace. This cannot be undone.`}
-        confirmLabel="Remove all"
+        title={t('removeAllTitle')}
+        description={t('removeAllDescription', {
+          count: agentCount,
+          agents: t(agentCount === 1 ? 'agentSingular' : 'agentPlural'),
+        })}
+        confirmLabel={t('removeAll')}
         onConfirm={onClearAll}
       />
     </Dialog>
+  )
+}
+
+function PreferenceRow({
+  label,
+  description,
+  children,
+}: {
+  label: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-4 px-3 py-3">
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{label}</span>
+        {description ? (
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
+      </span>
+      <span className="shrink-0">{children}</span>
+    </div>
   )
 }
 

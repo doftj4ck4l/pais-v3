@@ -5,6 +5,8 @@ import { useWorkspaceState, WorkspaceContext } from '@/features/workspace/hooks/
 import { MeContext, useMeState } from '@/features/workspace/hooks/use-me'
 import { LoginPage } from '@/pages/auth/login-page'
 import { Spinner } from '@/shared/ui/spinner'
+import { usePreferences } from '@/shared/hooks/use-preferences'
+import { PreferencesProvider } from '@/shared/components/preferences-provider'
 
 /**
  * Everything every route needs, and nothing any single route owns.
@@ -26,11 +28,20 @@ export const Route = createRootRoute({
 })
 
 function RootLayout() {
+  return (
+    <PreferencesProvider>
+      <RootContent />
+    </PreferencesProvider>
+  )
+}
+
+function RootContent() {
   const me = useMeState()
+  const { t } = usePreferences()
 
   if (me.loading) {
     return (
-      <div className="flex h-full items-center justify-center" role="status" aria-label="Loading Pixelspace">
+      <div className="flex h-full items-center justify-center" role="status" aria-label={t('loadingPixelspace')}>
         <Spinner className="size-5" />
       </div>
     )
@@ -59,11 +70,12 @@ function AuthenticatedRoot({ me }: { me: ReturnType<typeof useMeState> }) {
 }
 
 function NotFound() {
+  const { t } = usePreferences()
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center">
-      <p className="text-sm font-medium">No such page</p>
+      <p className="text-sm font-medium">{t('noSuchPage')}</p>
       <a href="/" className="text-xs text-muted-foreground underline underline-offset-4">
-        Back to the console
+        {t('backConsole')}
       </a>
     </div>
   )

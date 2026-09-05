@@ -1,6 +1,7 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import type { ContextUsage } from '@/features/agents/hooks/use-agent-board'
 import { cn } from '@/shared/lib/utils'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 const SIZE = 18
 const STROKE = 2.5
@@ -18,6 +19,7 @@ const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 
  * real numbers.
  */
 export function ContextRing({ context }: { context: ContextUsage | null }) {
+  const { t } = usePreferences()
   if (!context || context.window <= 0) return null
 
   const ratio = Math.min(1, context.used / context.window)
@@ -60,13 +62,16 @@ export function ContextRing({ context }: { context: ContextUsage | null }) {
       </TooltipTrigger>
       <TooltipContent className="max-w-64">
         <p>
-          {fmt(context.used)} / {fmt(context.window)} tokens
-          {context.estimated ? ' (estimated)' : ''}
+          {t('contextTokens', { used: fmt(context.used), window: fmt(context.window) })}
+          {context.estimated ? ` (${t('estimated')})` : ''}
         </p>
         {context.compacted ? (
           <p className="mt-1 text-muted-foreground">
-            Compacted {context.compacted.turnsSummarised} earlier message(s):{' '}
-            {fmt(context.compacted.fromTokens)} → {fmt(context.compacted.toTokens)} tokens.
+            {t('compactedContext', {
+              turns: context.compacted.turnsSummarised,
+              from: fmt(context.compacted.fromTokens),
+              to: fmt(context.compacted.toTokens),
+            })}
           </p>
         ) : null}
       </TooltipContent>

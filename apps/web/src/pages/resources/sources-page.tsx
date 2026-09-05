@@ -1,11 +1,13 @@
 import { ConnectorPanel } from '@/features/resources/components/connector-panel'
 import { ResourcePage } from '@/pages/resources/resource-page'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 export function SourcesPage() {
+  const { t } = usePreferences()
   return (
     <ResourcePage
-      title="Sources"
-      description="Places documents come from on their own. A connector's files land in the same index as an upload."
+      title={t('sources')}
+      description={t('sourcesPageDescription')}
     >
       <ConnectorPanel />
     </ResourcePage>

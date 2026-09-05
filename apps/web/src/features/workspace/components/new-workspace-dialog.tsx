@@ -9,6 +9,7 @@ import {
 } from '@/shared/ui/dialog'
 import { Button } from '@/shared/ui/button'
 import type { WorkspaceRow } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Naming a new workspace.
@@ -37,6 +38,7 @@ export function NewWorkspaceDialog({
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { t } = usePreferences()
 
   // Reopening starts clean rather than resuming an abandoned attempt.
   useEffect(() => {
@@ -58,10 +60,10 @@ export function NewWorkspaceDialog({
     try {
       // An empty field is a choice, not an error: the server names it
       // "Untitled" and the switcher can rename it. Same rule as first run.
-      await onCreate(trimmed || 'Untitled')
+      await onCreate(trimmed || t('untitled'))
       onOpenChange(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not create the workspace.')
+      setError(e instanceof Error ? e.message : t('workspaceCreateFailed'))
     } finally {
       setBusy(false)
     }
@@ -71,10 +73,9 @@ export function NewWorkspaceDialog({
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>New workspace</DialogTitle>
+          <DialogTitle>{t('newWorkspace')}</DialogTitle>
           <DialogDescription>
-            Each workspace keeps its own agents, documents, databases and files. Nothing is
-            shared between them.
+            {t('workspaceDescription')}
           </DialogDescription>
         </DialogHeader>
 
@@ -87,14 +88,14 @@ export function NewWorkspaceDialog({
         >
           <div className="flex flex-col gap-1.5">
             <label htmlFor="new-workspace-name" className="text-sm font-medium">
-              Name
+              {t('name')}
             </label>
             <input
               id="new-workspace-name"
               autoFocus
               value={name}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
-              placeholder="Research"
+              placeholder={t('research')}
               disabled={busy}
               aria-invalid={duplicate || undefined}
               aria-describedby={duplicate || error ? 'new-workspace-problem' : undefined}
@@ -102,7 +103,7 @@ export function NewWorkspaceDialog({
             />
             {duplicate || error ? (
               <p id="new-workspace-problem" className="text-sm text-destructive">
-                {duplicate ? `You already have a workspace called "${trimmed}".` : error}
+                {duplicate ? t('duplicateWorkspace', { name: trimmed }) : error}
               </p>
             ) : null}
           </div>
@@ -115,10 +116,10 @@ export function NewWorkspaceDialog({
               disabled={busy}
               onClick={() => onOpenChange(false)}
             >
-              Cancel
+              {t('cancel')}
             </Button>
             <Button type="submit" size="sm" disabled={busy || duplicate}>
-              {busy ? 'Creating…' : 'Create workspace'}
+              {busy ? t('creating') : t('createWorkspace')}
             </Button>
           </div>
         </form>

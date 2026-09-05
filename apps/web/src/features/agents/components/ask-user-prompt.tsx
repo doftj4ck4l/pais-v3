@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button } from '@/shared/ui/button'
 import type { PendingQuestion } from '@/features/agents/hooks/use-agent-board'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * The agent has stopped mid-run to ask the user something, and the run is
@@ -18,6 +19,7 @@ export function AskUserPrompt({
   const [text, setText] = useState('')
   const hasOptions = question.options.length > 0
   const isApproval = question.kind === 'approval'
+  const { t } = usePreferences()
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
@@ -46,13 +48,13 @@ export function AskUserPrompt({
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={hasOptions ? 'or type your own answer…' : 'type your answer…'}
+              placeholder={hasOptions ? t('ownAnswer') : t('typeAnswer')}
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors focus-visible:border-foreground/40"
             />
             <Button type="submit" size="sm" disabled={!text.trim()}>
-              Send
+              {t('send')}
             </Button>
           </form>
         ) : null}

@@ -10,6 +10,7 @@ import {
 import { Button } from '@/shared/ui/button'
 import { updateMe } from '@/shared/api/api'
 import { useMeContext } from '@/features/workspace/hooks/use-me'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Your profile, and the one part of it this console owns.
@@ -31,6 +32,7 @@ export function ProfileDialog({
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { t } = usePreferences()
 
   // Seeded on open rather than on mount: the dialog outlives each visit to it,
   // and reopening should show what is stored now, not what was typed last time.
@@ -52,7 +54,7 @@ export function ProfileDialog({
       refresh()
       onOpenChange(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save your name.')
+      setError(e instanceof Error ? e.message : t('profileSaveFailed'))
     } finally {
       setBusy(false)
     }
@@ -67,9 +69,9 @@ export function ProfileDialog({
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Profile</DialogTitle>
+          <DialogTitle>{t('profile')}</DialogTitle>
           <DialogDescription>
-            Your name is used for the greeting and the badge in the sidebar.
+            {t('profileDescription')}
           </DialogDescription>
         </DialogHeader>
 
@@ -82,7 +84,7 @@ export function ProfileDialog({
         >
           <div className="flex flex-col gap-1.5">
             <label htmlFor="profile-name" className="text-sm font-medium">
-              Name
+              {t('name')}
             </label>
             <input
               id="profile-name"
@@ -95,19 +97,19 @@ export function ProfileDialog({
               className="w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
             />
             <p className="text-xs text-muted-foreground">
-              Leave it empty to use {fallbackName}, the name your sign-in provides.
+              {t('profileLeaveEmpty', { name: fallbackName })}
             </p>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
 
-          <Field label="Signed in as" value={identity} />
+          <Field label={t('signedInIdentity')} value={identity} />
           {me.email && me.email !== identity ? (
-            <Field label="Email" value={me.email} />
+            <Field label={t('email')} value={me.email} />
           ) : null}
-          {me.groups.length ? <Field label="Groups" value={me.groups.join(', ')} /> : null}
+          {me.groups.length ? <Field label={t('groups')} value={me.groups.join(', ')} /> : null}
 
           <p className="text-xs text-muted-foreground">
-            Those come from your sign-in and are managed there, not here.
+            {t('identityManaged')}
           </p>
 
           <div className="flex justify-end gap-2">
@@ -118,10 +120,10 @@ export function ProfileDialog({
               disabled={busy}
               onClick={() => onOpenChange(false)}
             >
-              Cancel
+              {t('cancel')}
             </Button>
             <Button type="submit" size="sm" disabled={busy}>
-              {busy ? 'Saving…' : 'Save'}
+              {busy ? t('saving') : t('save')}
             </Button>
           </div>
         </form>

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '@/shared/ui/button'
 import { useMe } from '@/features/workspace/hooks/use-me'
 import { Brand } from '@/shared/components/brand'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * First run: no workspaces yet, so ask for one before showing the console.
@@ -24,6 +25,7 @@ export function WorkspaceOnboarding({
   const me = useMe()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const { t } = usePreferences()
 
   const greeting = me?.name || me?.username
   const trimmed = name.trim()
@@ -34,7 +36,7 @@ export function WorkspaceOnboarding({
     try {
       // An empty field is a valid choice, not an error to block on: the server
       // names it "Untitled" and it can be renamed from the switcher.
-      await onCreate(trimmed || 'Untitled')
+      await onCreate(trimmed || t('untitled'))
     } finally {
       setBusy(false)
     }
@@ -46,11 +48,10 @@ export function WorkspaceOnboarding({
         <Brand className="mb-5 h-7" />
 
         <h1 className="text-lg font-semibold tracking-[-0.01em]">
-          {greeting ? `Welcome, ${greeting}` : 'Welcome to PixelSpace'}
+          {greeting ? t('welcomeName', { name: greeting }) : t('welcomePixelspace')}
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Each workspace keeps its own agents, documents, databases and files. Name your first
-          one to get started.
+          {t('onboardingDescription')}
         </p>
 
         <form
@@ -64,13 +65,13 @@ export function WorkspaceOnboarding({
             autoFocus
             value={name}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
-            placeholder="Research"
-            aria-label="Workspace name"
+            placeholder={t('research')}
+            aria-label={t('workspaceName')}
             disabled={busy}
             className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm"
           />
           <Button type="submit" disabled={busy}>
-            {busy ? 'Creating…' : 'Create'}
+            {busy ? t('creating') : t('create')}
           </Button>
         </form>
       </div>

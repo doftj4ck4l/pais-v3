@@ -1,3 +1,5 @@
+import { localeFor, translate, type Language } from '@/shared/lib/i18n'
+
 /**
  * Splitting the agent list into days.
  *
@@ -30,17 +32,17 @@ function startOfDay(at: Date): number {
  * "Sunday" five weeks ago is a riddle. The year appears only when it is not
  * this one, which is the difference between a label and a form field.
  */
-export function dayLabel(at: number, now: Date = new Date()): string {
+export function dayLabel(at: number, now: Date = new Date(), language: Language = 'en'): string {
   const today = startOfDay(now)
   const day = startOfDay(new Date(at))
   const daysAgo = Math.round((today - day) / DAY_MS)
 
-  if (daysAgo <= 0) return 'Today'
-  if (daysAgo === 1) return 'Yesterday'
-  if (daysAgo < 7) return new Date(at).toLocaleDateString([], { weekday: 'long' })
+  if (daysAgo <= 0) return translate(language, 'today')
+  if (daysAgo === 1) return translate(language, 'yesterday')
+  if (daysAgo < 7) return new Date(at).toLocaleDateString(localeFor(language), { weekday: 'long' })
 
   const sameYear = new Date(at).getFullYear() === now.getFullYear()
-  return new Date(at).toLocaleDateString([], {
+  return new Date(at).toLocaleDateString(localeFor(language), {
     day: 'numeric',
     month: 'short',
     ...(sameYear ? {} : { year: 'numeric' }),
@@ -51,6 +53,7 @@ export function groupByDay<T>(
   items: T[],
   startedAt: (item: T) => number,
   now: Date = new Date(),
+  language: Language = 'en',
 ): DayGroup<T>[] {
   const groups = new Map<number, T[]>()
 
@@ -65,7 +68,7 @@ export function groupByDay<T>(
     .sort(([a], [b]) => b - a)
     .map(([day, group]) => ({
       key: String(day),
-      label: dayLabel(day, now),
+      label: dayLabel(day, now, language),
       items: [...group].sort((a, b) => startedAt(b) - startedAt(a)),
     }))
 }

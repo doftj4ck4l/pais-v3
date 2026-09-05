@@ -3,9 +3,10 @@ import { Button } from '@/shared/ui/button'
 import { ModelLogo } from '@/shared/components/model-logo'
 import { ContextRing } from '@/features/agents/components/context-ring'
 import type { AgentRun } from '@/features/agents/hooks/use-agent-board'
-import { STATUS_LABEL, statusEmphasis } from '@/features/agents/lib/status'
+import { STATUS_KEY, statusEmphasis } from '@/features/agents/lib/status'
 import { cn } from '@/shared/lib/utils'
 import type { Model } from '@/shared/lib/types'
+import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
  * Names the agent you are looking at. Sits outside the scroll area so it stays
@@ -26,6 +27,7 @@ export function AgentHeader({
   onToggleArtifacts?: () => void
 }) {
   const running = agent.status === 'running'
+  const { t } = usePreferences()
 
   return (
     <header className="flex items-center gap-3 border-b px-4 py-3 sm:px-6">
@@ -37,7 +39,7 @@ export function AgentHeader({
           <ModelLogo model={model} size={13} className="rounded-[3px]" />
           <span className="truncate">{model?.label ?? agent.modelId}</span>
           <span aria-hidden>·</span>
-          <span className={cn(statusEmphasis(agent.status))}>{STATUS_LABEL[agent.status]}</span>
+          <span className={cn(statusEmphasis(agent.status))}>{t(STATUS_KEY[agent.status])}</span>
         </p>
       </div>
 
@@ -55,7 +57,7 @@ export function AgentHeader({
       {running ? (
         <Button variant="outline" size="sm" onClick={onStop}>
           <SquareIcon data-icon="inline-start" className="fill-current" />
-          Stop
+          {t('stop')}
         </Button>
       ) : null}
     </header>
