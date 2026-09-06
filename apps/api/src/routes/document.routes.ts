@@ -7,4 +7,5 @@ documentRoutes.get("/", documentController.index);
 documentRoutes.post("/", documentController.create);
 // Registered before "/:id" so the literal path is not captured as an id.
 documentRoutes.get("/search", documentController.search);
+documentRoutes.post("/transcribe", documentController.transcribe);
 documentRoutes.delete("/:id", documentController.destroy);

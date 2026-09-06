@@ -202,6 +202,18 @@ export const env = {
     /\/+$/,
     "",
   ),
+
+  /**
+   * OpenAI-compatible whisper endpoint for audio transcription.
+   *
+   * `transcribeBaseUrl`/`transcribeApiKey` default to the chat gateway's own
+   * settings, because most deployments serve whisper from the same vLLM-style
+   * gateway; set these only when it lives elsewhere.
+   */
+  transcribeBaseUrl: (process.env.TRANSCRIBE_BASE_URL ?? "").replace(/\/+$/, ""),
+  transcribeApiKey: process.env.TRANSCRIBE_API_KEY ?? "",
+  transcribeModel: process.env.TRANSCRIBE_MODEL ?? "whisper-1",
+
   /**
    * Default image model. Flash rather than pro because one pro image is ~4x the
    * cost and the tool is reachable from any prompt; override per call.
