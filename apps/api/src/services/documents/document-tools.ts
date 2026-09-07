@@ -18,9 +18,10 @@ export function createDocumentTools(
       name: "search_docs",
       label: "search_docs",
       description:
-        "Search the user's uploaded documents (PDFs) for passages relevant to a question. " +
+        "Search the user's uploaded documents (PDFs, audio transcripts, imported text) for passages relevant to a question. " +
         "Use this whenever the answer might be in their documents, and prefer it over guessing. " +
         "Returns ranked passages, each labelled with its source file and page number. " +
+        "Matching considers both the document body and its filename, so naming an upload in the query finds it. " +
         "Cite those labels in your answer, e.g. [policy.pdf p.4]. " +
         "If the first search returns nothing useful, try again with different wording.",
       parameters: {

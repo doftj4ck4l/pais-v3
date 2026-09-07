@@ -11,9 +11,20 @@ import type { ChatAttachments, Model, UploadedDataFile, UploadedImage } from '@/
 import { usePreferences } from '@/shared/hooks/use-preferences'
 
 const DATA_FILE_ACCEPT =
-  '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  '.csv,.xlsx,.pdf,.docx,.pptx,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
-const isDataFile = (file: File) => /\.(csv|xlsx)$/i.test(file.name)
+const isDataFile = (file: File) => /\.(csv|xlsx|pdf|docx|pptx)$/i.test(file.name)
+
+const DATA_FILE_LABELS: Record<string, string> = {
+  csv: 'CSV',
+  xlsx: 'Excel',
+  pdf: 'PDF',
+  docx: 'Word',
+  pptx: 'PowerPoint',
+}
+
+const dataFileLabel = (name: string) =>
+  DATA_FILE_LABELS[name.toLowerCase().split('.').pop() ?? ''] ?? 'File'
 
 /**
  * Starts a new agent. It is never bound to a running agent — stopping one
@@ -382,7 +393,7 @@ function DataFileChip({ file, onRemove }: { file: UploadedDataFile; onRemove: ()
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-medium">{file.name}</span>
         <span className="block text-[0.625rem] tracking-wide text-muted-foreground uppercase">
-          {file.name.toLowerCase().endsWith('.csv') ? 'CSV' : 'Excel'} · {formatBytes(file.bytes)}
+          {dataFileLabel(file.name)} · {formatBytes(file.bytes)}
         </span>
       </span>
       <button

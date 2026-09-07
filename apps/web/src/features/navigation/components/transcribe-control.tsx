@@ -4,15 +4,18 @@ import { Spinner } from '@/shared/ui/spinner'
 import { transcribeAudio } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { usePreferences } from '@/shared/hooks/use-preferences'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * The sidebar's own audio upload: pick a file, and it is transcribed and
- * indexed into Docs while the run list stays put.
+ * The rail's own audio upload: pick a file, and it is transcribed and indexed
+ * into Docs while the run list stays put.
  *
- * A compact row rather than a destination, because it is an action a chat
- * column naturally sits beside: the user is on Chats, remembers a recording,
- * uploads it, and the transcript is searchable the moment the row goes quiet.
+ * An icon on the rail rather than a row in the chat column, so the action is
+ * reachable from any page and never crowds the sessions list. The same upload
+ * logic as before; the button just wears the rail's uniform. While a file is
+ * transcribing the icon becomes a spinner; when the transcript is indexed the
+ * icon briefly turns into a check so the quiet state does not look like a fail.
  */
 type Status =
   | { kind: 'idle' }
@@ -65,8 +68,21 @@ export function TranscribeControl() {
 
   const busy = status.kind === 'busy'
 
+  // The label rides the tooltip, and the icon state a screen reader hears.
+  const label =
+    status.kind === 'busy'
+      ? t('transcribingAudio', { name: status.title })
+      : status.kind === 'done'
+        ? t('transcribedAudio', { title: status.title, chunks: status.chunks })
+        : status.kind === 'failed'
+          ? status.error
+          : t('transcribeAudioHint')
+
+  const done = status.kind === 'done'
+  const failed = status.kind === 'failed'
+
   return (
-    <div className="mx-1 mb-1 flex flex-col gap-1 rounded-lg border px-2.5 py-2">
+    <>
       <input
         ref={inputRef}
         type="file"
@@ -78,41 +94,34 @@ export function TranscribeControl() {
         }}
       />
 
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        disabled={busy}
-        className={cn(
-          'flex items-center gap-2 rounded-md px-1 py-0.5 text-left text-xs text-muted-foreground',
-          'transition-colors hover:bg-accent hover:text-foreground',
-          'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60',
-        )}
-      >
-        {busy ? (
-          <Spinner className="size-3.5" />
-        ) : (
-          <MicIcon className="size-3.5" />
-        )}
-        <span className="min-w-0 truncate" title={t('transcribeAudioHint')}>
-          {busy ? t('transcribingAudio', { name: status.title }) : t('transcribeAudio')}
-        </span>
-      </button>
-
-      {status.kind === 'done' ? (
-        <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-          <CheckIcon className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate" title={status.title}>
-            {t('transcribedAudio', { title: status.title, chunks: status.chunks })}
-          </span>
-        </span>
-      ) : status.kind === 'failed' ? (
-        <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-          <AlertTriangleIcon className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate" title={status.error}>
-            {status.error}
-          </span>
-        </span>
-      ) : null}
-    </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            aria-label={label}
+            className={cn(
+              'flex size-9 items-center justify-center rounded-lg text-muted-foreground',
+              'transition-colors hover:bg-accent hover:text-foreground',
+              'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60',
+              done && 'text-emerald-500',
+              failed && 'text-red-500',
+            )}
+          >
+            {busy ? (
+              <Spinner className="size-[1.125rem]" />
+            ) : done ? (
+              <CheckIcon className="size-[1.125rem]" />
+            ) : failed ? (
+              <AlertTriangleIcon className="size-[1.125rem]" />
+            ) : (
+              <MicIcon className="size-[1.125rem]" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </>
   )
 }

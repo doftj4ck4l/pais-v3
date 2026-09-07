@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, documents, chunks } from "../db/client";
 import type { DocumentRow, DocumentStatus } from "../models/schema";
 import type { Chunk } from "../services/documents/chunk.service";
@@ -38,6 +38,15 @@ export interface DocumentStore {
   list(workspaceId: string): Promise<DocumentRow[]>;
   remove(workspaceId: string, documentId: string): Promise<boolean>;
   search(workspaceId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]>;
+  /**
+   * Chunks from documents whose *title* contains a search token.
+   *
+   * Body-text FTS cannot find a document by its name, and the name is how a
+   * user refers to an upload — "what's in Azmin.m4a" shares no words with the
+   * meeting that was transcribed. Title is matched separately so the two can be
+   * merged by the caller.
+   */
+  searchByTitle(workspaceId: string, titleTokens: string[], limit: number): Promise<ScoredChunk[]>;
   /** Everything one connector has indexed, keyed by the source's own id. */
   bySource(workspaceId: string, connectorId: string): Promise<Map<string, IndexedSource>>;
   /** Drop every document a connector owns. Returns how many went. */
@@ -181,6 +190,54 @@ export class SqliteDocumentStore implements DocumentStore {
       ORDER BY score DESC
       LIMIT ${limit}
     `)) as ScoredChunk[];
+    return rows;
+  }
+
+  /**
+   * Find documents by their title, outside FTS altogether.
+   *
+   * Titles are never inserted into `chunks_fts` — that table mirrors chunk
+   * *text* — so a name query must look at the `documents` table. LIKE over
+   * the full token list, ranked by how many tokens a title matches and then
+   * by recency, with the same workspace/status isolation as `search`.
+   */
+  async searchByTitle(workspaceId: string, titleTokens: string[], limit: number): Promise<ScoredChunk[]> {
+    if (!titleTokens.length) return [];
+
+    // Score 1 per matched token so a title agreeing on two words ("Azmin.m4a")
+    // ranks above one agreeing on one, then let recency break true ties.
+    const matches = titleTokens.map(
+      (t) => sql`case when d.title like ${`%${t}%`} collate nocase then 1 else 0 end`,
+    );
+    const tokenScore = sql`(${sql.join(matches, sql` + `)})`;
+
+    // One chunk per matched document, its first — enough for the model to see
+    // the document exists and cite it, without filling the window with one doc.
+    // `snippet()` is not used here: it only works in a MATCH context, which a
+    // title query does not have, so the chunk's opening text is the preview.
+    const rows = await this.dbImpl.all(sql`
+      SELECT chunkId, documentId, docTitle, page, seq, text, snippet, score
+      FROM (
+        SELECT
+          c.id           AS chunkId,
+          c.document_id  AS documentId,
+          d.title        AS docTitle,
+          c.page         AS page,
+          c.seq          AS seq,
+          c.text         AS text,
+          substr(c.text, 1, 160) AS snippet,
+          ${tokenScore}  AS score,
+          row_number() OVER (PARTITION BY c.document_id ORDER BY c.seq ASC) AS rn
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        WHERE c.workspace_id = ${workspaceId}
+          AND d.status = 'indexed'
+          AND ${tokenScore} > 0
+      )
+      WHERE rn = 1
+      ORDER BY score DESC
+      LIMIT ${limit}
+    `) as ScoredChunk[];
     return rows;
   }
 }

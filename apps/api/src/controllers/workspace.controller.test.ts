@@ -69,7 +69,7 @@ describe("POST /api/workspace/files", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
-      error: "Only .csv and .xlsx files can be attached for data analysis.",
+      error: "Only .csv, .xlsx, .pdf, .docx and .pptx files can be attached for data analysis.",
     });
   });
 

@@ -31,7 +31,12 @@ const STOPWORDS = new Set([
  * Returns null when nothing searchable survives, so callers can say "no usable
  * terms" instead of issuing a query that throws.
  */
-export function toFtsQuery(raw: string): string | null {
+/**
+ * The searchable words in a query, deduplicated, after stopword removal (with
+ * the single-character fallback described in `toFtsQuery`). Shared by the FTS
+ * query and by title matching, so both look for the same things.
+ */
+export function searchTokens(raw: string): string[] {
   const tokens = (raw.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
 
@@ -43,8 +48,12 @@ export function toFtsQuery(raw: string): string | null {
     ? tokens
     : (raw.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
 
-  if (!usable.length) return null;
-  const unique = [...new Set(usable)];
+  return [...new Set(usable)];
+}
+
+export function toFtsQuery(raw: string): string | null {
+  const unique = searchTokens(raw);
+  if (!unique.length) return null;
   return unique.map((t) => `"${t}"`).join(" OR ");
 }
 
@@ -52,7 +61,7 @@ export type SearchResult =
   | { ok: true; hits: ScoredChunk[]; query: string }
   | { ok: false; reason: "no-terms" };
 
-/** Search one workspace's indexed documents. */
+/** Search one workspace's indexed documents, merging name matches with body matches. */
 export async function searchDocuments(
   workspaceId: string,
   rawQuery: string,
@@ -62,6 +71,29 @@ export async function searchDocuments(
   const query = toFtsQuery(rawQuery);
   if (!query) return { ok: false, reason: "no-terms" };
   const bounded = Math.max(1, Math.min(20, limit || 5));
-  const hits = await store.search(workspaceId, query, bounded);
+
+  // Title hits fill slots the body search does not claim. Without this, a
+  // question naming an upload ("what's in Azmin.m4a?") searches the chunks,
+  // finds an unrelated passage from the PDF that beat the transcript on BM25,
+  // and the model concludes the audio was never indexed.
+  //
+  // Title tokens are filtered harder than body tokens: LIKE "%we%" over every
+  // title would match most of them, so the stopword fallback is not enough.
+  const tokens = searchTokens(rawQuery).filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+  const [body, byName] = await Promise.all([
+    store.search(workspaceId, query, bounded),
+    store.searchByTitle(workspaceId, tokens, bounded),
+  ]);
+
+  // A name match ranks first: the user named a document ("Azmin.m4a"), which is
+  // a stronger signal than whichever passage scored best on BM25. Body matches
+  // fill the slots a name match did not claim.
+  const byId = new Map<string, ScoredChunk>();
+  for (const hit of byName) byId.set(hit.chunkId, hit);
+  for (const hit of body) {
+    if (byId.has(hit.chunkId)) continue; // already ranked via title match
+    byId.set(hit.chunkId, hit);
+  }
+  const hits = [...byId.values()].slice(0, bounded);
   return { ok: true, hits, query };
 }
