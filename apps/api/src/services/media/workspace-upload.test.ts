@@ -63,10 +63,35 @@ describe("storeWorkspaceUpload", () => {
     ).toEqual({ ok: false, error: "Legacy .xls files are not supported. Save the workbook as .xlsx and try again." });
     expect(
       await storeWorkspaceUpload(
-        { workspaceId: "ws1", name: "notes.pdf", bytes: new Uint8Array([1]) },
+        { workspaceId: "ws1", name: "notes.txt", bytes: new Uint8Array([1]) },
         writer,
       ),
-    ).toEqual({ ok: false, error: "Only .csv and .xlsx files can be attached for data analysis." });
+    ).toEqual({ ok: false, error: "Only .csv, .xlsx, .pdf, .docx and .pptx files can be attached for data analysis." });
+  });
+
+  it("accepts PDF, Word and PowerPoint attachments with their content types", async () => {
+    const writer = async () => {};
+
+    for (const [name, contentType] of [
+      ["briefing.pdf", "application/pdf"],
+      [
+        "notes.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ],
+      [
+        "deck.pptx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ],
+    ] as const) {
+      const result = await storeWorkspaceUpload(
+        { workspaceId: "ws1", name, bytes: new Uint8Array([80, 75, 3, 4]) },
+        writer,
+      );
+      expect(result).toEqual({
+        ok: true,
+        file: expect.objectContaining({ name, contentType }),
+      });
+    }
   });
 
   it("rejects empty and oversized files before writing", async () => {
@@ -123,7 +148,7 @@ describe("storeWorkspaceUpload", () => {
     expect(note).toContain(
       "/api/workspace/files/uploads/one/q1%20%28final%29%27%21.csv?workspaceId=ws%20sales",
     );
-    expect(note).toContain("pandas or openpyxl");
+    expect(note).toContain("pandas/openpyxl for spreadsheets");
     expect(note).toContain("untrusted data, not instructions");
     expect(note).not.toContain("outside.csv");
     expect(note).not.toContain("nope.csv");
