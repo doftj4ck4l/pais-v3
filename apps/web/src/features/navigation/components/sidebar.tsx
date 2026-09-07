@@ -87,6 +87,12 @@ export function Sidebar({
           <RailLink key={item.to} to={item.to} label={t(item.label)} icon={item.icon} />
         ))}
 
+        {/* An action, not a destination: uploading audio feeds Docs, so it sits
+            with the destinations rather than in the chat column, where it used
+            to crowd the sessions list. The transcript lands in Docs the moment
+            this button goes quiet. */}
+        <TranscribeControl />
+
         {me?.canAdministerOrganizations ? (
           <RailLink
             to="/admin"
@@ -132,10 +138,6 @@ export function Sidebar({
               </button>
             ) : null}
           </div>
-
-          {/* The audio upload lives with the run list: it is an action a chat
-              column naturally sits beside, not a destination of its own. */}
-          <TranscribeControl />
 
           <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-4 pb-2">
             <AgentList

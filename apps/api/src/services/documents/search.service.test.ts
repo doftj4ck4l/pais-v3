@@ -107,6 +107,78 @@ describe("searchDocuments", () => {
     expect(res.hits).toEqual([]);
   });
 
+  it("never returns another workspace's name matches", async () => {
+    const store = freshStore();
+    await seed(store, "ws1");
+    const res = await searchDocuments("ws2", "policy", 5, store);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.hits).toEqual([]);
+  });
+
+  it("finds a document by its filename even when the body does not match", async () => {
+    // The user's complaint: a transcript indexed against its upload title
+    // ("Azmin.m4a") never surfaced when asked about by name, because FTS only
+    // searches chunk text. Title matching must surface it.
+    const store = freshStore();
+    await seed(store);
+    await store.save(
+      { id: "d3", workspaceId: "ws1", title: "Azmin.m4a", bytes: 100, pages: 1, status: "indexed" },
+      [{ seq: 0, page: 1, text: "[00:00] Bermulanya mesyuarat MBSJ–PAIS v3 dengan kehadiran Ahli Majlis." }],
+    );
+
+    const res = await searchDocuments("ws1", "what is in Azmin.m4a", 5, store);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.hits[0]!.docTitle).toBe("Azmin.m4a");
+    expect(res.hits[0]!.text).toContain("mesyuarat");
+  });
+
+  it("ranks a title match above a real body match from another document", async () => {
+    const store = freshStore();
+    await seed(store);
+    await store.save(
+      { id: "d3", workspaceId: "ws1", title: "azmin-notes.m4a", bytes: 100, pages: 1, status: "indexed" },
+      [{ seq: 0, page: 1, text: "Jadual mesyuarat akan dikemas kini oleh unit SUK." }],
+    );
+    // "holidays" only appears in handbook.pdf's body, but the query names
+    // Azmin's file — the name match must lead.
+    const res = await searchDocuments("ws1", "azmin holidays", 5, store);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.hits[0]!.docTitle).toBe("azmin-notes.m4a");
+  });
+
+  it("dedupes a chunk that matched both by title and by body", async () => {
+    const store = freshStore();
+    await seed(store);
+    // "enterprise" matches the body of policy.pdf's first chunk; "policy"
+    // matches its title. Both searches return that same chunk, which must be
+    // reported once.
+    const res = await searchDocuments("ws1", "enterprise policy", 5, store);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const ids = res.hits.map((h) => h.chunkId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("honours the limit with name matches filling the window", async () => {
+    const store = freshStore();
+    await store.save(
+      { id: "a1", workspaceId: "ws1", title: "Azmin.m4a", bytes: 100, pages: 1, status: "indexed" },
+      [{ seq: 0, page: 1, text: "mesyuarat MBSJ–PAIS v3" }],
+    );
+    await store.save(
+      { id: "a2", workspaceId: "ws1", title: "Azlin.m4a", bytes: 100, pages: 1, status: "indexed" },
+      [{ seq: 0, page: 1, text: "mesyuarat MBSJ–PAIS v3" }],
+    );
+    const res = await searchDocuments("ws1", "Azmin", 1, store);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.hits).toHaveLength(1);
+    expect(res.hits[0]!.docTitle).toBe("Azmin.m4a");
+  });
+
   it("reports no-terms instead of throwing on an unsearchable query", async () => {
     const store = freshStore();
     await seed(store);
