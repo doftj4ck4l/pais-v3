@@ -46,6 +46,19 @@ const MARKS: Record<string, (props: { className?: string }) => React.ReactElemen
       <rect x="13" y="13" width="9" height="9" fill="#FFB900" />
     </svg>
   ),
+  // Odoo's leaf, simplified to a teardrop with a faint stem line.
+  odoo: ({ className }) => (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M4.5 19.5 C4.5 10.5 10.9 4.5 19.5 4.5 C19.5 13.5 13.1 19.5 4.5 19.5 Z" />
+      <path
+        d="M5 19 C8 15 11.5 11.5 15.5 8"
+        stroke="rgba(255,255,255,.75)"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  ),
 }
 
 /** The console's own foreground, for a server no catalog entry claims. */
