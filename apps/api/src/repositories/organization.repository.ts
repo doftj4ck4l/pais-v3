@@ -6,6 +6,7 @@ import {
   organizations,
   users,
   type OrganizationInvitationRow,
+  type OrganizationMemberRole,
   type OrganizationMembershipRow,
   type OrganizationRow,
 } from "../models/schema";
@@ -26,6 +27,11 @@ export interface OrganizationStore {
   renameOrganization(id: string, name: string, updatedAt: number): Promise<OrganizationRow | null>;
   listMemberships(organizationId: string): Promise<OrganizationMembershipRow[]>;
   removeMembership(organizationId: string, membershipId: string): Promise<boolean>;
+  setMembershipRole(
+    organizationId: string,
+    membershipId: string,
+    role: OrganizationMemberRole,
+  ): Promise<boolean>;
   listInvitations(organizationId: string): Promise<OrganizationInvitationRow[]>;
   findInvitationByDigest(tokenDigest: string): Promise<OrganizationInvitationRow | null>;
   createInvitation(input: NewOrganizationInvitation, now: number): Promise<void>;
@@ -36,6 +42,8 @@ export interface OrganizationStore {
     userId: string;
     now: number;
     membershipId: string;
+    /** The role carried by the invite; the acceptance creates the membership with it. */
+    role: OrganizationMemberRole;
   }): Promise<boolean>;
 }
 
@@ -115,6 +123,20 @@ export class SqliteOrganizationStore implements OrganizationStore {
     return Boolean(changed);
   }
 
+  async setMembershipRole(
+    organizationId: string,
+    membershipId: string,
+    role: OrganizationMemberRole,
+  ): Promise<boolean> {
+    const changed = this.dbImpl
+      .update(organizationMemberships)
+      .set({ role })
+      .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.id, membershipId)))
+      .returning({ id: organizationMemberships.id })
+      .get();
+    return Boolean(changed);
+  }
+
   async listInvitations(organizationId: string): Promise<OrganizationInvitationRow[]> {
     return (await this.dbImpl
       .select()
@@ -174,6 +196,7 @@ export class SqliteOrganizationStore implements OrganizationStore {
     userId: string;
     now: number;
     membershipId: string;
+    role: OrganizationMemberRole;
   }): Promise<boolean> {
     return this.dbImpl.transaction((tx) => {
       // Claim first. If a later insert fails, SQLite rolls the claim back with
@@ -210,6 +233,7 @@ export class SqliteOrganizationStore implements OrganizationStore {
           organizationId: claimed.organizationId,
           userId: input.userId,
           email: input.email,
+          role: input.role,
           joinedAt: input.now,
         })
         .onConflictDoNothing()

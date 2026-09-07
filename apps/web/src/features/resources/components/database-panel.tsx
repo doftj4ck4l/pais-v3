@@ -384,6 +384,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                   await refresh()
                 }
               }}
+              onEditDisabled={Boolean(c.granted)}
             />
           ))}
         </PanelGrid>
@@ -597,14 +598,17 @@ function ConnectionItem({
   onTest,
   onRefresh,
   onRemove,
+  onEditDisabled,
 }: {
   connection: DbConnectionRow
   onEdit: () => void
   onTest: () => Promise<void>
   onRefresh: () => Promise<void>
   onRemove: () => Promise<void>
+  onEditDisabled?: boolean
 }) {
   const failed = connection.status !== 'connected'
+  const shared = connection.granted === true
 
   return (
     <ItemCard
@@ -622,7 +626,16 @@ function ConnectionItem({
           <DatabaseIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         )
       }
-      title={<span className={cn(failed && 'text-muted-foreground')}>{connection.name}</span>}
+      title={
+        <span className={cn(failed && 'text-muted-foreground')}>
+          {connection.name}
+          {shared ? (
+            <span className="ml-2 inline-flex rounded-full bg-sky-500/10 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-300">
+              Shared with your department
+            </span>
+          ) : null}
+        </span>
+      }
       meta={
         failed
           ? 'could not connect'
@@ -639,33 +652,37 @@ function ConnectionItem({
           >
             <ShieldCheckIcon />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onEdit}
-            aria-label={`Edit ${connection.name}`}
-            className="text-muted-foreground"
-          >
-            <PencilIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void onRefresh()}
-            aria-label={`Refresh ${connection.name}`}
-            className="text-muted-foreground"
-          >
-            <RefreshCwIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void onRemove()}
-            aria-label={`Remove ${connection.name}`}
-            className="text-muted-foreground hover:text-destructive"
-          >
-            <Trash2Icon />
-          </Button>
+          {onEditDisabled ? null : (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onEdit}
+                aria-label={`Edit ${connection.name}`}
+                className="text-muted-foreground"
+              >
+                <PencilIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void onRefresh()}
+                aria-label={`Refresh ${connection.name}`}
+                className="text-muted-foreground"
+              >
+                <RefreshCwIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void onRemove()}
+                aria-label={`Remove ${connection.name}`}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <Trash2Icon />
+              </Button>
+            </>
+          )}
         </>
       }
     />

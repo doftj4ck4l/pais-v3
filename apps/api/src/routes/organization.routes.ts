@@ -25,3 +25,10 @@ organizationRoutes.delete(
   requireSameOrigin,
   controller.removeMember,
 );
+organizationRoutes.patch(
+  "/:organizationId/members/:membershipId/role",
+  requireJsonMutation,
+  controller.setMemberRole,
+);
+organizationRoutes.get("/:organizationId/grants", controller.listGrants);
+organizationRoutes.put("/:organizationId/grants", requireJsonMutation, controller.setGrants);

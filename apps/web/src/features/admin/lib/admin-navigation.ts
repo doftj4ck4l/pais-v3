@@ -23,10 +23,10 @@ export const ADMIN_DESTINATIONS: AdminDestination[] = [
   },
   {
     to: '/admin/organizations',
-    label: 'Organizations',
+    label: 'Departments',
     icon: Building2Icon,
-    description: 'Create organizations, invite people, and manage membership. Workspaces remain private to each person.',
-    action: 'Manage organizations',
+    description: 'Create departments, invite people, assign admins, and grant each department the databases it may query. Workspaces remain private.',
+    action: 'Manage departments',
   },
   {
     to: '/admin/runs',

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import {
   Building2Icon,
+  CheckIcon,
   CopyIcon,
+  DatabaseIcon,
   MoreHorizontalIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -12,10 +14,14 @@ import {
   createOrganization,
   createOrganizationInvitation,
   getOrganization,
+  getOrganizationGrants,
+  listConnections,
   listOrganizations,
   removeOrganizationMember,
   renameOrganization,
   revokeOrganizationInvitation,
+  setOrganizationGrants,
+  setOrganizationMemberRole,
 } from '@/shared/api/api'
 import {
   AlertDialog,
@@ -37,14 +43,23 @@ import {
 } from '@/shared/ui/dialog'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui/select'
 import { Spinner } from '@/shared/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { ItemCard, PanelEmpty, PanelGrid } from '@/features/resources/components/panel-kit'
 import { cn } from '@/shared/lib/utils'
 import type {
+  DbConnectionRow,
   OrganizationDetail,
   OrganizationInvitation,
   OrganizationMember,
+  OrganizationMemberRole,
   OrganizationSummary,
 } from '@/shared/lib/types'
 
@@ -127,6 +142,19 @@ export function OrganizationsPage() {
     ])
   }, [loadDetail, loadOrganizations, selectedId])
 
+  const setMemberRole = useCallback((membershipId: string, role: OrganizationMemberRole) => {
+    setDetail((current) =>
+      current
+        ? {
+            ...current,
+            members: current.members.map((member) =>
+              member.id === membershipId ? { ...member, role } : member,
+            ),
+          }
+        : current,
+    )
+  }, [])
+
   return (
     <>
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
@@ -136,15 +164,15 @@ export function OrganizationsPage() {
               <p className="readout text-xs font-medium tracking-[0.16em] uppercase text-muted-foreground">
                 Access
               </p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Organizations</h1>
+              <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">Departments</h1>
               <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-                Group people without sharing their private workspaces. Membership never grants access
-                to another person&apos;s workspace.
+                Group people into departments and grant each one its own set of shared databases.
+                Membership never grants access to another person&apos;s private workspace.
               </p>
             </div>
             {organizations.length ? (
               <Button size="sm" onClick={() => setForm('create')}>
-                <PlusIcon data-icon="inline-start" /> New organization
+                <PlusIcon data-icon="inline-start" /> New department
               </Button>
             ) : null}
           </header>
@@ -168,11 +196,11 @@ export function OrganizationsPage() {
           ) : organizations.length === 0 ? (
             <PanelEmpty
               icon={Building2Icon}
-              title="No organizations yet"
-              description="Create the first group, then invite people with a secure one-time link. Membership groups accounts without sharing anyone's private workspace."
+              title="No departments yet"
+              description="Create the first department, then invite people with a secure one-time link. A department's shared databases are granted to the group, never to anyone's private workspace."
               action={
                 <Button size="sm" onClick={() => setForm('create')}>
-                  <PlusIcon data-icon="inline-start" /> New organization
+                  <PlusIcon data-icon="inline-start" /> New department
                 </Button>
               }
             />
@@ -220,6 +248,7 @@ export function OrganizationsPage() {
         onRefresh={() => void refreshSelected()}
         onRemoveMember={(row) => setDanger({ kind: 'member', row })}
         onRevokeInvitation={(row) => setDanger({ kind: 'invitation', row })}
+        onSetRole={setMemberRole}
       />
 
       <OrganizationForm
@@ -302,6 +331,7 @@ function OrganizationDetailDialog({
   onRefresh,
   onRemoveMember,
   onRevokeInvitation,
+  onSetRole,
 }: {
   open: boolean
   organization: OrganizationSummary | null
@@ -313,14 +343,66 @@ function OrganizationDetailDialog({
   onRefresh: () => void
   onRemoveMember: (row: OrganizationMember) => void
   onRevokeInvitation: (row: OrganizationInvitation) => void
+  onSetRole: (membershipId: string, role: OrganizationMemberRole) => void
 }) {
+  const [connections, setConnections] = useState<DbConnectionRow[]>([])
+  const [grantedIds, setGrantedIds] = useState<string[]>([])
+  const [grantsReady, setGrantsReady] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open || !organization) return
+    let cancelled = false
+    setConnections([])
+    setGrantedIds([])
+    setGrantsReady(false)
+    setActionError(null)
+    void Promise.all([
+      listConnections({ workspaceId: null })
+        .then(setConnections)
+        .catch(() => setConnections([])),
+      getOrganizationGrants(organization.id)
+        .then((grants) => { if (!cancelled) setGrantedIds(grants.connectionIds) })
+        .catch(() => {}),
+    ]).finally(() => {
+      if (!cancelled) setGrantsReady(true)
+    })
+    return () => { cancelled = true }
+  }, [open, organization])
+
+  const toggleGrant = async (connectionId: string) => {
+    if (!organization) return
+    const next = grantedIds.includes(connectionId)
+      ? grantedIds.filter((id) => id !== connectionId)
+      : [...grantedIds, connectionId]
+    setActionError(null)
+    try {
+      const saved = await setOrganizationGrants(organization.id, next)
+      setGrantedIds(saved.connectionIds)
+    } catch (cause) {
+      setActionError((cause as Error).message)
+    }
+  }
+
+  const changeRole = async (membershipId: string, role: OrganizationMemberRole) => {
+    if (!organization) return
+    setActionError(null)
+    try {
+      await setOrganizationMemberRole(organization.id, membershipId, role)
+      onSetRole(membershipId, role)
+    } catch (cause) {
+      setActionError((cause as Error).message)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-2xl">
         <DialogHeader className="px-5 pt-5 pb-0">
-          <DialogTitle className="truncate">{organization?.name ?? 'Organization'}</DialogTitle>
+          <DialogTitle className="truncate">{organization?.name ?? 'Department'}</DialogTitle>
           <DialogDescription>
-            Membership never grants access to another person&apos;s private workspace.
+            Membership never grants access to another person&apos;s private workspace; shared
+            databases are granted to the department as a whole.
           </DialogDescription>
         </DialogHeader>
 
@@ -335,7 +417,7 @@ function OrganizationDetailDialog({
             variant="ghost"
             size="icon-sm"
             className="ml-auto"
-            aria-label="Refresh organization"
+            aria-label="Refresh department"
             onClick={onRefresh}
           >
             {loading ? <Spinner /> : <RefreshCwIcon />}
@@ -343,9 +425,14 @@ function OrganizationDetailDialog({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto border-t px-5 py-4">
+          {actionError ? (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {actionError}
+            </p>
+          ) : null}
           {loading && !detail ? (
             <div className="flex items-center gap-2 rounded-lg border p-5 text-sm text-muted-foreground">
-              <Spinner /> Loading organization details…
+              <Spinner /> Loading department details…
             </div>
           ) : detail ? (
             <>
@@ -357,6 +444,7 @@ function OrganizationDetailDialog({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Email</TableHead>
+                        <TableHead>Role</TableHead>
                         <TableHead className="hidden sm:table-cell">Joined</TableHead>
                         <TableHead className="w-10">
                           <span className="sr-only">Actions</span>
@@ -368,6 +456,20 @@ function OrganizationDetailDialog({
                         <TableRow key={member.id}>
                           <TableCell className="max-w-48 truncate font-medium sm:max-w-none">
                             {member.email}
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={member.role}
+                              onValueChange={(role) => void changeRole(member.id, role as OrganizationMemberRole)}
+                            >
+                              <SelectTrigger size="sm" aria-label={`Role for ${member.email}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent align="start">
+                                <SelectItem value="member">Member</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           <TableCell className="hidden text-xs text-muted-foreground sm:table-cell">
                             {when(member.joinedAt)}
@@ -389,6 +491,51 @@ function OrganizationDetailDialog({
                 )}
               </DataSection>
 
+              <DataSection title="Shared databases" count={grantedIds.length}>
+                {!grantsReady ? (
+                  <div className="flex items-center gap-2 p-5 text-sm text-muted-foreground">
+                    <Spinner /> Loading…
+                  </div>
+                ) : connections.length === 0 ? (
+                  <EmptyRows
+                    icon={<DatabaseIcon />}
+                    text="No databases added to this workspace yet. Connect them first on the Data page."
+                  />
+                ) : (
+                  <ul>
+                    {connections.map((connection) => {
+                      const granted = grantedIds.includes(connection.id)
+                      return (
+                        <li
+                          key={connection.id}
+                          className="flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0"
+                        >
+                          <Button
+                            variant="outline"
+                            size="icon-sm"
+                            aria-pressed={granted}
+                            aria-label={`${granted ? 'Revoke' : 'Grant'} ${connection.name}`}
+                            onClick={() => void toggleGrant(connection.id)}
+                            className={cn('shrink-0', granted && 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300')}
+                          >
+                            {granted ? <CheckIcon /> : <PlusIcon />}
+                          </Button>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">{connection.name}</p>
+                            <p className="truncate font-mono text-xs text-muted-foreground">
+                              {connection.engine} · {connection.host}:{connection.port} · {connection.database}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {connection.tableCount} tables
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </DataSection>
+
               <DataSection title="Invitations" count={detail.invitations.length}>
                 {detail.invitations.length === 0 ? (
                   <EmptyRows icon={<UserPlusIcon />} text="No invitations yet." />
@@ -397,6 +544,7 @@ function OrganizationDetailDialog({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Email</TableHead>
+                        <TableHead>Role</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead className="hidden md:table-cell">Expires</TableHead>
                         <TableHead className="w-10">
@@ -409,6 +557,9 @@ function OrganizationDetailDialog({
                         <TableRow key={invitation.id}>
                           <TableCell className="max-w-40 truncate font-medium sm:max-w-none">
                             {invitation.email}
+                          </TableCell>
+                          <TableCell>
+                            <RoleBadge role={invitation.role} />
                           </TableCell>
                           <TableCell>
                             <Status state={invitation.state} />
@@ -458,6 +609,7 @@ function OrganizationForm({
   onInvited: (invitation: OrganizationInvitation) => void
 }) {
   const [value, setValue] = useState('')
+  const [role, setRole] = useState<OrganizationMemberRole>('member')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [inviteUrl, setInviteUrl] = useState<string | null>(null)
@@ -465,6 +617,7 @@ function OrganizationForm({
 
   useEffect(() => {
     setValue(mode === 'rename' ? (organization?.name ?? '') : '')
+    setRole('member')
     setError(null)
     setInviteUrl(null)
     setCopied(false)
@@ -472,10 +625,10 @@ function OrganizationForm({
 
   if (!mode) return null
   const invite = mode === 'invite'
-  const title = mode === 'create' ? 'Create organization' : mode === 'rename' ? 'Rename organization' : 'Invite a member'
+  const title = mode === 'create' ? 'Create department' : mode === 'rename' ? 'Rename department' : 'Invite a member'
   const description = invite
-    ? 'The invitation is bound to this email. You will copy and send the one-time link manually.'
-    : 'Organization membership groups people without sharing their private workspaces.'
+    ? 'The invitation is bound to this email. Admins can manage the department and its members; you will copy and send the one-time link manually.'
+    : 'A department groups people and is granted shared databases as a whole.'
 
   const submit = async () => {
     const trimmed = value.trim()
@@ -494,7 +647,7 @@ function OrganizationForm({
         onRenamed(renamed.name)
         onOpenChange(false)
       } else if (organization) {
-        const result = await createOrganizationInvitation(organization.id, trimmed)
+        const result = await createOrganizationInvitation(organization.id, trimmed, role)
         setInviteUrl(result.url)
         onInvited(result.invitation)
       }
@@ -562,6 +715,29 @@ function OrganizationForm({
                 />
                 {error ? <p id="organization-form-error" role="alert" className="text-xs text-destructive">{error}</p> : null}
               </div>
+              {invite ? (
+                <div className="grid gap-2">
+                  <Label>Role</Label>
+                  <div className="flex gap-1 rounded-lg border bg-muted/20 p-1">
+                    {(['member', 'admin'] as OrganizationMemberRole[]).map((candidate) => (
+                      <button
+                        key={candidate}
+                        type="button"
+                        onClick={() => setRole(candidate)}
+                        className={cn(
+                          'flex-1 rounded-md px-3 py-1.5 text-sm',
+                          role === candidate ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground',
+                        )}
+                      >
+                        {candidate === 'admin' ? 'Admin' : 'Member'}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Admins can manage the department&apos;s members. Shared databases are visible to everyone in the department.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button>
                 <Button type="submit" disabled={busy}>{busy ? <Spinner /> : null}{mode === 'create' ? 'Create' : mode === 'rename' ? 'Save' : 'Create link'}</Button>
@@ -641,4 +817,17 @@ function EmptyRows({ icon, text }: { icon: ReactNode; text: string }) {
 function Status({ state }: { state: OrganizationInvitation['state'] }) {
   const label = state === 'actionable' ? 'Pending' : state === 'used' ? 'Accepted' : state[0]!.toUpperCase() + state.slice(1)
   return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs', state === 'actionable' ? 'bg-sky-500/10 text-sky-700 dark:text-sky-300' : state === 'used' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-muted text-muted-foreground')}>{label}</span>
+}
+
+function RoleBadge({ role }: { role: OrganizationMemberRole }) {
+  return (
+    <span className={cn(
+      'inline-flex rounded-full px-2 py-0.5 text-xs',
+      role === 'admin'
+        ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+        : 'bg-muted text-muted-foreground',
+    )}>
+      {role === 'admin' ? 'Admin' : 'Member'}
+    </span>
+  )
 }

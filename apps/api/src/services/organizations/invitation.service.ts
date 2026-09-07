@@ -4,7 +4,11 @@ import {
   organizationStore,
   type OrganizationStore,
 } from "../../repositories/organization.repository";
-import type { OrganizationInvitationRow, OrganizationRow } from "../../models/schema";
+import type {
+  OrganizationInvitationRow,
+  OrganizationMemberRole,
+  OrganizationRow,
+} from "../../models/schema";
 import { normalizeEmail } from "./policy";
 
 export type InvitationState = "actionable" | "expired" | "revoked" | "used" | "unavailable";
@@ -13,6 +17,7 @@ export type PublicInvitation = {
   id: string;
   organizationId: string;
   email: string;
+  role: OrganizationMemberRole;
   expiresAt: number;
   acceptedAt: number | null;
   revokedAt: number | null;
@@ -38,6 +43,7 @@ const publicInvitation = (row: OrganizationInvitationRow, now: number): PublicIn
   id: row.id,
   organizationId: row.organizationId,
   email: row.email,
+  role: row.role,
   expiresAt: row.expiresAt,
   acceptedAt: row.acceptedAt,
   revokedAt: row.revokedAt,
@@ -59,7 +65,12 @@ export class OrganizationInvitationService {
     this.now = options.now ?? Date.now;
   }
 
-  async create(organizationId: string, recipientEmail: string, createdByUserId: string) {
+  async create(
+    organizationId: string,
+    recipientEmail: string,
+    createdByUserId: string,
+    role: OrganizationMemberRole = "member",
+  ) {
     if (!(await this.store.getOrganization(organizationId))) {
       throw new Error("Organization not found.");
     }
@@ -72,6 +83,7 @@ export class OrganizationInvitationService {
       organizationId,
       email,
       tokenDigest: digestInvitationToken(token),
+      role,
       expiresAt: now + this.ttlMs,
       acceptedAt: null,
       acceptedByUserId: null,
@@ -125,6 +137,9 @@ export class OrganizationInvitationService {
       userId: caller.userId,
       now,
       membershipId: `orgmem_${randomUUID()}`,
+      // The membership takes the role the invitation was created with, so an
+      // admin invite lands as an admin without a second promotion step.
+      role: row.role,
     });
     if (!accepted) return this.inspect(token, caller.email);
     return { state: "joined", organization: { id: organization.id, name: organization.name } };

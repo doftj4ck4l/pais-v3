@@ -202,7 +202,7 @@ export type UploadedImage = {
   bytes: number
 }
 
-/** A CSV/XLSX file uploaded into the workspace for this chat turn. */
+/** A CSV/XLSX/PDF/DOCX/PPTX file uploaded into the workspace for this chat turn. */
 export type UploadedDataFile = {
   /** Workspace-relative path sent to POST /api/chat. */
   path: string
@@ -280,6 +280,13 @@ export type DbConnectionRow = {
   tableCount: number
   lastIntrospectedAt: number | null
   createdAt: number
+  /** True when the workspace did not create this connection — a department
+   * shared it. Rendered read-only (no edit/remove) once granted. */
+  granted?: boolean
+}
+
+export type OrganizationGrants = {
+  connectionIds: string[]
 }
 
 export type RunStatus = 'running' | 'done' | 'error' | 'stopped'
@@ -477,11 +484,14 @@ export type OrganizationSummary = Organization & {
   pendingInvitationCount: number
 }
 
+export type OrganizationMemberRole = 'admin' | 'member'
+
 export type OrganizationMember = {
   id: string
   organizationId: string
   userId: string
   email: string
+  role: OrganizationMemberRole
   joinedAt: number
 }
 
@@ -491,6 +501,7 @@ export type OrganizationInvitation = {
   id: string
   organizationId: string
   email: string
+  role: OrganizationMemberRole
   expiresAt: number
   acceptedAt: number | null
   revokedAt: number | null

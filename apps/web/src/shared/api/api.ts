@@ -25,6 +25,8 @@ import type {
   OrganizationSummary,
   OrganizationDetail,
   OrganizationInvitation,
+  OrganizationMemberRole,
+  OrganizationGrants,
   InvitationInspection,
   InvitationAcceptance,
   AdminAnalytics,
@@ -181,12 +183,13 @@ export async function getOrganization(id: string): Promise<OrganizationDetail> {
 export async function createOrganizationInvitation(
   organizationId: string,
   email: string,
+  role?: OrganizationMemberRole,
 ): Promise<{ invitation: OrganizationInvitation; url: string }> {
   return json<{ invitation: OrganizationInvitation; url: string }>(
     await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(role ? { email, role } : { email }),
     }),
   )
 }
@@ -212,6 +215,44 @@ export async function removeOrganizationMember(
       `/api/admin/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
       { method: 'DELETE' },
     ),
+  )
+}
+
+export async function setOrganizationMemberRole(
+  organizationId: string,
+  membershipId: string,
+  role: OrganizationMemberRole,
+): Promise<void> {
+  await json<{ ok: true }>(
+    await fetch(
+      `/api/admin/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}/role`,
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ role }),
+      },
+    ),
+  )
+}
+
+export async function getOrganizationGrants(
+  organizationId: string,
+): Promise<OrganizationGrants> {
+  return json<OrganizationGrants>(
+    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`),
+  )
+}
+
+export async function setOrganizationGrants(
+  organizationId: string,
+  connectionIds: string[],
+): Promise<OrganizationGrants> {
+  return json<OrganizationGrants>(
+    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ connectionIds }),
+    }),
   )
 }
 

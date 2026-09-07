@@ -437,6 +437,114 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "database_grants": {
+      "name": "database_grants",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "connection_id": {
+          "name": "connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "granted_by_user_id": {
+          "name": "granted_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_database_grants_organization": {
+          "name": "idx_database_grants_organization",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        },
+        "idx_database_grants_connection": {
+          "name": "idx_database_grants_connection",
+          "columns": [
+            "connection_id"
+          ],
+          "isUnique": false
+        },
+        "idx_database_grants_org_connection": {
+          "name": "idx_database_grants_org_connection",
+          "columns": [
+            "organization_id",
+            "connection_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "database_grants_organization_id_organizations_id_fk": {
+          "name": "database_grants_organization_id_organizations_id_fk",
+          "tableFrom": "database_grants",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "database_grants_connection_id_db_connections_id_fk": {
+          "name": "database_grants_connection_id_db_connections_id_fk",
+          "tableFrom": "database_grants",
+          "tableTo": "db_connections",
+          "columnsFrom": [
+            "connection_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "database_grants_granted_by_user_id_users_id_fk": {
+          "name": "database_grants_granted_by_user_id_users_id_fk",
+          "tableFrom": "database_grants",
+          "tableTo": "users",
+          "columnsFrom": [
+            "granted_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "db_columns": {
       "name": "db_columns",
       "columns": {
@@ -1536,6 +1644,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'member'"
         }
       },
       "indexes": {
@@ -1638,6 +1754,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'member'"
         },
         "joined_at": {
           "name": "joined_at",

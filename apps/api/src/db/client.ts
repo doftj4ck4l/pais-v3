@@ -34,6 +34,7 @@ import {
   organizations,
   organizationMemberships,
   organizationInvitations,
+  databaseGrants,
   agentDefinitions,
   localAuthAccounts,
   authSessions,
@@ -43,6 +44,7 @@ import {
  * Where the SQLite database file lives (ignored by git).
  *
  * Overridable so tests can drive the real HTTP surface against a throwaway
+ * file instead of the working database.
  * file instead of the working database.
  *
  * Under `bun test` an unset DB_PATH resolves to a throwaway rather than to
@@ -91,6 +93,7 @@ export {
   organizations,
   organizationMemberships,
   organizationInvitations,
+  databaseGrants,
   agentDefinitions,
   localAuthAccounts,
   authSessions,
@@ -122,8 +125,10 @@ export type {
   ConnectorKind,
   ConnectorStatus,
   OrganizationRow,
+  OrganizationMemberRole,
   OrganizationMembershipRow,
   OrganizationInvitationRow,
+  DatabaseGrantRow,
   AgentDefinitionRow,
   LocalAuthAccountRow,
   AuthSessionRow,

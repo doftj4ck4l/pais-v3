@@ -155,6 +155,13 @@ export type OrganizationRow = {
   updatedAt: number;
 };
 
+/**
+ * What a membership lets its holder do inside the organization (department).
+ * `member` is the default for anyone invited; `admin` may manage the
+ * department's membership and shared databases.
+ */
+export type OrganizationMemberRole = "admin" | "member";
+
 export const organizationMemberships = sqliteTable(
   "organization_memberships",
   {
@@ -167,6 +174,9 @@ export const organizationMemberships = sqliteTable(
       .references(() => users.id),
     /** Historical display snapshot. Authorization always uses userId. */
     email: text("email").notNull(),
+    role: text("role", { enum: ["admin", "member"] })
+      .notNull()
+      .default("member"),
     joinedAt: integer("joined_at").notNull(),
   },
   (t) => [
@@ -180,6 +190,7 @@ export type OrganizationMembershipRow = {
   organizationId: string;
   userId: string;
   email: string;
+  role: OrganizationMemberRole;
   joinedAt: number;
 };
 
@@ -200,6 +211,12 @@ export const organizationInvitations = sqliteTable(
       .notNull()
       .references(() => users.id),
     createdAt: integer("created_at").notNull(),
+    // What the invitee joins as. A department admin invites with a role so the
+    // acceptance creates the membership with it, instead of every admin passing
+    // through a post-accept promotion.
+    role: text("role", { enum: ["admin", "member"] })
+      .notNull()
+      .default("member"),
   },
   (t) => [
     uniqueIndex("idx_organization_invitations_digest").on(t.tokenDigest),
@@ -219,6 +236,7 @@ export type OrganizationInvitationRow = {
   revokedAt: number | null;
   createdByUserId: string;
   createdAt: number;
+  role: OrganizationMemberRole;
 };
 
 /**
@@ -648,6 +666,48 @@ export type DbConnectionRow = {
   hasCustomCa: boolean;
   tableCount: number;
   lastIntrospectedAt: number | null;
+  createdAt: number;
+};
+
+/**
+ * Which departments may use which databases.
+ *
+ * A connection always belongs to one workspace; a grant shares one connection
+ * with every member of an organization without copying its secret (one row,
+ * revocable once, instead of N decrypted copies that would each need revoking).
+ * `UNIQUE(organization_id, connection_id)` makes the set idempotent, so the
+ * admin UI can PUT the whole set as a replace operation.
+ */
+export const databaseGrants = sqliteTable(
+  "database_grants",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => dbConnections.id, { onDelete: "cascade" }),
+    grantedByUserId: text("granted_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("idx_database_grants_organization").on(t.organizationId),
+    // The reachable-set query joins grants through memberships to a workspace;
+    // it filters by connection id, so this index makes the grant->connection
+    // lookup land without a scan of every grant.
+    index("idx_database_grants_connection").on(t.connectionId),
+    uniqueIndex("idx_database_grants_org_connection").on(t.organizationId, t.connectionId),
+  ],
+);
+
+export type DatabaseGrantRow = {
+  id: string;
+  organizationId: string;
+  connectionId: string;
+  grantedByUserId: string;
   createdAt: number;
 };
 

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, dbConnections, dbTables, dbColumns } from "../db/client";
 import type { DbConnectionRow, DbConnectionStatus, DbColumnRow } from "../models/schema";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
@@ -8,6 +8,9 @@ import type {
   DatabaseEngine,
   DatabaseSslMode,
 } from "../services/db/database-adapter";
+import {
+  SqliteDatabaseGrantStore,
+} from "./database-grants.repository";
 
 /**
  * The only thing that touches `db_connections`, `db_tables`, `db_columns`, and
@@ -16,6 +19,15 @@ import type {
  * `list` deliberately selects columns rather than `select()`: the encrypted
  * secret must never leave this module by accident, and an explicit column list
  * is the only way that stays true when the table gains a field.
+ *
+ * This is also the single enforcement point for database grants. Every read
+ * path unions the workspace's own connections with the ones granted to the
+ * departments its owner belongs to (`allowedScope`); the decrypting paths
+ * (`resolveConnection`, `resolveConfig`) slice their WHERE by the same allowed
+ * set, so a grant changes what a worker can see without ever weakening the
+ * ownership check on writes. Writes stay workspace-owned and are untouched by
+ * grants — a department can query a shared database but cannot edit or delete
+ * it.
  */
 
 export type NewConnection = {
@@ -68,6 +80,26 @@ function isDuplicateNameViolation(e: unknown): boolean {
 
 export type ConnectionInventoryEntry = { name: string; tableCount: number; tables: string[] };
 
+/**
+ * A row returned by `list`. `granted` is true when the workspace does not own
+ * the connection — a department shared it. Public to the web so the data page
+ * can render shared connections read-only; never carries the secret.
+ */
+export type ListedConnection = DbConnectionRow & { granted?: boolean };
+
+/**
+ * Returns every connection id granted to the departments the workspace's owner
+ * belongs to. Injected so tests can stub the grant set without a departments
+ * fixture; the production default is a grants store sharing this store's own
+ * database handle (never the module singleton, which may be a different file).
+ */
+export type GrantResolver = (workspaceId: string) => Promise<string[]>;
+
+const grantResolverFor =
+  (dbImpl: typeof db): GrantResolver =>
+  (workspaceId) =>
+    new SqliteDatabaseGrantStore(dbImpl).grantedConnectionIdsForWorkspace(workspaceId);
+
 export type TableDetail = {
   connectionName: string;
   schemaName: string;
@@ -104,7 +136,7 @@ export interface DatabaseConnectionStore {
     id: string,
     update: DatabaseConnectionUpdate,
   ): Promise<boolean>;
-  list(workspaceId: string): Promise<DbConnectionRow[]>;
+  list(workspaceId: string): Promise<ListedConnection[]>;
   findById(workspaceId: string, id: string): Promise<DbConnectionRow | null>;
   findByName(workspaceId: string, name: string): Promise<DbConnectionRow | null>;
   resolveConnection(workspaceId: string, connectionId: string): Promise<ResolvedDatabaseConnection | null>;
@@ -235,7 +267,33 @@ function publicRow(row: any): DbConnectionRow {
 }
 
 export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
-  constructor(private readonly dbImpl: typeof db = db) {}
+  constructor(
+    private readonly dbImpl: typeof db = db,
+    grantResolver?: GrantResolver,
+  ) {
+    this.grantResolver = grantResolver ?? grantResolverFor(this.dbImpl);
+  }
+
+  private readonly grantResolver: GrantResolver;
+
+  /**
+   * The connection ids this workspace may read: its own plus everything granted
+   * to the departments its owner belongs to. Null when nothing is reachable —
+   * the callers then short-circuit instead of passing an empty list, which
+   * drizzle would reject (`IN ()` is not SQL).
+   */
+  private async allowedScope(
+    workspaceId: string,
+  ): Promise<{ ids: string[]; granted: Set<string> } | null> {
+    const owned = await this.dbImpl
+      .select({ id: dbConnections.id })
+      .from(dbConnections)
+      .where(eq(dbConnections.workspaceId, workspaceId));
+    const granted = await this.grantResolver(workspaceId);
+    const ids = [...new Set([...owned.map((r) => r.id), ...granted])];
+    if (!ids.length) return null;
+    return { ids, granted: new Set(granted) };
+  }
 
   async create(conn: NewConnection): Promise<void> {
     try {
@@ -300,13 +358,18 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     }
   }
 
-  async list(workspaceId: string): Promise<DbConnectionRow[]> {
+  async list(workspaceId: string): Promise<ListedConnection[]> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return [];
     const rows = await this.dbImpl
       .select(PUBLIC_COLUMNS)
       .from(dbConnections)
-      .where(eq(dbConnections.workspaceId, workspaceId))
+      .where(inArray(dbConnections.id, scope.ids))
       .orderBy(sql`created_at desc`);
-    return rows.map(publicRow);
+    return rows.map((row) => {
+      const connection = publicRow(row);
+      return scope.granted.has(connection.id) ? { ...connection, granted: true } : connection;
+    });
   }
 
   async findById(workspaceId: string, id: string): Promise<DbConnectionRow | null> {
@@ -325,22 +388,26 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     return rows[0] ? publicRow(rows[0]) : null;
   }
 
-  /** Decrypts only after confirming the caller owns the row. */
+  /** Decrypts only after confirming the caller may reach the row. */
   async resolveConnection(
     workspaceId: string,
     connectionId: string,
   ): Promise<ResolvedDatabaseConnection | null> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return null;
     const rows = await this.dbImpl
       .select({ ...PUBLIC_COLUMNS, secret: dbConnections.secret })
       .from(dbConnections)
-      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
+      .where(and(inArray(dbConnections.id, scope.ids), eq(dbConnections.id, connectionId)));
     if (!rows[0]) return null;
     const { secret: _secret, ...safeFields } = rows[0];
     return { row: publicRow(safeFields), config: decodeConfig(rows[0]) };
   }
 
-  /** Decrypts only after confirming the caller owns the row. */
+  /** Decrypts only after confirming the caller may reach the row. */
   async resolveConfig(workspaceId: string, connectionId: string): Promise<DatabaseConnectionConfig | null> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return null;
     const rows = await this.dbImpl
       .select({
         engine: dbConnections.engine,
@@ -352,7 +419,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
         sslMode: dbConnections.sslMode,
       })
       .from(dbConnections)
-      .where(and(eq(dbConnections.workspaceId, workspaceId), eq(dbConnections.id, connectionId)));
+      .where(and(inArray(dbConnections.id, scope.ids), eq(dbConnections.id, connectionId)));
     return rows[0] ? decodeConfig(rows[0]) : null;
   }
 
@@ -500,12 +567,17 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
 
   /** Connection names and their table names — everything the system prompt needs. */
   async inventory(workspaceId: string): Promise<ConnectionInventoryEntry[]> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return [];
+    // `c.id IN ${scope.ids}` expands to the same number of `?` placeholders;
+    // scope.ids is the owned ∪ granted set, so granted connections appear in
+    // the prompt exactly like owned ones (the worker never needs to know which).
     const rows = (await this.dbImpl.all(sql`
       SELECT c.name AS connectionName, c.table_count AS tableCount,
              t.schema_name AS schemaName, t.name AS tableName
       FROM db_connections c
       LEFT JOIN db_tables t ON t.connection_id = c.id
-      WHERE c.workspace_id = ${workspaceId} AND c.status = 'connected'
+      WHERE c.id IN ${scope.ids} AND c.status = 'connected'
       ORDER BY c.name, t.schema_name, t.name
     `)) as {
       connectionName: string; tableCount: number;
@@ -539,6 +611,8 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     connectionName: string,
     table: string,
   ): Promise<TableDetail | null> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return null;
     // `split(".", 2)` splits on EVERY "." and then truncates — it silently
     // drops anything past the second segment (`"a.b.c".split(".", 2)` is
     // `["a","b"]`, not `["a","b.c"]`). A qualified name is "schema" + "the
@@ -552,7 +626,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
              t.comment AS comment, t.row_estimate AS rowEstimate, t.indexes AS indexes
       FROM db_tables t
       JOIN db_connections c ON c.id = t.connection_id
-      WHERE c.workspace_id = ${workspaceId} AND c.name = ${connectionName} AND c.status = 'connected'
+      WHERE c.id IN ${scope.ids} AND c.name = ${connectionName} AND c.status = 'connected'
         AND t.name = ${maybeName}
         AND (${maybeSchema} IS NULL OR t.schema_name = ${maybeSchema})
       ORDER BY CASE t.schema_name WHEN 'public' THEN 0 ELSE 1 END, t.schema_name ASC
@@ -592,6 +666,8 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
     connectionName: string | null,
     limit: number,
   ): Promise<SchemaHit[]> {
+    const scope = await this.allowedScope(workspaceId);
+    if (!scope) return [];
     return (await this.dbImpl.all(sql`
       SELECT c.name AS connectionName,
              COALESCE(t.schema_name, ct.schema_name) AS schemaName,
@@ -609,7 +685,7 @@ export class SqliteDatabaseConnectionStore implements DatabaseConnectionStore {
       LEFT JOIN db_columns col ON col.id = db_schema_fts.object_id
       LEFT JOIN db_tables  ct  ON ct.id  = col.table_id
       WHERE db_schema_fts MATCH ${ftsQuery}
-        AND c.workspace_id = ${workspaceId}
+        AND c.id IN ${scope.ids}
         -- A snapshot from a connection whose last re-introspection failed is
         -- exactly the "plausible but wrong" input this design exists to avoid:
         -- it already dropped out of inventory(), so it must not still resolve
