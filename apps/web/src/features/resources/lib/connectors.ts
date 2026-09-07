@@ -127,6 +127,51 @@ export const CONNECTORS: Connector[] = [
     ],
   },
   {
+    id: 'odoo',
+    name: 'Odoo',
+    summary: 'Customers, sales, inventory, stock and accounts in an Odoo database',
+    // The leaf-and-column mark is unreadable at tile size, so the colour does
+    // the recognising and the shape is that leaf simplified to its teardrop.
+    icon: 'kanban',
+    tint: '113 75 103',
+    command: 'uvx',
+    args: ['odoo-mcp'],
+    packageName: 'odoo-mcp',
+    // Odoo 16-18 are reached over XML-RPC and 19+ over External JSON-2; both
+    // need nothing installed on the Odoo side, so the only setup this form does
+    // is a name, a database and credentials the site already has.
+    note: 'No module needs installing in Odoo. First connection builds a Python environment and can take a few minutes.',
+    fields: [
+      {
+        key: 'ODOO_URL',
+        label: 'Server URL',
+        placeholder: 'https://odoo.example.com:8069',
+        type: 'url',
+        help: 'Must be reachable from the API container, not just from your browser. Port 8069 is the default.',
+      },
+      {
+        key: 'ODOO_DB',
+        label: 'Database',
+        placeholder: 'company',
+        help: 'The database name — the choice shown on the login screen, not the domain.',
+      },
+      { key: 'ODOO_USERNAME', label: 'Username', placeholder: 'admin' },
+      {
+        key: 'ODOO_PASSWORD',
+        label: 'Password',
+        type: 'password',
+        help: 'In Odoo 19+ prefer an API key here; on 16-18 the account password is what the web login accepts.',
+      },
+      {
+        key: 'ODOO_TRANSPORT',
+        label: 'Transport',
+        default: 'xmlrpc',
+        required: false,
+        help: 'xmlrpc covers Odoo 16-18. Only change to json2 for an Odoo 19+ server using an API key.',
+      },
+    ],
+  },
+  {
     id: 'ms365',
     name: 'Microsoft 365',
     summary: 'Outlook mail, calendar and contacts through Microsoft Graph',
