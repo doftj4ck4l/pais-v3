@@ -4,9 +4,11 @@ import { env } from "./config/env";
 import { logger } from "./lib/logger";
 import { startSandboxReaper } from "./services/sandbox/sandbox.service";
 import { recoverInterruptedRuns } from "./services/agent/run-recovery";
+import { transcriptionQueue } from "./services/documents/transcription-queue";
 
 ensureSchema();
 await recoverInterruptedRuns();
+await transcriptionQueue.recoverInterrupted();
 
 // Idle containers are only cleaned up if something is watching for them.
 if (env.sandboxBackend === "docker") startSandboxReaper();

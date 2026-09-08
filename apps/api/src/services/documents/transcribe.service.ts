@@ -1,8 +1,8 @@
 import { logger } from "../../lib/logger";
 import { env } from "../../config/env";
 import { effectiveApiKey, MODELS } from "../../catalog/llm-models";
-import { ingestText, type IngestResult } from "./ingest.service";
-import { documentStore, type DocumentStore } from "../../repositories/document.repository";
+import { ingestText } from "./ingest.service";
+import type { DocumentStore } from "../../repositories/document.repository";
 
 /**
  * Audio -> timestamped transcript -> the documents corpus.
@@ -21,9 +21,6 @@ import { documentStore, type DocumentStore } from "../../repositories/document.r
  */
 
 export type TranscriptionSegment = { start: number; text: string };
-
-/** Same scheme as `ingest.service`, so ids did not need a separate namespace. */
-const newDocId = () => `doc_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 export type TranscribeResult =
   | { ok: true; model: string; language?: string | null; segments: TranscriptionSegment[] }
@@ -173,32 +170,40 @@ export function formatTranscript(segments: TranscriptionSegment[]): string {
 /**
  * Transcribe an upload and index the result, as one unit.
  *
- * Returns the same `IngestResult` shape as a PDF upload so the web client can
- * render both without knowing which one happened. A transcription that failed
- * is *recorded*, never thrown: like a PDF that would not extract, the user
- * uploaded it and needs to see what happened to it, and only the Docs row can
- * tell "done" from "whisper never answered".
+ * The failure path deliberately writes *nothing*: a failed transcription is a
+ * `failed` job in the `transcriptions` table, and an error document in the
+ * corpus as well would make the same incident visible twice for different
+ * reasons. PDF ingestion still records its errors as rows, because there is no
+ * job table for a PDF — the corpus row is the only record a failed upload gets.
  */
-export async function transcribeToDocs(
+export async function transcribeToCorpus(
   workspaceId: string,
   title: string,
   input: { bytes: Uint8Array; contentType: string; filename: string },
   deps: TranscribeDeps = {},
-): Promise<IngestResult> {
+): Promise<CorpusOutcome> {
   const t = await transcribeAudio(input, deps);
-  if (!t.ok) {
-    const store = deps.store ?? documentStore;
-    const documentId = newDocId();
-    const error = t.error.slice(0, 300);
-    await store.save(
-      { id: documentId, workspaceId, title, bytes: input.bytes.byteLength, pages: 0, status: "error", error },
-      [],
-    );
-    return { documentId, title, status: "error", pages: 0, chunks: 0, error };
-  }
+  if (!t.ok) return { ok: false, error: t.error.slice(0, 300) };
 
-  // `ingestText` handles an empty transcript too, recording it as an empty
-  // document rather than dropping the upload; this file just has to not stand
-  // in its way.
-  return ingestText(workspaceId, title, formatTranscript(t.segments), deps.store);
+  // `ingestText` handles an empty transcript too, but an empty audio upload is
+  // a failure worth surfacing as such, not an empty document in the corpus.
+  const result = await ingestText(workspaceId, title, formatTranscript(t.segments), deps.store);
+  if (result.status === "indexed") {
+    return {
+      ok: true,
+      documentId: result.documentId,
+      chunks: result.chunks,
+      model: t.model,
+      language: t.language ?? null,
+    };
+  }
+  return { ok: false, error: result.error ?? "the exported transcript was empty" };
 }
+
+/**
+ * What one transcription job produced. `ok` only when a transcript exists in
+ * the corpus to link; nothing is written on the failure branch.
+ */
+export type CorpusOutcome =
+  | { ok: true; documentId: string; chunks: number; model: string; language: string | null }
+  | { ok: false; error: string };

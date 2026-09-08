@@ -10,6 +10,8 @@ import type {
   RunDetail,
   RunSessionDetail,
   SessionImage,
+  TranscriptionRow,
+  TranscriptionStatus,
   UploadedImage,
   UploadedDataFile,
   RunRow,
@@ -392,17 +394,34 @@ export async function deleteDocument(scope: Scope, id: string): Promise<void> {
 }
 
 /**
- * Send one audio file to be transcribed and indexed. The server reports the
- * outcome in the same shape as a PDF upload, so the two can share a results
- * view even though they took different pipelines.
+ * Put one audio file on the transcription queue. The server answers the moment
+ * the job is recorded; poll `listTranscriptions` for its progress. An oversized
+ * file (413) or a full queue (429) is reported with the server's own message.
  */
-export async function transcribeAudio(scope: Scope, file: File): Promise<IngestResult> {
+export async function enqueueTranscription(
+  scope: Scope,
+  file: File,
+): Promise<{ transcriptionId: string; status: TranscriptionStatus }> {
   const body = new FormData()
   body.append('file', file)
-  const { results } = await json<{ results: IngestResult[] }>(
+  return json<{ transcriptionId: string; status: TranscriptionStatus }>(
     await fetch(`/api/documents/transcribe?${scoped(scope)}`, { method: 'POST', body }),
   )
-  return results[0] ?? { title: file.name, status: 'error', pages: 0, chunks: 0, error: 'no result' }
+}
+
+/** Audio uploads this workspace has queued or transcribed, newest first. */
+export async function listTranscriptions(scope: Scope): Promise<TranscriptionRow[]> {
+  const { transcriptions } = await json<{ transcriptions: TranscriptionRow[] }>(
+    await fetch(`/api/documents/transcriptions?${scoped(scope)}`),
+  )
+  return transcriptions
+}
+
+/** Remove a job and the transcript it produced. */
+export async function deleteTranscription(scope: Scope, id: string): Promise<void> {
+  await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    method: 'DELETE',
+  })
 }
 
 /**
