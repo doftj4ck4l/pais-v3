@@ -1,9 +1,9 @@
 import type { Context } from "hono";
 import { documentStore } from "../repositories/document.repository";
+import { transcriptionStore } from "../repositories/transcription.repository";
 import { ingestPdf } from "../services/documents/ingest.service";
-import { transcribeToDocs } from "../services/documents/transcribe.service";
+import { transcriptionQueue, TranscriptionQueueFullError } from "../services/documents/transcription-queue";
 import { searchDocuments } from "../services/documents/search.service";
-import { env } from "../config/env";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";
@@ -86,12 +86,18 @@ export async function create(c: Context) {
 }
 
 /**
- * POST /api/documents/transcribe — one audio file, transcript indexed as a doc.
+ * POST /api/documents/transcribe — put an audio file through the queue.
  *
  * Separate from `create` because an audio file is not a PDF and should not be
  * sent through the PDF extractor blind: the two pipelines have different size
  * caps, different failure modes, and a whisper upload that fell into the PDF
  * path would fail as "unreadable" without ever naming whisper.
+ *
+ * This no longer runs whisper inline. The upload is recorded and the request
+ * answers 202 the moment it is queued; the `transcriptions` page shows the
+ * job's status from there. An oversized file is refused outright (413) rather
+ * than queued to fail later, and a full queue answers 429 so the client can
+ * surface "busy" instead of silently sitting at "done" forever.
  */
 export async function transcribe(c: Context) {
   const workspaceId = await workspaceIdOf(c);
@@ -111,27 +117,50 @@ export async function transcribe(c: Context) {
   if (file.size > MAX_TRANSCRIBE_BYTES) {
     return c.json(
       {
-        results: [
-          {
-            title: file.name,
-            status: "error" as const,
-            pages: 0,
-            chunks: 0,
-            error: `file is ${(file.size / 1e6).toFixed(1)}MB, over the ${MAX_TRANSCRIBE_BYTES / 1e6}MB limit`,
-          },
-        ],
+        error: `file is ${(file.size / 1e6).toFixed(1)}MB, over the ${MAX_TRANSCRIBE_BYTES / 1e6}MB limit`,
       },
-      201,
+      413,
     );
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const result = await transcribeToDocs(workspaceId, file.name, {
-    bytes,
-    contentType: file.type,
-    filename: file.name,
-  });
-  return c.json({ results: [result] }, 201);
+  try {
+    const row = await transcriptionQueue.enqueue({ workspaceId, title: file.name, bytes, contentType: file.type });
+    return c.json({ transcriptionId: row.id, status: row.status }, 202);
+  } catch (e) {
+    if (e instanceof TranscriptionQueueFullError) {
+      return c.json({ error: e.message }, 429);
+    }
+    throw e;
+  }
+}
+
+/** GET /api/documents/transcriptions — a workspace's jobs, newest first. */
+export async function listTranscriptions(c: Context) {
+  const transcriptions = await transcriptionStore.list(await workspaceIdOf(c));
+  return c.json({ transcriptions });
+}
+
+/**
+ * DELETE /api/documents/transcriptions/:id — drop the job *and* its transcript.
+ *
+ * The `document_id` foreign key is `set null`, so the transcript would survive
+ * in the corpus if only the job row were removed — but on this page the tile is
+ * the record of the upload, and both are deleted together. The corpus stays
+ * consistent: deleting a `documents` row on the Docs page leaves the (already
+ * finished, already displayed) job row behind, unlinked.
+ */
+export async function destroyTranscription(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing transcription id" }, 400);
+
+  const workspaceId = await workspaceIdOf(c);
+  const job = (await transcriptionStore.list(workspaceId)).find((t) => t.id === id);
+  if (!job) return c.json({ error: "Transcription not found" }, 404);
+
+  await transcriptionStore.remove(workspaceId, id);
+  if (job.documentId) await documentStore.remove(workspaceId, job.documentId);
+  return c.body(null, 204);
 }
 
 /** DELETE /api/documents/:id — removes its chunks and its search index entries. */

@@ -1,26 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangleIcon, CheckIcon, MicIcon } from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
 import { Spinner } from '@/shared/ui/spinner'
-import { transcribeAudio } from '@/shared/api/api'
+import { enqueueTranscription } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * The rail's own audio upload: pick a file, and it is transcribed and indexed
- * into Docs while the run list stays put.
+ * The rail's audio upload: pick a file, and it joins the transcription queue,
+ * whose progress lives on the Transcriptions page.
  *
  * An icon on the rail rather than a row in the chat column, so the action is
- * reachable from any page and never crowds the sessions list. The same upload
- * logic as before; the button just wears the rail's uniform. While a file is
- * transcribing the icon becomes a spinner; when the transcript is indexed the
- * icon briefly turns into a check so the quiet state does not look like a fail.
+ * reachable from any page and never crowds the sessions list. Uploading is the
+ * fast part now — the server answers the moment the job is queued — so the icon
+ * briefly shows a check, and the view hops to the Transcriptions page where the
+ * tile flips queued → transcribing → done. Without that hop, "where's my
+ * transcript" has no answer on a rail that is icons only.
  */
 type Status =
   | { kind: 'idle' }
-  | { kind: 'busy'; title: string }
-  | { kind: 'done'; title: string; chunks: number }
+  | { kind: 'queuing'; title: string }
+  | { kind: 'queued'; title: string }
   | { kind: 'failed'; title: string; error: string }
 
 const CLEAR_AFTER_MS = 8_000
@@ -28,6 +30,7 @@ const CLEAR_AFTER_MS = 8_000
 export function TranscribeControl() {
   const scope = useScope()
   const { t } = usePreferences()
+  const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
   const clearTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
@@ -46,39 +49,33 @@ export function TranscribeControl() {
   const upload = useCallback(
     async (file: File | undefined) => {
       if (!file) return
-      setStatus({ kind: 'busy', title: file.name })
+      setStatus({ kind: 'queuing', title: file.name })
       try {
-        const result = await transcribeAudio(scope, file)
-        if (result.status === 'indexed') {
-          setStatus({ kind: 'done', title: result.title, chunks: result.chunks })
-        } else {
-          setStatus({
-            kind: 'failed',
-            title: result.title,
-            error: result.error ?? t('audioEmpty'),
-          })
-        }
+        await enqueueTranscription(scope, file)
+        setStatus({ kind: 'queued', title: file.name })
+        // The page is where the wait is visible; the rail has no room to say so.
+        void navigate({ to: '/transcriptions' })
       } catch (e) {
         setStatus({ kind: 'failed', title: file.name, error: e instanceof Error ? e.message : String(e) })
       }
       clearSoon()
     },
-    [clearSoon, scope, t],
+    [clearSoon, navigate, scope],
   )
 
-  const busy = status.kind === 'busy'
+  const busy = status.kind === 'queuing'
 
   // The label rides the tooltip, and the icon state a screen reader hears.
   const label =
-    status.kind === 'busy'
+    status.kind === 'queuing'
       ? t('transcribingAudio', { name: status.title })
-      : status.kind === 'done'
-        ? t('transcribedAudio', { title: status.title, chunks: status.chunks })
+      : status.kind === 'queued'
+        ? t('queuedAudio', { name: status.title })
         : status.kind === 'failed'
           ? status.error
           : t('transcribeAudioHint')
 
-  const done = status.kind === 'done'
+  const queued = status.kind === 'queued'
   const failed = status.kind === 'failed'
 
   return (
@@ -105,13 +102,13 @@ export function TranscribeControl() {
               'flex size-9 items-center justify-center rounded-lg text-muted-foreground',
               'transition-colors hover:bg-accent hover:text-foreground',
               'focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60',
-              done && 'text-emerald-500',
+              queued && 'text-emerald-500',
               failed && 'text-red-500',
             )}
           >
             {busy ? (
               <Spinner className="size-[1.125rem]" />
-            ) : done ? (
+            ) : queued ? (
               <CheckIcon className="size-[1.125rem]" />
             ) : failed ? (
               <AlertTriangleIcon className="size-[1.125rem]" />

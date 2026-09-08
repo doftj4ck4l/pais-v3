@@ -19,6 +19,7 @@ import { Route as FilesRouteImport } from './routes/files'
 import { Route as InviteRouteImport } from './routes/invite'
 import { Route as LearnedRouteImport } from './routes/learned'
 import { Route as SourcesRouteImport } from './routes/sources'
+import { Route as TranscriptionsRouteImport } from './routes/transcriptions'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AdminOrganizationsRouteImport } from './routes/admin.organizations'
 import { Route as AdminRunsRouteImport } from './routes/admin.runs'
@@ -74,6 +75,11 @@ const SourcesRoute = SourcesRouteImport.update({
   path: '/sources',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TranscriptionsRoute = TranscriptionsRouteImport.update({
+  id: '/transcriptions',
+  path: '/transcriptions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/transcriptions': typeof TranscriptionsRoute
   '/admin/organizations': typeof AdminOrganizationsRoute
   '/admin/runs': typeof AdminRunsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -121,6 +128,7 @@ export interface FileRoutesByTo {
   '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/transcriptions': typeof TranscriptionsRoute
   '/admin/organizations': typeof AdminOrganizationsRoute
   '/admin/runs': typeof AdminRunsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -138,6 +146,7 @@ export interface FileRoutesById {
   '/invite': typeof InviteRoute
   '/learned': typeof LearnedRoute
   '/sources': typeof SourcesRoute
+  '/transcriptions': typeof TranscriptionsRoute
   '/admin/organizations': typeof AdminOrganizationsRoute
   '/admin/runs': typeof AdminRunsRoute
   '/admin/users': typeof AdminUsersRoute
@@ -156,6 +165,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/learned'
     | '/sources'
+    | '/transcriptions'
     | '/admin/organizations'
     | '/admin/runs'
     | '/admin/users'
@@ -171,6 +181,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/learned'
     | '/sources'
+    | '/transcriptions'
     | '/admin/organizations'
     | '/admin/runs'
     | '/admin/users'
@@ -187,6 +198,7 @@ export interface FileRouteTypes {
     | '/invite'
     | '/learned'
     | '/sources'
+    | '/transcriptions'
     | '/admin/organizations'
     | '/admin/runs'
     | '/admin/users'
@@ -204,6 +216,7 @@ export interface RootRouteChildren {
   InviteRoute: typeof InviteRoute
   LearnedRoute: typeof LearnedRoute
   SourcesRoute: typeof SourcesRoute
+  TranscriptionsRoute: typeof TranscriptionsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -278,6 +291,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/transcriptions': {
+      id: '/transcriptions'
+      path: '/transcriptions'
+      fullPath: '/transcriptions'
+      preLoaderRoute: typeof TranscriptionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/': {
       id: '/admin/'
       path: '/'
@@ -336,6 +356,7 @@ const rootRouteChildren: RootRouteChildren = {
   InviteRoute: InviteRoute,
   LearnedRoute: LearnedRoute,
   SourcesRoute: SourcesRoute,
+  TranscriptionsRoute: TranscriptionsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

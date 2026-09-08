@@ -526,6 +526,54 @@ export type ChunkRow = {
   text: string;
 };
 
+/**
+ * Where a transcription job stands. `queued` and `transcribing` are in flight
+ * and can be resumed by nothing — a restart marks them `failed` (the audio
+ * bytes only ever lived in the process that was holding them).
+ */
+export type TranscriptionStatus = "queued" | "transcribing" | "done" | "failed";
+
+/**
+ * One audio upload that is being (or was) transcribed.
+ *
+ * The document it produced, if any, is linked rather than merged: the older
+ * `documents` rows cannot distinguish a transcript from a PDF upload, and this
+ * page needs to. The bytes themselves are never stored — they are read into the
+ * API process for the whisper call and then dropped, exactly as `documents`
+ * stores the extracted text and not the source file.
+ */
+export const transcriptions = sqliteTable(
+  "transcriptions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id"),
+    title: text("title").notNull(), // original audio filename
+    bytes: integer("bytes").notNull(),
+    status: text("status").$type<TranscriptionStatus>().notNull().default("queued"),
+    model: text("model"), // which whisper model answered, for the tile
+    error: text("error"), // why status is `failed`, shown verbatim in the UI
+    /** The transcript in the docs corpus, once it exists. */
+    documentId: text("document_id").references(() => documents.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_transcriptions_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+export type TranscriptionRow = {
+  id: string;
+  workspaceId: string | null;
+  title: string;
+  bytes: number;
+  status: TranscriptionStatus;
+  model: string | null;
+  error: string | null;
+  documentId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 // ---- context layer: connected databases and their schema snapshot ----
 
 /** Whether the last introspection of a connection succeeded. */

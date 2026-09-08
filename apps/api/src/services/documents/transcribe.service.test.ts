@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { applySchema } from "../../db/client";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { searchDocuments } from "./search.service";
-import { formatTranscript, stamp, transcribeAudio, transcribeToDocs } from "./transcribe.service";
+import { formatTranscript, stamp, transcribeAudio, transcribeToCorpus } from "./transcribe.service";
 
 const AUDIO = new Uint8Array([0, 1, 2, 3]);
 const INPUT = { bytes: AUDIO, contentType: "audio/mpeg", filename: "call.mp3" };
@@ -151,10 +151,10 @@ function freshStore() {
   return new SqliteDocumentStore(drizzle(sqlite) as any);
 }
 
-describe("transcribeToDocs", () => {
+describe("transcribeToCorpus", () => {
   it("indexes the transcript and makes it searchable with a citation", async () => {
     const store = freshStore();
-    const res = await transcribeToDocs(
+    const res = await transcribeToCorpus(
       "ws1",
       "call.mp3",
       INPUT,
@@ -171,8 +171,10 @@ describe("transcribeToDocs", () => {
           })) as any,
       },
     );
-    expect(res.status).toBe("indexed");
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
     expect(res.chunks).toBeGreaterThan(0);
+    expect(res.documentId).toBeTruthy();
 
     const found = await searchDocuments("ws1", "quarterly budget forty thousand", 5, store);
     expect(found.ok).toBe(true);
@@ -184,12 +186,12 @@ describe("transcribeToDocs", () => {
 
   it("keeps each workspace's transcripts separate", async () => {
     const store = freshStore();
-    await transcribeToDocs("ws_alice", "alice.mp3", INPUT, {
+    await transcribeToCorpus("ws_alice", "alice.mp3", INPUT, {
       ...CREDS,
       store,
       fetchImpl: (async () => reply({ text: "alice's secret figures", segments: [{ start: 0, text: "secret figures" }] })) as any,
     });
-    await transcribeToDocs("ws_bob", "bob.mp3", INPUT, {
+    await transcribeToCorpus("ws_bob", "bob.mp3", INPUT, {
       ...CREDS,
       store,
       fetchImpl: (async () => reply({ text: "bob's unrelated notes", segments: [{ start: 0, text: "unrelated notes" }] })) as any,
@@ -201,18 +203,28 @@ describe("transcribeToDocs", () => {
     expect(asBob.hits.every((h) => h.docTitle === "bob.mp3")).toBe(true);
   });
 
-  it("records a transcription failure as an error document, not a crash", async () => {
+  it("reports a transcription failure and writes NO error document", async () => {
     const store = freshStore();
-    const res = await transcribeToDocs("ws1", "call.mp3", INPUT, {
+    const res = await transcribeToCorpus("ws1", "call.mp3", INPUT, {
       ...CREDS,
       store,
       fetchImpl: (async () => new Response("no", { status: 500 })) as any,
     });
-    expect(res.status).toBe("error");
-    expect(res.chunks).toBe(0);
+    expect(res).toEqual({ ok: false, error: expect.stringContaining("refused") });
     const listed = await store.list("ws1");
-    expect(listed).toHaveLength(1);
-    expect(listed[0]!.status).toBe("error");
-    expect(listed[0]!.error).toBeTruthy();
+    expect(listed).toHaveLength(0);
+  });
+
+  it("reports a blank answer as JSON, with no error document", async () => {
+    const store = freshStore();
+    const res = await transcribeToCorpus("ws1", "call.mp3", INPUT, {
+      ...CREDS,
+      store,
+      fetchImpl: (async () => reply({ text: "" })) as any,
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("empty");
+    expect(await store.list("ws1")).toHaveLength(0);
   });
 });
