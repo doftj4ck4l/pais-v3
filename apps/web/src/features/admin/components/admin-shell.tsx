@@ -18,7 +18,7 @@ import { cn } from '@/shared/lib/utils'
 
 export function AdminShell() {
   const { me, loading } = useMeContext()
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = useState(false)
 
   if (loading) {
     return <AdminState icon={<Spinner />} title="Checking administrator access…" />
@@ -36,12 +36,12 @@ export function AdminShell() {
 
   return (
     <div className="flex h-full min-h-0 bg-background">
-      <aside className={cn('hidden shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 motion-reduce:transition-none md:flex', collapsed ? 'w-16' : 'w-64 xl:w-72')}>
+      <aside className={cn('hidden shrink-0 flex-col bg-sidebar transition-[width] duration-200 motion-reduce:transition-none md:flex', collapsed ? 'w-16' : 'w-[16.25rem]')}>
         <AdminBrand collapsed={collapsed} />
         <nav aria-label="Admin panel" className={cn('grid gap-1', collapsed ? 'p-2' : 'p-3')}>
           {ADMIN_NAV.map((item) => <AdminNavLink key={item.to} {...item} collapsed={collapsed} />)}
         </nav>
-        <div className={cn('mt-auto grid gap-1 border-t', collapsed ? 'p-2' : 'p-3')}>
+        <div className={cn('mt-auto grid gap-1', collapsed ? 'p-2' : 'p-3')}>
           <AdminRailAction
             collapsed={collapsed}
             label={collapsed ? 'Expand admin navigation' : 'Collapse admin navigation'}
@@ -76,7 +76,7 @@ export function AdminShell() {
 
 function AdminBrand({ collapsed }: { collapsed: boolean }) {
   return (
-    <div className={cn('flex h-14 items-center border-b', collapsed ? 'justify-center px-2' : 'gap-3 px-4')}>
+    <div className={cn('flex h-13 items-center', collapsed ? 'justify-center px-2' : 'gap-3 px-4')}>
       <BrandMark className="h-5 shrink-0" />
       {!collapsed ? (
         <div className="min-w-0">
@@ -107,8 +107,8 @@ function AdminNavLink({
       aria-label={collapsed ? label : undefined}
       activeOptions={{ exact: to === '/admin' }}
       className={cn(
-        'flex items-center gap-2.5 rounded-md text-[0.9375rem] text-muted-foreground transition-colors',
-        'hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+        'flex items-center gap-2.5 rounded-lg text-sm text-muted-foreground transition-colors',
+        'hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none',
         compact ? 'shrink-0 px-3 py-2 text-sm' : collapsed ? 'h-10 justify-center px-0' : 'px-3 py-2.5',
       )}
       activeProps={{ className: 'bg-accent font-medium text-foreground' }}

@@ -197,10 +197,15 @@ export function Composer({
   }
 
   return (
-    <div className={cn('bg-background', docked && 'border-t')}>
+    <div
+      className={cn(
+        'bg-background',
+        docked && 'bg-gradient-to-t from-background via-background to-transparent pt-2',
+      )}
+    >
       {notice ? (
-        <div className="mx-auto flex w-full max-w-5xl items-start gap-3 px-4 pt-3 sm:px-6">
-          <p className="flex-1 border-l-2 border-foreground py-1 pl-3 text-xs text-muted-foreground">
+        <div className="mx-auto flex w-full max-w-3xl items-start gap-3 px-4 pt-2 sm:px-6">
+          <p className="flex-1 rounded-xl bg-muted px-3 py-2 text-xs text-muted-foreground">
             {notice}
           </p>
           <Button
@@ -215,15 +220,15 @@ export function Composer({
       ) : null}
 
       <form
-        className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6"
+        className="mx-auto w-full max-w-3xl px-3 pt-2 pb-3 sm:px-6 sm:pb-5"
         onSubmit={(e) => {
           e.preventDefault()
           submit()
         }}
       >
-        <div className="rounded-xl border bg-card transition-colors focus-within:border-ring">
+        <div className="overflow-hidden rounded-[1.75rem] border border-border/80 bg-secondary shadow-[0_2px_8px_rgba(0,0,0,0.05)] transition-shadow focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.08)] dark:border-transparent">
           {images.length || files.length || uploading > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
               {images.map((image) => (
                 <Thumbnail
                   key={image.id}
@@ -249,14 +254,7 @@ export function Composer({
             </div>
           ) : null}
 
-          <div className="flex items-end gap-2 p-2 pl-3">
-            <span
-              aria-hidden
-              className="readout hidden shrink-0 pb-2.5 leading-none text-muted-foreground select-none sm:inline"
-            >
-              →
-            </span>
-
+          <div className="flex items-end gap-1.5 px-2 pt-3 pb-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -276,7 +274,7 @@ export function Composer({
               onClick={() => fileInputRef.current?.click()}
               aria-label={t('attachData')}
               title={chatOnly ? t('chooseAgentFiles') : t('attachData')}
-              className="mb-0.5 text-muted-foreground"
+              className="mb-0.5 rounded-full text-muted-foreground hover:bg-background/80"
             >
               <PaperclipIcon />
             </Button>
@@ -325,15 +323,17 @@ export function Composer({
                       : t('askAnything')
               }
               aria-label={t('startAgent')}
-              className="max-h-[200px] min-h-0 resize-none border-0 bg-transparent px-0 py-2 text-[0.9375rem] shadow-none focus-visible:ring-0 dark:bg-transparent"
+              className="max-h-[200px] min-h-0 resize-none border-0 bg-transparent px-2 py-2.5 text-base shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
 
             <Button
               type="submit"
+              size="icon"
+              aria-label={t('send')}
               disabled={(!value.trim() && !images.length && !files.length) || uploading > 0}
+              className="mb-0.5 size-8 rounded-full"
             >
-              <span className="hidden sm:inline">{t('send')}</span>
-              <ArrowUpIcon data-icon="inline-end" />
+              <ArrowUpIcon />
             </Button>
           </div>
         </div>
@@ -347,7 +347,7 @@ export function Composer({
         {/* The model sits on the left of this row and the hint on the right, so
             the control the user changes is the one nearest the input's own
             edge rather than trailing a sentence about images. */}
-        <div className="mt-1.5 flex items-center gap-3 px-1 text-[0.6875rem] text-muted-foreground">
+        <div className="mt-2 flex items-center gap-3 px-3 text-[0.6875rem] text-muted-foreground">
           <ModelPicker
             models={models}
             modelId={modelId}

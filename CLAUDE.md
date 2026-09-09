@@ -534,10 +534,12 @@ again. `apps/web/src/routes/index.tsx` renders the chat page, but it does not
 own the runs.
 
 Every page is wrapped in `AppShell` (`features/navigation`), which draws the
-sidebar and owns the settings modal. There is **one** sidebar, and it holds both
-kinds of navigation: the destinations at the top, the runs underneath. It was
-briefly an icon rail beside a second column of agents, which meant reaching
-either one meant reading both.
+sidebar and owns the settings modal. There is **one 260px labelled sidebar**,
+and it holds both kinds of navigation: icon-and-word destinations at the top,
+the runs underneath, and account controls at the bottom. Collapsing removes the
+whole column and leaves a restore button in the page header; do not bring back
+the permanent icon rail or a second chat-only column. On narrow screens the
+same labelled sidebar is presented as a sheet.
 
 A page in that list is a route file plus a thin component around one of the
 panels in `features/resources`; those panels were tabs in a drawer, so each

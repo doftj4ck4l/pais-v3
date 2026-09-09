@@ -12,7 +12,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { TranslationKey } from '@/shared/lib/i18n'
 
 /**
- * The console's destinations, in the order they appear on the rail.
+ * The console's destinations, in the order they appear in the sidebar.
  *
  * Each of these was a tab in the right-hand panel, which meant every source
  * type competed for one 288px column and none of them could ever be more than
@@ -25,7 +25,7 @@ import type { TranslationKey } from '@/shared/lib/i18n'
 export type NavItem = {
   to: string
   label: TranslationKey
-  /** What the page is, for the tooltip — the rail itself is icons only. */
+  /** A short explanation available to surfaces that need more than the label. */
   hint: TranslationKey
   icon: LucideIcon
 }

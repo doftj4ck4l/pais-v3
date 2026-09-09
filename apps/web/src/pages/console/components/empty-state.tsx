@@ -1,138 +1,49 @@
-import { ArrowRightIcon } from 'lucide-react'
-import { useMe } from '@/features/workspace/hooks/use-me'
+import { ArrowUpRightIcon } from 'lucide-react'
 import { useSuggestions } from '@/features/agents/hooks/use-suggestions'
-import { useNow } from '@/shared/hooks/use-now'
-import { firstName, partOfDay } from './greeting'
-import { localeFor } from '@/shared/lib/i18n'
+import { BrandMark } from '@/shared/components/brand'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 
-/**
- * The console with nothing open yet.
- *
- * It used to open with a slogan. A slogan is what a landing page needs; what a
- * console needs is to say where you are — so it now answers who is signed in
- * and what the time is, and only then offers something to run.
- *
- * Split in two because the composer sits between them: the greeting is above
- * the box you type in, the suggestions are under it, and the whole arrangement
- * is what collapses when the first question turns this into a transcript.
- */
+/** The quiet prompt that anchors a new conversation. */
 export function Greeting() {
-  const me = useMe()
-  const name = firstName(me)
   const { t } = usePreferences()
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pb-5 sm:px-6">
-      <Clock />
-
-      <h1 className="mt-4 text-[clamp(1.9rem,4.5vw,2.6rem)] leading-[1.08] font-extrabold tracking-[-0.03em]">
-        <Salutation />
-        {name ? <span className="text-foreground">, {name}</span> : null}
+    <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 pb-6 text-center sm:px-6">
+      <span className="flex size-10 items-center justify-center rounded-xl border bg-card shadow-sm">
+        <BrandMark className="h-[1.125rem]" />
+      </span>
+      <h1 className="mt-5 text-2xl font-medium tracking-[-0.03em] sm:text-[1.75rem]">
+        {t('howCanIHelp')}
       </h1>
-
-      <p className="mt-3 max-w-lg text-[0.9375rem] text-muted-foreground">
-        {t('greetingDescription')}
-      </p>
     </div>
   )
 }
 
-export function Suggestions({
-  onPick,
-}: {
-  onPick: (text: string) => void
-}) {
+export function Suggestions({ onPick }: { onPick: (text: string) => void }) {
   const suggestions = useSuggestions()
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pt-1 pb-8 sm:px-6">
-      <div className="grid gap-2.5 sm:grid-cols-2">
-        {suggestions.map((s) => (
+    <div className="mx-auto w-full max-w-3xl px-4 pt-2 pb-8 sm:px-6">
+      <div className="grid gap-2 sm:grid-cols-2">
+        {suggestions.map((suggestion) => (
           <button
-            key={s.text}
+            key={suggestion.text}
             type="button"
-            onClick={() => onPick(s.text)}
-            className="group flex items-center gap-4 rounded-xl border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+            onClick={() => onPick(suggestion.text)}
+            className="group flex min-h-20 items-start gap-3 rounded-2xl border bg-background p-3.5 text-left transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
           >
             <span className="min-w-0 flex-1">
-              <span className="block text-[0.9375rem] leading-snug font-semibold">{s.text}</span>
-              <span className="readout mt-1.5 block text-muted-foreground">{s.hint}</span>
+              <span className="block line-clamp-2 text-sm leading-snug font-medium">
+                {suggestion.text}
+              </span>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">
+                {suggestion.hint}
+              </span>
             </span>
-            <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+            <ArrowUpRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
           </button>
         ))}
       </div>
-    </div>
-  )
-}
-
-/**
- * "Good morning" — with the part of the day carrying the wordmark's gradient.
- *
- * The one place brand colour appears on this screen, and it is on the only
- * word that changes. Everything else here is greyscale, which is what keeps a
- * gradient from reading as decoration.
- */
-function Salutation() {
-  const part = partOfDay(useNow(60_000))
-  const { t } = usePreferences()
-  const greeting = t(
-    part === 'morning'
-      ? 'greetingMorning'
-      : part === 'afternoon'
-        ? 'greetingAfternoon'
-        : part === 'evening'
-          ? 'greetingEvening'
-          : 'greetingNight',
-  )
-  const words = greeting.split(' ')
-  const accent = words.pop()
-  return (
-    <>
-      {words.join(' ')}{' '}
-      <span className="bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-transparent">
-        {accent}
-      </span>
-    </>
-  )
-}
-
-/**
- * The time, seconds and all, above the greeting.
- *
- * Its own component so that a tick re-renders eleven characters rather than
- * the whole screen and its four buttons.
- *
- * Seconds are set at 40% — present, because a console that shows a frozen
- * HH:MM looks broken, but dimmed, because nothing here is worth reading to the
- * second. The zone is spelled out for the same reason the first suggestion
- * asks an agent what time it is in Kuala Lumpur: this clock is the one that is
- * yours, and the agent's is not.
- */
-function Clock() {
-  const now = useNow()
-  const { language } = usePreferences()
-  const locale = localeFor(language)
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const hhmm = now.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
-  const ss = now.toLocaleTimeString(locale, { second: '2-digit' }).padStart(2, '0')
-  const date = now.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' })
-
-  return (
-    <div className="readout flex items-center gap-2.5 text-[0.8125rem] tracking-[0.01em] text-muted-foreground">
-      <time dateTime={now.toISOString()}>
-        {hhmm}
-        <span className="opacity-40">:{ss}</span>
-      </time>
-      <span className="text-rail" aria-hidden>
-        ·
-      </span>
-      <span>{date}</span>
-      <span className="hidden text-rail sm:inline" aria-hidden>
-        ·
-      </span>
-      <span className="hidden sm:inline">{zone.replace(/_/g, ' ')}</span>
     </div>
   )
 }

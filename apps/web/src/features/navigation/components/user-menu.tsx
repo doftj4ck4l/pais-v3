@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { LogOutIcon, UserIcon } from 'lucide-react'
+import { LogOutIcon, MoreHorizontalIcon, UserIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,7 +18,7 @@ import { usePreferences } from '@/shared/hooks/use-preferences'
  * Local mode revokes its server-side session before returning to the login
  * screen. Proxy mode hands the browser to the provider's own sign-out endpoint.
  */
-export function UserMenu() {
+export function UserMenu({ expanded = false }: { expanded?: boolean }) {
   const me = useMe()
   const [profileOpen, setProfileOpen] = useState(false)
   const { t } = usePreferences()
@@ -36,12 +36,22 @@ export function UserMenu() {
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label={t('signedInAs', { name: label })}
-          className="flex size-8 items-center justify-center rounded-full bg-muted text-[0.6875rem] font-semibold uppercase text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          className={expanded
+            ? 'flex h-11 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring/30'
+            : 'flex size-8 items-center justify-center rounded-full bg-muted text-[0.6875rem] font-semibold uppercase text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30'}
         >
-          {label.slice(0, 2)}
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-[0.6875rem] font-semibold uppercase text-background">
+            {label.slice(0, 2)}
+          </span>
+          {expanded ? (
+            <>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+              <MoreHorizontalIcon className="size-4 shrink-0 text-muted-foreground" />
+            </>
+          ) : null}
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent side="right" align="end">
+        <DropdownMenuContent side="right" align="end" className="w-64">
           <div className="px-2 py-1.5 leading-tight">
             <p className="truncate text-sm font-medium">{label}</p>
             {secondary ? (
