@@ -3,6 +3,11 @@ import { env } from "../../config/env";
 import { effectiveApiKey, MODELS } from "../../catalog/llm-models";
 import { ingestText } from "./ingest.service";
 import type { DocumentStore } from "../../repositories/document.repository";
+import {
+  MAX_DIRECT_WHISPER_BYTES,
+  prepareWhisperAudio,
+  type PreparedWhisperAudio,
+} from "./audio-segment.service";
 
 /**
  * Audio -> timestamped transcript -> the documents corpus.
@@ -40,6 +45,8 @@ type TranscribeDeps = {
   store?: DocumentStore;
   /** Called after Whisper returns and before the transcript enters the index. */
   onIndexing?: () => void | Promise<void>;
+  /** Test seam for FFmpeg-backed preparation of oversized media. */
+  prepareAudio?: (input: TranscriptionAudioInput) => Promise<PreparedWhisperAudio>;
 };
 
 export type TranscriptionAudioSource =
@@ -75,7 +82,7 @@ export function transcribeConfig(): { baseUrl: string; apiKey: string | undefine
  * which case the whole answer becomes one segment at 00:00 rather than being
  * thrown away.
  */
-export async function transcribeAudio(
+async function transcribeAudioPart(
   input: TranscriptionAudioInput,
   deps: TranscribeDeps = {},
 ): Promise<TranscribeResult> {
@@ -171,6 +178,73 @@ export async function transcribeAudio(
   }
 
   return { ok: false, error: `whisper model ${model} returned an empty transcript` };
+}
+
+/**
+ * Transcribe one model-safe file, or split oversized media and merge its
+ * timestamped results. Browser upload chunks are transport pieces and cannot
+ * be sent to Whisper directly because most of them are not valid media files;
+ * FFmpeg creates independently decodable audio segments after upload instead.
+ */
+export async function transcribeAudio(
+  input: TranscriptionAudioInput,
+  deps: TranscribeDeps = {},
+): Promise<TranscribeResult> {
+  const byteLength = transcriptionAudioBytes(input);
+  if (byteLength <= MAX_DIRECT_WHISPER_BYTES) {
+    return transcribeAudioPart(input, deps);
+  }
+
+  let prepared: PreparedWhisperAudio;
+  try {
+    prepared = await (deps.prepareAudio ?? prepareWhisperAudio)(input);
+  } catch (error: any) {
+    return { ok: false, error: error?.message ?? String(error) };
+  }
+
+  const segments: TranscriptionSegment[] = [];
+  let model = "";
+  let language: string | null = null;
+  try {
+    for (const [index, part] of prepared.segments.entries()) {
+      logger.info("transcribe.segment.start", {
+        filename: input.filename,
+        part: index + 1,
+        parts: prepared.segments.length,
+        bytes: transcriptionAudioBytes(part.input),
+      });
+      const result = await transcribeAudioPart(part.input, deps);
+      if (!result.ok) {
+        return {
+          ok: false,
+          error: `audio segment ${index + 1}/${prepared.segments.length} failed: ${result.error}`,
+        };
+      }
+      model ||= result.model;
+      language ??= result.language ?? null;
+      segments.push(...result.segments.map((segment) => ({
+        ...segment,
+        start: segment.start + part.offsetSeconds,
+      })));
+    }
+  } finally {
+    try {
+      await prepared.cleanup();
+    } catch (error: any) {
+      logger.warn("transcribe.segment.cleanup_failed", {
+        filename: input.filename,
+        message: String(error?.message ?? error),
+      });
+    }
+  }
+
+  logger.info("transcribe.segmented.ok", {
+    filename: input.filename,
+    bytes: byteLength,
+    parts: prepared.segments.length,
+    segments: segments.length,
+  });
+  return { ok: true, model, language, segments };
 }
 
 /** The `[MM:SS]` stamping of a segment's start time, snapped to a second. */

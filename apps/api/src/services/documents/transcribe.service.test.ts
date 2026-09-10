@@ -107,6 +107,50 @@ describe("transcribeAudio", () => {
     }
   });
 
+  it("transcribes oversized media in model-safe segments and offsets timestamps", async () => {
+    const calls: string[] = [];
+    let cleaned = false;
+    const result = await transcribeAudio(
+      {
+        filePath: "/tmp/large-video",
+        byteLength: 9 * 1024 * 1024,
+        contentType: "video/mp4",
+        filename: "500.mp4",
+      },
+      {
+        ...CREDS,
+        prepareAudio: async () => ({
+          segments: [
+            { input: { bytes: AUDIO, contentType: "audio/mpeg", filename: "part-1.mp3" }, offsetSeconds: 0 },
+            { input: { bytes: AUDIO, contentType: "audio/mpeg", filename: "part-2.mp3" }, offsetSeconds: 600 },
+          ],
+          cleanup: async () => { cleaned = true; },
+        }),
+        fetchImpl: (async (_url: unknown, init: RequestInit) => {
+          const name = ((init.body as FormData).get("file") as File).name;
+          calls.push(name);
+          return reply({
+            language: "en",
+            text: name,
+            segments: [{ start: name === "part-1.mp3" ? 1 : 2, text: name }],
+          });
+        }) as any,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      model: "whisper-1",
+      language: "en",
+      segments: [
+        { start: 1, text: "part-1.mp3" },
+        { start: 602, text: "part-2.mp3" },
+      ],
+    });
+    expect(calls).toEqual(["part-1.mp3", "part-2.mp3"]);
+    expect(cleaned).toBe(true);
+  });
+
   it("surfaces the whisper server's own refusal, which names the fix", async () => {
     const result = await transcribeAudio(INPUT, {
       ...CREDS,

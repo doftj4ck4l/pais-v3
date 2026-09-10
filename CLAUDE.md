@@ -508,10 +508,13 @@ to fail with 413 before the API saw them. Sessions are workspace-scoped, reserve
 their declared size up front, expire after one hour, and cap a recording at 2
 GiB. Parts are appended to a process-scoped temporary file while only the most
 recent 768 KiB part is retained in memory for idempotent retries. The worker
-streams that file to Whisper and removes it on success or failure. A restart
-still requires the browser to begin the upload again. Keep the old
-`/transcribe` multipart route for compatibility, but the console must use the
-chunked path.
+uses FFmpeg to strip video and split media over 8 MiB into ten-minute mono MP3
+segments (about 4.8 MiB each), sends them to Whisper sequentially, offsets their
+timestamps, and removes both source and derived temporary files on success or
+failure. This second segmentation boundary is distinct from browser chunks:
+those raw byte ranges are not independently decodable media. A restart still
+requires the browser to begin the upload again. Keep the old `/transcribe`
+multipart route for compatibility, but the console must use the chunked path.
 
 `GET /api/documents/transcriptions` intentionally returns job metadata only.
 The Finder-style browser fetches the selected result lazily from
