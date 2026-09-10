@@ -3,6 +3,11 @@ import { env } from "../../config/env";
 import { effectiveApiKey, MODELS } from "../../catalog/llm-models";
 import { ingestText } from "./ingest.service";
 import type { DocumentStore } from "../../repositories/document.repository";
+import {
+  MAX_DIRECT_WHISPER_BYTES,
+  prepareWhisperAudio,
+  type PreparedWhisperAudio,
+} from "./audio-segment.service";
 
 /**
  * Audio -> timestamped transcript -> the documents corpus.
@@ -38,12 +43,23 @@ type TranscribeDeps = {
   model?: string;
   language?: string;
   store?: DocumentStore;
+  /** Called after Whisper returns and before the transcript enters the index. */
+  onIndexing?: () => void | Promise<void>;
+  /** Test seam for FFmpeg-backed preparation of oversized media. */
+  prepareAudio?: (input: TranscriptionAudioInput) => Promise<PreparedWhisperAudio>;
 };
 
-const audioFile = (bytes: Uint8Array, filename: string, contentType: string) => {
-  // `File` is global in Bun (undici), so no polyfill is needed for fetch.
-  return new File([bytes], filename, { type: contentType || "application/octet-stream" });
+export type TranscriptionAudioSource =
+  | { bytes: Uint8Array }
+  | { filePath: string; byteLength: number };
+
+export type TranscriptionAudioInput = TranscriptionAudioSource & {
+  contentType: string;
+  filename: string;
 };
+
+export const transcriptionAudioBytes = (input: TranscriptionAudioSource) =>
+  "bytes" in input ? input.bytes.byteLength : input.byteLength;
 
 /**
  * The whisper endpoint's own config, borrowed from the chat gateway because the
@@ -66,8 +82,8 @@ export function transcribeConfig(): { baseUrl: string; apiKey: string | undefine
  * which case the whole answer becomes one segment at 00:00 rather than being
  * thrown away.
  */
-export async function transcribeAudio(
-  input: { bytes: Uint8Array; contentType: string; filename: string },
+async function transcribeAudioPart(
+  input: TranscriptionAudioInput,
   deps: TranscribeDeps = {},
 ): Promise<TranscribeResult> {
   const config = transcribeConfig();
@@ -83,7 +99,21 @@ export async function transcribeAudio(
 
   const form = new FormData();
   form.append("model", model);
-  form.append("file", audioFile(input.bytes, input.filename, input.contentType));
+  if ("bytes" in input) {
+    // `File` is global in Bun (undici), so no polyfill is needed for fetch.
+    form.append("file", new File(
+      [input.bytes],
+      input.filename,
+      { type: input.contentType || "application/octet-stream" },
+    ));
+  } else {
+    // Bun.file is a lazy, disk-backed Blob. Wrapping that Blob gives multipart
+    // the original filename without reading/copying its contents into memory.
+    const diskFile = Bun.file(input.filePath, {
+      type: input.contentType || "application/octet-stream",
+    });
+    form.append("file", new File([diskFile], input.filename, { type: diskFile.type }));
+  }
   form.append("response_format", "verbose_json");
   if (deps.language) form.append("language", deps.language);
 
@@ -139,7 +169,7 @@ export async function transcribeAudio(
       logger.info("transcribe.ok", {
         model,
         ms: Date.now() - startedAt,
-        bytes: input.bytes.byteLength,
+        bytes: transcriptionAudioBytes(input),
         segments: flattened.length,
         chars: flattened.reduce((n, s) => n + s.text.length, 0),
       });
@@ -148,6 +178,73 @@ export async function transcribeAudio(
   }
 
   return { ok: false, error: `whisper model ${model} returned an empty transcript` };
+}
+
+/**
+ * Transcribe one model-safe file, or split oversized media and merge its
+ * timestamped results. Browser upload chunks are transport pieces and cannot
+ * be sent to Whisper directly because most of them are not valid media files;
+ * FFmpeg creates independently decodable audio segments after upload instead.
+ */
+export async function transcribeAudio(
+  input: TranscriptionAudioInput,
+  deps: TranscribeDeps = {},
+): Promise<TranscribeResult> {
+  const byteLength = transcriptionAudioBytes(input);
+  if (byteLength <= MAX_DIRECT_WHISPER_BYTES) {
+    return transcribeAudioPart(input, deps);
+  }
+
+  let prepared: PreparedWhisperAudio;
+  try {
+    prepared = await (deps.prepareAudio ?? prepareWhisperAudio)(input);
+  } catch (error: any) {
+    return { ok: false, error: error?.message ?? String(error) };
+  }
+
+  const segments: TranscriptionSegment[] = [];
+  let model = "";
+  let language: string | null = null;
+  try {
+    for (const [index, part] of prepared.segments.entries()) {
+      logger.info("transcribe.segment.start", {
+        filename: input.filename,
+        part: index + 1,
+        parts: prepared.segments.length,
+        bytes: transcriptionAudioBytes(part.input),
+      });
+      const result = await transcribeAudioPart(part.input, deps);
+      if (!result.ok) {
+        return {
+          ok: false,
+          error: `audio segment ${index + 1}/${prepared.segments.length} failed: ${result.error}`,
+        };
+      }
+      model ||= result.model;
+      language ??= result.language ?? null;
+      segments.push(...result.segments.map((segment) => ({
+        ...segment,
+        start: segment.start + part.offsetSeconds,
+      })));
+    }
+  } finally {
+    try {
+      await prepared.cleanup();
+    } catch (error: any) {
+      logger.warn("transcribe.segment.cleanup_failed", {
+        filename: input.filename,
+        message: String(error?.message ?? error),
+      });
+    }
+  }
+
+  logger.info("transcribe.segmented.ok", {
+    filename: input.filename,
+    bytes: byteLength,
+    parts: prepared.segments.length,
+    segments: segments.length,
+  });
+  return { ok: true, model, language, segments };
 }
 
 /** The `[MM:SS]` stamping of a segment's start time, snapped to a second. */
@@ -179,7 +276,7 @@ export function formatTranscript(segments: TranscriptionSegment[]): string {
 export async function transcribeToCorpus(
   workspaceId: string,
   title: string,
-  input: { bytes: Uint8Array; contentType: string; filename: string },
+  input: TranscriptionAudioInput,
   deps: TranscribeDeps = {},
 ): Promise<CorpusOutcome> {
   const t = await transcribeAudio(input, deps);
@@ -187,6 +284,7 @@ export async function transcribeToCorpus(
 
   // `ingestText` handles an empty transcript too, but an empty audio upload is
   // a failure worth surfacing as such, not an empty document in the corpus.
+  await deps.onIndexing?.();
   const text = formatTranscript(t.segments);
   const result = await ingestText(workspaceId, title, text, deps.store);
   if (result.status === "indexed") {
@@ -196,8 +294,8 @@ export async function transcribeToCorpus(
       chunks: result.chunks,
       model: t.model,
       language: t.language ?? null,
-      // The corpus stores the same words split how the chunker chose; the job
-      // keeps the original so a `.txt` export is byte-exact.
+      // Keep the exact formatted text for a byte-stable `.txt` export; corpus
+      // chunks are shaped for search and may have different boundaries.
       text,
     };
   }

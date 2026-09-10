@@ -10,6 +10,7 @@ import type {
   RunDetail,
   RunSessionDetail,
   SessionImage,
+  TranscriptionDetail,
   TranscriptionRow,
   TranscriptionStatus,
   UploadedImage,
@@ -394,19 +395,60 @@ export async function deleteDocument(scope: Scope, id: string): Promise<void> {
 }
 
 /**
- * Put one audio file on the transcription queue. The server answers the moment
- * the job is recorded; poll `listTranscriptions` for its progress. An oversized
- * file (413) or a full queue (429) is reported with the server's own message.
+ * Upload audio in small raw chunks, then put it on the transcription queue.
+ * Keeping each request below 1 MiB avoids reverse-proxy request-size ceilings;
+ * the completion call is tiny and returns as soon as the job is safely queued.
  */
 export async function enqueueTranscription(
   scope: Scope,
   file: File,
+  onProgress?: (percent: number) => void,
 ): Promise<{ transcriptionId: string; status: TranscriptionStatus }> {
-  const body = new FormData()
-  body.append('file', file)
-  return json<{ transcriptionId: string; status: TranscriptionStatus }>(
-    await fetch(`/api/documents/transcribe?${scoped(scope)}`, { method: 'POST', body }),
+  const session = await json<{ uploadId: string; chunkBytes: number; partCount: number }>(
+    await fetch(`/api/documents/transcription-uploads?${scoped(scope)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: file.name, contentType: file.type, size: file.size }),
+    }),
   )
+
+  try {
+    for (let part = 0; part < session.partCount; part += 1) {
+      const start = part * session.chunkBytes
+      const end = Math.min(start + session.chunkBytes, file.size)
+      const url = `/api/documents/transcription-uploads/${encodeURIComponent(session.uploadId)}/chunks/${part}?${scoped(scope)}`
+      let sent = false
+      let lastError: unknown
+      for (let attempt = 0; attempt < 3 && !sent; attempt += 1) {
+        try {
+          await json<{ receivedBytes: number }>(await fetch(url, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/octet-stream' },
+            body: file.slice(start, end),
+          }))
+          sent = true
+        } catch (error) {
+          lastError = error
+          if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 250 * (2 ** attempt)))
+        }
+      }
+      if (!sent) throw lastError
+      onProgress?.(Math.round((end / file.size) * 100))
+    }
+
+    return await json<{ transcriptionId: string; status: TranscriptionStatus }>(
+      await fetch(
+        `/api/documents/transcription-uploads/${encodeURIComponent(session.uploadId)}/complete?${scoped(scope)}`,
+        { method: 'POST' },
+      ),
+    )
+  } catch (error) {
+    await fetch(
+      `/api/documents/transcription-uploads/${encodeURIComponent(session.uploadId)}?${scoped(scope)}`,
+      { method: 'DELETE' },
+    ).catch(() => undefined)
+    throw error
+  }
 }
 
 /** Audio uploads this workspace has queued or transcribed, newest first. */
@@ -415,6 +457,13 @@ export async function listTranscriptions(scope: Scope): Promise<TranscriptionRow
     await fetch(`/api/documents/transcriptions?${scoped(scope)}`),
   )
   return transcriptions
+}
+
+/** Read one completed transcript. In-flight and failed jobs return null content. */
+export async function getTranscription(scope: Scope, id: string): Promise<TranscriptionDetail> {
+  return json<TranscriptionDetail>(
+    await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`),
+  )
 }
 
 /** Remove a job and the transcript it produced. */

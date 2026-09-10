@@ -30,12 +30,19 @@ export type NewDocument = {
   externalUrl?: string | null;
 };
 
+export type DocumentContent = {
+  title: string;
+  content: string;
+  chunkCount: number;
+};
+
 /** What a sync needs to know about a document it has already indexed. */
 export type IndexedSource = { documentId: string; externalVersion: string | null };
 
 export interface DocumentStore {
   save(doc: NewDocument, docChunks: Chunk[]): Promise<void>;
   list(workspaceId: string): Promise<DocumentRow[]>;
+  read(workspaceId: string, documentId: string): Promise<DocumentContent | null>;
   remove(workspaceId: string, documentId: string): Promise<boolean>;
   search(workspaceId: string, ftsQuery: string, limit: number): Promise<ScoredChunk[]>;
   /**
@@ -110,6 +117,27 @@ export class SqliteDocumentStore implements DocumentStore {
       .where(eq(documents.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
     return rows as DocumentRow[];
+  }
+
+  async read(workspaceId: string, documentId: string): Promise<DocumentContent | null> {
+    const document = await this.dbImpl
+      .select({ title: documents.title })
+      .from(documents)
+      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.id, documentId)))
+      .get();
+    if (!document) return null;
+
+    const rows = await this.dbImpl
+      .select({ text: chunks.text })
+      .from(chunks)
+      .where(and(eq(chunks.workspaceId, workspaceId), eq(chunks.documentId, documentId)))
+      .orderBy(chunks.seq);
+
+    return {
+      title: document.title,
+      content: mergeChunkText(rows.map((row) => row.text)),
+      chunkCount: rows.length,
+    };
   }
 
   async bySource(workspaceId: string, connectorId: string): Promise<Map<string, IndexedSource>> {
@@ -243,3 +271,29 @@ export class SqliteDocumentStore implements DocumentStore {
 }
 
 export const documentStore: DocumentStore = new SqliteDocumentStore();
+
+/** Rebuild readable text from overlapping search chunks without repeated tails. */
+export function mergeChunkText(parts: string[]): string {
+  if (!parts.length) return "";
+  let content = parts[0] ?? "";
+
+  for (const part of parts.slice(1)) {
+    const max = Math.min(300, content.length, part.length);
+    let overlap = max;
+    while (overlap > 0 && content.slice(-overlap) !== part.slice(0, overlap)) overlap -= 1;
+    if (!overlap) {
+      content += `\n\n${part}`;
+      continue;
+    }
+
+    let remainder = part.slice(overlap);
+    // The chunker separates hard-split pieces with a paragraph break. When a
+    // split landed inside a word, remove that synthetic break for the reader.
+    if (/\p{L}|\p{N}/u.test(content.slice(-1)) && /^\n\n(?:\p{L}|\p{N})/u.test(remainder)) {
+      remainder = remainder.slice(2);
+    }
+    content += remainder;
+  }
+
+  return content.trim();
+}

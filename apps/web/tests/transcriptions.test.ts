@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test'
-import { hasActiveJobs, recentlyFinished } from '@/features/resources/lib/transcriptions'
+import {
+  groupTranscriptionsByDate,
+  hasActiveJobs,
+  recentlyFinished,
+  transcriptionProgress,
+} from '@/features/resources/lib/transcriptions'
 import type { TranscriptionRow } from '@/shared/lib/types'
 
 const job = (partial: Partial<TranscriptionRow>): TranscriptionRow => ({
@@ -45,11 +50,41 @@ describe('recentlyFinished', () => {
 })
 
 describe('hasActiveJobs', () => {
-  it('is true while anything is queued or transcribing, false when settled', () => {
+  it('is true while anything is queued, transcribing, or indexing, false when settled', () => {
     expect(hasActiveJobs([job({ id: 'a', status: 'queued' })])).toBe(true)
     expect(hasActiveJobs([job({ id: 'a', status: 'transcribing' })])).toBe(true)
+    expect(hasActiveJobs([job({ id: 'a', status: 'indexing' })])).toBe(true)
     expect(hasActiveJobs([job({ id: 'a', status: 'done' })])).toBe(false)
     expect(hasActiveJobs([job({ id: 'a', status: 'failed' })])).toBe(false)
     expect(hasActiveJobs([])).toBe(false)
+  })
+})
+
+describe('groupTranscriptionsByDate', () => {
+  it('builds newest-first calendar folders with friendly recent labels', () => {
+    const now = new Date(2026, 8, 10, 10)
+    const rows = [
+      job({ id: 'today', createdAt: new Date(2026, 8, 10, 8).getTime() }),
+      job({ id: 'yesterday', createdAt: new Date(2026, 8, 9, 20).getTime() }),
+      job({ id: 'older', createdAt: new Date(2026, 7, 30, 12).getTime() }),
+    ]
+
+    const groups = groupTranscriptionsByDate(rows, {
+      now,
+      locale: 'en',
+      today: 'Today',
+      yesterday: 'Yesterday',
+    })
+
+    expect(groups.map((group) => group.label)).toEqual(['Today', 'Yesterday', 'Aug 30'])
+    expect(groups.map((group) => group.rows[0]!.id)).toEqual(['today', 'yesterday', 'older'])
+  })
+})
+
+describe('transcriptionProgress', () => {
+  it('maps persisted stages to a monotonic progress track', () => {
+    expect(['queued', 'transcribing', 'indexing', 'done'].map((status) =>
+      transcriptionProgress(status as TranscriptionRow['status']),
+    )).toEqual([24, 62, 88, 100])
   })
 })

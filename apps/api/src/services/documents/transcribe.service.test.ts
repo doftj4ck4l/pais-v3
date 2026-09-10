@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { applySchema } from "../../db/client";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { searchDocuments } from "./search.service";
@@ -8,7 +11,9 @@ import { formatTranscript, stamp, transcribeAudio, transcribeToCorpus } from "./
 
 const AUDIO = new Uint8Array([0, 1, 2, 3]);
 const INPUT = { bytes: AUDIO, contentType: "audio/mpeg", filename: "call.mp3" };
-const CREDS = { apiKey: "k", baseUrl: "http://gw/v1" };
+// Explicit because a developer or deployment may override TRANSCRIBE_MODEL;
+// these assertions exercise the request shape, not the machine's .env.
+const CREDS = { apiKey: "k", baseUrl: "http://gw/v1", model: "whisper-1" };
 
 const reply = (json: any) => new Response(JSON.stringify(json), { status: 200 });
 
@@ -76,6 +81,74 @@ describe("transcribeAudio", () => {
     expect(form.get("response_format")).toBe("verbose_json");
     const file = form.get("file") as File;
     expect(file.name).toBe("call.mp3");
+  });
+
+  it("streams a disk-backed recording into the Whisper multipart request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pixelspace-whisper-test-"));
+    const filePath = join(root, "upload");
+    await writeFile(filePath, AUDIO);
+    const captured: { file?: File } = {};
+    try {
+      await transcribeAudio(
+        { filePath, byteLength: AUDIO.byteLength, contentType: "video/mp4", filename: "500.mp4" },
+        {
+          ...CREDS,
+          fetchImpl: (async (_url: unknown, init: RequestInit) => {
+            captured.file = (init.body as FormData).get("file") as File;
+            return reply({ text: "ok", segments: [{ start: 0, text: "ok" }] });
+          }) as any,
+        },
+      );
+      expect(captured.file?.name).toBe("500.mp4");
+      expect(captured.file?.type).toBe("video/mp4");
+      expect(captured.file?.size).toBe(AUDIO.byteLength);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("transcribes oversized media in model-safe segments and offsets timestamps", async () => {
+    const calls: string[] = [];
+    let cleaned = false;
+    const result = await transcribeAudio(
+      {
+        filePath: "/tmp/large-video",
+        byteLength: 9 * 1024 * 1024,
+        contentType: "video/mp4",
+        filename: "500.mp4",
+      },
+      {
+        ...CREDS,
+        prepareAudio: async () => ({
+          segments: [
+            { input: { bytes: AUDIO, contentType: "audio/mpeg", filename: "part-1.mp3" }, offsetSeconds: 0 },
+            { input: { bytes: AUDIO, contentType: "audio/mpeg", filename: "part-2.mp3" }, offsetSeconds: 600 },
+          ],
+          cleanup: async () => { cleaned = true; },
+        }),
+        fetchImpl: (async (_url: unknown, init: RequestInit) => {
+          const name = ((init.body as FormData).get("file") as File).name;
+          calls.push(name);
+          return reply({
+            language: "en",
+            text: name,
+            segments: [{ start: name === "part-1.mp3" ? 1 : 2, text: name }],
+          });
+        }) as any,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      model: "whisper-1",
+      language: "en",
+      segments: [
+        { start: 1, text: "part-1.mp3" },
+        { start: 602, text: "part-2.mp3" },
+      ],
+    });
+    expect(calls).toEqual(["part-1.mp3", "part-2.mp3"]);
+    expect(cleaned).toBe(true);
   });
 
   it("surfaces the whisper server's own refusal, which names the fix", async () => {
@@ -154,6 +227,7 @@ function freshStore() {
 describe("transcribeToCorpus", () => {
   it("indexes the transcript and makes it searchable with a citation", async () => {
     const store = freshStore();
+    let indexing = false;
     const res = await transcribeToCorpus(
       "ws1",
       "call.mp3",
@@ -161,6 +235,7 @@ describe("transcribeToCorpus", () => {
       {
         ...CREDS,
         store,
+        onIndexing: () => { indexing = true; },
         fetchImpl: (async () =>
           reply({
             text: "quarterly budget",
@@ -172,6 +247,7 @@ describe("transcribeToCorpus", () => {
       },
     );
     expect(res.ok).toBe(true);
+    expect(indexing).toBe(true);
     if (!res.ok) return;
     expect(res.chunks).toBeGreaterThan(0);
     expect(res.documentId).toBeTruthy();

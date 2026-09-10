@@ -492,6 +492,38 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 
 ## Reading a transcript
 
+Audio transcription has a separate job lifecycle: `queued` → `transcribing` →
+`indexing` → `done` (or `failed`). Whisper produces the text during
+`transcribing`; `indexing` means the text is being split and written to the
+searchable document corpus. Chunked uploads remain in temporary disk files
+until the worker finishes; the compatibility multipart endpoint still holds its
+audio bytes in memory. An API restart marks any queued, transcribing, or
+indexing job failed rather than pretending work can resume.
+
+The web client does not send a recording as one multipart request. It creates a
+session at `/api/documents/transcription-uploads`, sends ordered 768 KiB raw
+parts, then completes the session to enqueue the assembled audio. The part size
+stays below the common 1 MiB reverse-proxy default that caused large recordings
+to fail with 413 before the API saw them. Sessions are workspace-scoped, reserve
+their declared size up front, expire after one hour, and cap a recording at 2
+GiB. Parts are appended to a process-scoped temporary file while only the most
+recent 768 KiB part is retained in memory for idempotent retries. The worker
+uses FFmpeg to strip video and split media over 8 MiB into ten-minute mono MP3
+segments (about 4.8 MiB each), sends them to Whisper sequentially, offsets their
+timestamps, and removes both source and derived temporary files on success or
+failure. This second segmentation boundary is distinct from browser chunks:
+those raw byte ranges are not independently decodable media. A restart still
+requires the browser to begin the upload again. Keep the old `/transcribe`
+multipart route for compatibility, but the console must use the chunked path.
+
+`GET /api/documents/transcriptions` intentionally returns job metadata only.
+The Finder-style browser fetches the selected result lazily from
+`GET /api/documents/transcriptions/:id`. That detail lookup is scoped by
+workspace and reconstructs readable text from the overlapping search chunks;
+keep the overlap removal in `mergeChunkText` or chunk boundaries will appear
+twice in exported transcripts. There is no progress event stream yet, so the
+browser polls once per second while any job is active and backs off when idle.
+
 Reasoning rows remain stored but are not drawn in `transcript.tsx`. Tool rows
 are also stored regardless of display state. The user preference
 `showToolTrace` is off by default; when enabled, consecutive tool calls in one

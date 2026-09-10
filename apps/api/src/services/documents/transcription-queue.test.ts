@@ -38,18 +38,29 @@ describe("transcriptionQueue", () => {
     const seen: string[] = [];
     let inflight = 0;
     let maxInflight = 0;
+    const stages: string[] = [];
 
     const queue = createTranscriber({
       store,
-      run: async (job) => {
+      run: async (job, reportStage) => {
         inflight += 1;
         maxInflight = Math.max(maxInflight, inflight);
         order.push(job.title);
         seen.push(job.title);
         await new Promise((r) => setTimeout(r, 5));
+        await reportStage("indexing");
+        stages.push((await store.find("ws1", job.id))!.status);
         inflight -= 1;
         await docs.save(
-          { id: `doc_${job.id}`, workspaceId: "ws1", title: job.title, bytes: job.bytes.byteLength, pages: 1, status: "indexed", error: null },
+          {
+            id: `doc_${job.id}`,
+            workspaceId: "ws1",
+            title: job.title,
+            bytes: "bytes" in job ? job.bytes.byteLength : job.byteLength,
+            pages: 1,
+            status: "indexed",
+            error: null,
+          },
           [],
         );
         return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en", text: "[00:00] hello" };
@@ -64,6 +75,7 @@ describe("transcriptionQueue", () => {
     expect(order).toEqual(["a.mp3", "b.mp3", "c.mp3"]);
     expect(seen).toEqual(order);
     expect(maxInflight).toBe(1);
+    expect(stages).toEqual(["indexing", "indexing", "indexing"]);
 
     const rows = await store.list("ws1");
     expect(rows.every((r) => r.status === "done")).toBe(true);
@@ -121,6 +133,57 @@ describe("transcriptionQueue", () => {
     expect(rows.find((r) => r.title === "after.mp3")!.status).toBe("done");
   });
 
+  it("cleans up disk-backed recordings after success or failure", async () => {
+    const { store, docs } = fresh();
+    const cleaned: string[] = [];
+    const queue = createTranscriber({
+      store,
+      run: async (job) => {
+        if (job.title === "failed.mp4") return { ok: false as const, error: "no speech" };
+        await docs.save(
+          {
+            id: "doc_ok",
+            workspaceId: "ws1",
+            title: job.title,
+            bytes: "bytes" in job ? job.bytes.byteLength : job.byteLength,
+            pages: 1,
+            status: "indexed",
+            error: null,
+          },
+          [],
+        );
+        return {
+          ok: true as const,
+          documentId: "doc_ok",
+          chunks: 1,
+          model: "whisper-1",
+          language: "en",
+          text: "[00:00] hello",
+        };
+      },
+    });
+
+    await queue.enqueue({
+      workspaceId: "ws1",
+      title: "done.mp4",
+      filePath: "/tmp/done",
+      byteLength: 728_400_000,
+      contentType: "video/mp4",
+      cleanup: async () => { cleaned.push("done.mp4"); },
+    });
+    await queue.enqueue({
+      workspaceId: "ws1",
+      title: "failed.mp4",
+      filePath: "/tmp/failed",
+      byteLength: 12,
+      contentType: "video/mp4",
+      cleanup: async () => { cleaned.push("failed.mp4"); },
+    });
+
+    await waitUntilDone(store);
+    expect(cleaned).toEqual(["done.mp4", "failed.mp4"]);
+  });
+
   it("refuses to enqueue once the line is full", async () => {
     const { store } = fresh();
     const queue = createTranscriber({
@@ -153,7 +216,7 @@ describe("transcriptionQueue", () => {
 const waitUntilDone = async (store: SqliteTranscriptionStore, tries = 200) => {
   for (let i = 0; i < tries; i++) {
     const rows = await store.list("ws1");
-    if (rows.length && rows.every((r) => r.status !== "queued" && r.status !== "transcribing")) return;
+    if (rows.length && rows.every((r) => !["queued", "transcribing", "indexing"].includes(r.status))) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("queue never drained");

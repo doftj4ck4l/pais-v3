@@ -4,7 +4,12 @@ import {
   type TranscriptionStore,
 } from "../../repositories/transcription.repository";
 import type { TranscriptionRow } from "../../models/schema";
-import { transcribeToCorpus, type CorpusOutcome } from "./transcribe.service";
+import {
+  transcribeToCorpus,
+  transcriptionAudioBytes,
+  type CorpusOutcome,
+  type TranscriptionAudioSource,
+} from "./transcribe.service";
 
 /**
  * The audio transcription queue.
@@ -16,8 +21,9 @@ import { transcribeToCorpus, type CorpusOutcome } from "./transcribe.service";
  * answers 202 the moment the job is recorded, and one in-process worker runs
  * the FIFO queue at a time. The `transcriptions` table says what the page
  * keeps asking, and the story ends the same way runs do — a restart marks
- * everything in flight `failed`, because the audio bytes only ever lived in
- * the process holding them.
+ * everything in flight `failed`. Chunked browser uploads remain in temporary
+ * files until the worker finishes; the legacy one-request endpoint still uses
+ * an in-memory byte array.
  *
  * The worker is deliberately not a separate process: the API is a single Bun
  * runtime, and a whisper call is I/O wait, not CPU. Concurrency is one so a
@@ -31,19 +37,22 @@ export class TranscriptionQueueFullError extends Error {
   }
 }
 
-export type TranscriptionJob = {
+export type TranscriptionJob = TranscriptionAudioSource & {
   id: string;
   workspaceId: string;
   title: string;
-  bytes: Uint8Array;
   contentType: string;
   filename: string;
+  cleanup?: () => Promise<void>;
 };
 
 /** How one job is transcribed once its turn comes. Injected for tests. */
-export type RunTranscription = (job: TranscriptionJob) => Promise<CorpusOutcome>;
+export type RunTranscription = (
+  job: TranscriptionJob,
+  reportStage: (stage: "indexing") => Promise<void>,
+) => Promise<CorpusOutcome>;
 
-/** Upper bound on audio bytes waiting in line, so enqueue cannot pin RAM. */
+/** Upper bound on audio bytes waiting in line, whether memory- or disk-backed. */
 const MAX_PENDING_BYTES = 2 * 1024 * 1024 * 1024;
 
 const newTranscriptionId = () =>
@@ -53,7 +62,12 @@ export function createTranscriber(
   deps: { store?: TranscriptionStore; run?: RunTranscription } = {},
 ) {
   const store = deps.store ?? transcriptionStore;
-  const run = deps.run ?? ((job) => transcribeToCorpus(job.workspaceId, job.title, job, {}));
+  const run = deps.run ?? ((job, reportStage) => transcribeToCorpus(
+    job.workspaceId,
+    job.title,
+    job,
+    { onIndexing: () => reportStage("indexing") },
+  ));
 
   const pending: TranscriptionJob[] = [];
   let pendingBytes = 0;
@@ -65,7 +79,7 @@ export function createTranscriber(
     try {
       while (pending.length) {
         const job = pending.shift()!;
-        pendingBytes -= job.bytes.byteLength;
+        pendingBytes -= transcriptionAudioBytes(job);
         await runJob(job);
       }
     } finally {
@@ -76,7 +90,9 @@ export function createTranscriber(
   const runJob = async (job: TranscriptionJob) => {
     await store.markTranscribing(job.id);
     try {
-      const outcome = await run(job);
+      const outcome = await run(job, async (stage) => {
+        if (stage === "indexing") await store.markIndexing(job.id);
+      });
       if (outcome.ok) {
         await store.markDone(job.id, outcome.documentId, outcome.model, outcome.text);
         logger.info("transcribe.job.done", {
@@ -97,6 +113,17 @@ export function createTranscriber(
     } catch (e: any) {
       await store.markFailed(job.id, String(e?.message ?? e).slice(0, 300));
       logger.error("transcribe.job.error", { transcriptionId: job.id, message: String(e?.message ?? e) });
+    } finally {
+      if (job.cleanup) {
+        try {
+          await job.cleanup();
+        } catch (e: any) {
+          logger.warn("transcribe.job.cleanup_failed", {
+            transcriptionId: job.id,
+            message: String(e?.message ?? e),
+          });
+        }
+      }
     }
   };
 
@@ -105,23 +132,26 @@ export function createTranscriber(
 
     /** Record the job and start working it. Resolves once it is safe in line. */
     async enqueue(
-      input: { workspaceId: string; title: string; bytes: Uint8Array; contentType: string },
+      input: {
+        workspaceId: string;
+        title: string;
+        contentType: string;
+        cleanup?: () => Promise<void>;
+      } & TranscriptionAudioSource,
     ): Promise<TranscriptionRow> {
-      if (pendingBytes + input.bytes.byteLength > MAX_PENDING_BYTES) {
+      const byteLength = transcriptionAudioBytes(input);
+      if (pendingBytes + byteLength > MAX_PENDING_BYTES) {
         throw new TranscriptionQueueFullError();
       }
       const row = await store.create(
-        { id: newTranscriptionId(), workspaceId: input.workspaceId, title: input.title, bytes: input.bytes.byteLength },
+        { id: newTranscriptionId(), workspaceId: input.workspaceId, title: input.title, bytes: byteLength },
       );
       pending.push({
+        ...input,
         id: row.id,
-        workspaceId: input.workspaceId,
-        title: input.title,
-        bytes: input.bytes,
-        contentType: input.contentType,
         filename: input.title,
       });
-      pendingBytes += input.bytes.byteLength;
+      pendingBytes += byteLength;
       void drain();
       return row;
     },

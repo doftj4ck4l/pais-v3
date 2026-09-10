@@ -31,6 +31,8 @@ describe("SqliteTranscriptionStore", () => {
     );
 
     await store.markTranscribing(row.id);
+    await store.markIndexing(row.id);
+    expect((await store.find("ws1", row.id))!.status).toBe("indexing");
     await store.markDone(row.id, "doc_9", "whisper-1", "[00:00] quarterly budget");
 
     const [listed] = await store.list("ws1");
@@ -59,6 +61,7 @@ describe("SqliteTranscriptionStore", () => {
     const asOne = await store.list("ws1");
     expect(asOne).toHaveLength(1);
     expect(asOne[0]!.id).toBe("trx_3");
+    expect(await store.find("ws2", "trx_3")).toBeNull();
   });
 
   it("removes only its own job, by id", async () => {
@@ -76,6 +79,7 @@ describe("SqliteTranscriptionStore", () => {
     const queued = await store.create({ id: "trx_7", workspaceId: "ws1", title: "a.mp3", bytes: 1 });
     await store.create({ id: "trx_8", workspaceId: "ws1", title: "b.mp3", bytes: 1 });
     await store.markTranscribing(queued.id);
+    await store.markIndexing("trx_8");
 
     expect(await store.stopInterrupted()).toBe(2);
 

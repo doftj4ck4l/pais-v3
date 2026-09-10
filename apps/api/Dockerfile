@@ -63,9 +63,10 @@ ARG NODE_VERSION
 ARG UV_VERSION
 
 # The Bun image ships no CA bundle, so without this every outbound HTTPS call —
-# model providers, HTTP MCP servers — fails certificate verification.
+# model providers, HTTP MCP servers — fails certificate verification. FFmpeg
+# strips video and segments large recordings below model-gateway upload limits.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker

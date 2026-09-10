@@ -138,7 +138,7 @@ export type IngestResult = {
   error?: string
 }
 
-export type TranscriptionStatus = 'queued' | 'transcribing' | 'done' | 'failed'
+export type TranscriptionStatus = 'queued' | 'transcribing' | 'indexing' | 'done' | 'failed'
 
 /** An audio upload the workspace is (or was) transcribing. */
 export type TranscriptionRow = {
@@ -154,6 +154,11 @@ export type TranscriptionRow = {
   transcriptText?: string | null
   createdAt: number
   updatedAt: number
+}
+
+export type TranscriptionDetail = {
+  transcription: TranscriptionRow
+  content: string | null
 }
 
 export type WorkspaceFile = {

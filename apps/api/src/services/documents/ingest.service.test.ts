@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { applySchema } from "../../db/client";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
-import { ingestPdf } from "./ingest.service";
+import { ingestPdf, ingestText } from "./ingest.service";
 import { searchDocuments } from "./search.service";
 import { makeImageOnlyPdf, makePdf } from "../testing/make-pdf";
 
@@ -137,5 +137,17 @@ describe("ingestPdf", () => {
     if (!after.ok) return;
     expect(after.hits).toEqual([]);
     expect(await store.list("ws1")).toEqual([]);
+  });
+
+  it("reads an indexed document as continuous text without repeated chunk overlap", async () => {
+    const store = freshStore();
+    const text = `${"opening words ".repeat(90)}the closing sentence`;
+    const result = await ingestText("ws1", "meeting.txt", text, store);
+
+    const read = await store.read("ws1", result.documentId);
+    expect(read?.title).toBe("meeting.txt");
+    expect(read?.chunkCount).toBeGreaterThan(1);
+    expect(read?.content).toBe(text.trim());
+    expect(await store.read("ws2", result.documentId)).toBeNull();
   });
 });
