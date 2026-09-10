@@ -50,7 +50,7 @@ export function TranscribeControl() {
       try {
         await enqueueTranscription(scope, file)
         setStatus({ kind: 'queued', title: file.name })
-        // The page is where the full queued → transcribing → done state lives.
+        // The page is where the full queued → transcribing → indexing → done state lives.
         void navigate({ to: '/transcriptions' })
       } catch (e) {
         setStatus({ kind: 'failed', title: file.name, error: e instanceof Error ? e.message : String(e) })

@@ -41,7 +41,10 @@ export type TranscriptionJob = {
 };
 
 /** How one job is transcribed once its turn comes. Injected for tests. */
-export type RunTranscription = (job: TranscriptionJob) => Promise<CorpusOutcome>;
+export type RunTranscription = (
+  job: TranscriptionJob,
+  reportStage: (stage: "indexing") => Promise<void>,
+) => Promise<CorpusOutcome>;
 
 /** Upper bound on audio bytes waiting in line, so enqueue cannot pin RAM. */
 const MAX_PENDING_BYTES = 2 * 1024 * 1024 * 1024;
@@ -53,7 +56,12 @@ export function createTranscriber(
   deps: { store?: TranscriptionStore; run?: RunTranscription } = {},
 ) {
   const store = deps.store ?? transcriptionStore;
-  const run = deps.run ?? ((job) => transcribeToCorpus(job.workspaceId, job.title, job, {}));
+  const run = deps.run ?? ((job, reportStage) => transcribeToCorpus(
+    job.workspaceId,
+    job.title,
+    job,
+    { onIndexing: () => reportStage("indexing") },
+  ));
 
   const pending: TranscriptionJob[] = [];
   let pendingBytes = 0;
@@ -76,7 +84,9 @@ export function createTranscriber(
   const runJob = async (job: TranscriptionJob) => {
     await store.markTranscribing(job.id);
     try {
-      const outcome = await run(job);
+      const outcome = await run(job, async (stage) => {
+        if (stage === "indexing") await store.markIndexing(job.id);
+      });
       if (outcome.ok) {
         await store.markDone(job.id, outcome.documentId, outcome.model);
         logger.info("transcribe.job.done", {

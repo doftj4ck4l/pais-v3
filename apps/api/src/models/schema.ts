@@ -527,11 +527,11 @@ export type ChunkRow = {
 };
 
 /**
- * Where a transcription job stands. `queued` and `transcribing` are in flight
+ * Where a transcription job stands. `queued`, `transcribing`, and `indexing` are in flight
  * and can be resumed by nothing — a restart marks them `failed` (the audio
  * bytes only ever lived in the process that was holding them).
  */
-export type TranscriptionStatus = "queued" | "transcribing" | "done" | "failed";
+export type TranscriptionStatus = "queued" | "transcribing" | "indexing" | "done" | "failed";
 
 /**
  * One audio upload that is being (or was) transcribed.

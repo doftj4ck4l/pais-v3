@@ -492,6 +492,21 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 
 ## Reading a transcript
 
+Audio transcription has a separate job lifecycle: `queued` → `transcribing` →
+`indexing` → `done` (or `failed`). Whisper produces the text during
+`transcribing`; `indexing` means the text is being split and written to the
+searchable document corpus. The queue holds uploaded audio bytes in memory, so
+an API restart marks any queued, transcribing, or indexing job failed rather
+than pretending work can resume.
+
+`GET /api/documents/transcriptions` intentionally returns job metadata only.
+The Finder-style browser fetches the selected result lazily from
+`GET /api/documents/transcriptions/:id`. That detail lookup is scoped by
+workspace and reconstructs readable text from the overlapping search chunks;
+keep the overlap removal in `mergeChunkText` or chunk boundaries will appear
+twice in exported transcripts. There is no progress event stream yet, so the
+browser polls once per second while any job is active and backs off when idle.
+
 Reasoning rows remain stored but are not drawn in `transcript.tsx`. Tool rows
 are also stored regardless of display state. The user preference
 `showToolTrace` is off by default; when enabled, consecutive tool calls in one

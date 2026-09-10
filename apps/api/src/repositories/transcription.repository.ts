@@ -22,9 +22,11 @@ export type NewTranscription = {
 export interface TranscriptionStore {
   create(input: NewTranscription, at?: number): Promise<TranscriptionRow>;
   markTranscribing(id: string, at?: number): Promise<void>;
+  markIndexing(id: string, at?: number): Promise<void>;
   markDone(id: string, documentId: string, model: string, at?: number): Promise<void>;
   markFailed(id: string, error: string, at?: number): Promise<void>;
   list(workspaceId: string): Promise<TranscriptionRow[]>;
+  find(workspaceId: string, id: string): Promise<TranscriptionRow | null>;
   remove(workspaceId: string, id: string): Promise<boolean>;
   /** Close rows orphaned by a previous API process before accepting traffic. */
   stopInterrupted(at?: number): Promise<number>;
@@ -62,6 +64,10 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
     await this.set(id, { status: "transcribing" }, at);
   }
 
+  async markIndexing(id: string, at?: number): Promise<void> {
+    await this.set(id, { status: "indexing" }, at);
+  }
+
   async markDone(id: string, documentId: string, model: string, at?: number): Promise<void> {
     await this.set(id, { status: "done", documentId, model }, at);
   }
@@ -79,6 +85,15 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
     return rows as TranscriptionRow[];
   }
 
+  async find(workspaceId: string, id: string): Promise<TranscriptionRow | null> {
+    const row = await this.dbImpl
+      .select()
+      .from(transcriptions)
+      .where(and(eq(transcriptions.workspaceId, workspaceId), eq(transcriptions.id, id)))
+      .get();
+    return (row as TranscriptionRow | undefined) ?? null;
+  }
+
   async remove(workspaceId: string, id: string): Promise<boolean> {
     const changed = this.dbImpl
       .delete(transcriptions)
@@ -92,14 +107,14 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
     const found = await this.dbImpl
       .select({ count: sql<number>`count(*)` })
       .from(transcriptions)
-      .where(sql`status IN ('queued', 'transcribing')`);
+      .where(sql`status IN ('queued', 'transcribing', 'indexing')`);
     const count = Number(found[0]?.count ?? 0);
     if (!count) return 0;
 
     await this.dbImpl
       .update(transcriptions)
       .set({ status: "failed", error: "API restarted before this transcription completed.", updatedAt: at })
-      .where(sql`status IN ('queued', 'transcribing')`);
+      .where(sql`status IN ('queued', 'transcribing', 'indexing')`);
     return count;
   }
 }

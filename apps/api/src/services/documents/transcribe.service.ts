@@ -38,6 +38,8 @@ type TranscribeDeps = {
   model?: string;
   language?: string;
   store?: DocumentStore;
+  /** Called after Whisper returns and before the transcript enters the index. */
+  onIndexing?: () => void | Promise<void>;
 };
 
 const audioFile = (bytes: Uint8Array, filename: string, contentType: string) => {
@@ -187,6 +189,7 @@ export async function transcribeToCorpus(
 
   // `ingestText` handles an empty transcript too, but an empty audio upload is
   // a failure worth surfacing as such, not an empty document in the corpus.
+  await deps.onIndexing?.();
   const result = await ingestText(workspaceId, title, formatTranscript(t.segments), deps.store);
   if (result.status === "indexed") {
     return {

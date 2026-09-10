@@ -38,15 +38,18 @@ describe("transcriptionQueue", () => {
     const seen: string[] = [];
     let inflight = 0;
     let maxInflight = 0;
+    const stages: string[] = [];
 
     const queue = createTranscriber({
       store,
-      run: async (job) => {
+      run: async (job, reportStage) => {
         inflight += 1;
         maxInflight = Math.max(maxInflight, inflight);
         order.push(job.title);
         seen.push(job.title);
         await new Promise((r) => setTimeout(r, 5));
+        await reportStage("indexing");
+        stages.push((await store.find("ws1", job.id))!.status);
         inflight -= 1;
         await docs.save(
           { id: `doc_${job.id}`, workspaceId: "ws1", title: job.title, bytes: job.bytes.byteLength, pages: 1, status: "indexed", error: null },
@@ -64,6 +67,7 @@ describe("transcriptionQueue", () => {
     expect(order).toEqual(["a.mp3", "b.mp3", "c.mp3"]);
     expect(seen).toEqual(order);
     expect(maxInflight).toBe(1);
+    expect(stages).toEqual(["indexing", "indexing", "indexing"]);
 
     const rows = await store.list("ws1");
     expect(rows.every((r) => r.status === "done")).toBe(true);
@@ -153,7 +157,7 @@ describe("transcriptionQueue", () => {
 const waitUntilDone = async (store: SqliteTranscriptionStore, tries = 200) => {
   for (let i = 0; i < tries; i++) {
     const rows = await store.list("ws1");
-    if (rows.length && rows.every((r) => r.status !== "queued" && r.status !== "transcribing")) return;
+    if (rows.length && rows.every((r) => !["queued", "transcribing", "indexing"].includes(r.status))) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("queue never drained");

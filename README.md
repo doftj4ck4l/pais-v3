@@ -173,6 +173,10 @@ Flow in `services/agent.service.ts`:
 | GET    | `/api/conversations`     | List a workspace's stored conversations    |
 | GET    | `/api/conversations/:id` | One conversation + its messages and traces |
 | DELETE | `/api/conversations/:id` | Delete a conversation (cascades)           |
+| POST   | `/api/documents/transcribe` | Queue an audio file for transcription    |
+| GET    | `/api/documents/transcriptions` | List transcription jobs                |
+| GET    | `/api/documents/transcriptions/:id` | Read one job and its transcript      |
+| DELETE | `/api/documents/transcriptions/:id` | Delete a job and indexed transcript   |
 | GET    | `/api/workspaces`        | List the user's workspaces                 |
 | POST   | `/api/workspaces`        | Create one                                 |
 | PATCH  | `/api/workspaces/:id`    | Rename one                                 |

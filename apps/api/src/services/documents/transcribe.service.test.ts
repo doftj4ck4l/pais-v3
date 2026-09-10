@@ -154,6 +154,7 @@ function freshStore() {
 describe("transcribeToCorpus", () => {
   it("indexes the transcript and makes it searchable with a citation", async () => {
     const store = freshStore();
+    let indexing = false;
     const res = await transcribeToCorpus(
       "ws1",
       "call.mp3",
@@ -161,6 +162,7 @@ describe("transcribeToCorpus", () => {
       {
         ...CREDS,
         store,
+        onIndexing: () => { indexing = true; },
         fetchImpl: (async () =>
           reply({
             text: "quarterly budget",
@@ -172,6 +174,7 @@ describe("transcribeToCorpus", () => {
       },
     );
     expect(res.ok).toBe(true);
+    expect(indexing).toBe(true);
     if (!res.ok) return;
     expect(res.chunks).toBeGreaterThan(0);
     expect(res.documentId).toBeTruthy();

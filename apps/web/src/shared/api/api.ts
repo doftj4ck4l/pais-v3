@@ -10,6 +10,7 @@ import type {
   RunDetail,
   RunSessionDetail,
   SessionImage,
+  TranscriptionDetail,
   TranscriptionRow,
   TranscriptionStatus,
   UploadedImage,
@@ -415,6 +416,13 @@ export async function listTranscriptions(scope: Scope): Promise<TranscriptionRow
     await fetch(`/api/documents/transcriptions?${scoped(scope)}`),
   )
   return transcriptions
+}
+
+/** Read one completed transcript. In-flight and failed jobs return null content. */
+export async function getTranscription(scope: Scope, id: string): Promise<TranscriptionDetail> {
+  return json<TranscriptionDetail>(
+    await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`),
+  )
 }
 
 /** Remove a job and the transcript it produced. */

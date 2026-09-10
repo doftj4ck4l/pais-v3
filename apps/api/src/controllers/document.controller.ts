@@ -141,6 +141,21 @@ export async function listTranscriptions(c: Context) {
   return c.json({ transcriptions });
 }
 
+/** GET /api/documents/transcriptions/:id — one job and its readable transcript. */
+export async function showTranscription(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing transcription id" }, 400);
+
+  const workspaceId = await workspaceIdOf(c);
+  const transcription = await transcriptionStore.find(workspaceId, id);
+  if (!transcription) return c.json({ error: "Transcription not found" }, 404);
+
+  const document = transcription.documentId
+    ? await documentStore.read(workspaceId, transcription.documentId)
+    : null;
+  return c.json({ transcription, content: document?.content ?? null });
+}
+
 /**
  * DELETE /api/documents/transcriptions/:id — drop the job *and* its transcript.
  *
@@ -155,7 +170,7 @@ export async function destroyTranscription(c: Context) {
   if (!id) return c.json({ error: "Missing transcription id" }, 400);
 
   const workspaceId = await workspaceIdOf(c);
-  const job = (await transcriptionStore.list(workspaceId)).find((t) => t.id === id);
+  const job = await transcriptionStore.find(workspaceId, id);
   if (!job) return c.json({ error: "Transcription not found" }, 404);
 
   await transcriptionStore.remove(workspaceId, id);
