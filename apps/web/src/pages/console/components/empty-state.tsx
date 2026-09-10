@@ -12,7 +12,8 @@ export function Greeting() {
   const me = useMe()
   const [pick] = useState(() => Math.floor(Math.random() * 10))
 
-  const name = me?.name?.trim() || me?.providerName || me?.email || 'there'
+  const rawName = me?.name?.trim() || me?.providerName || me?.email || 'there'
+  const name = rawName.replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 pb-6 text-center sm:px-6">
       <span className="flex size-10 items-center justify-center rounded-xl border bg-card shadow-sm">
