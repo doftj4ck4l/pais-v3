@@ -41,9 +41,7 @@ export function AgentList({
       <div className="flex flex-col gap-3">
         {days.map((day) => (
           <div key={day.key}>
-            {/* Sticky: the point of the label is knowing which day you are
-                looking at, which is exactly what scrolling takes away. */}
-            <h3 className="sticky top-0 z-10 bg-sidebar px-2 pb-1.5 text-xs font-medium text-muted-foreground">
+            <h3 className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">
               {day.label}
             </h3>
             <ul className="flex flex-col gap-0.5">

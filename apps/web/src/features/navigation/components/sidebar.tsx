@@ -49,8 +49,8 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
-      <div className="flex h-10 shrink-0 items-center gap-2 px-2">
+    <div className="flex h-full min-w-0 flex-col overflow-y-auto bg-sidebar px-2 py-2 text-sidebar-foreground">
+      <div className="flex h-10 items-center gap-2 px-2">
         <Brand className="h-[1.125rem] min-w-0" />
         {onCollapse ? (
           <button
@@ -93,19 +93,17 @@ export function Sidebar({
         ) : null}
       </nav>
 
-      <section className="mt-4 flex min-h-0 flex-1 flex-col" aria-label={t('chats')}>
+      <section className="mt-4" aria-label={t('chats')}>
         <h2 className="px-2 pb-2 text-xs font-medium text-muted-foreground">{t('chats')}</h2>
-        <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
-          <AgentList
-            agents={board.agents}
-            selectedId={board.selectedId}
-            onSelect={openAgent}
-            onRemove={board.remove}
-          />
-        </div>
+        <AgentList
+          agents={board.agents}
+          selectedId={board.selectedId}
+          onSelect={openAgent}
+          onRemove={board.remove}
+        />
       </section>
 
-      <div className="mt-2 grid shrink-0 gap-0.5">
+      <div className="mt-2 grid gap-0.5">
         <SidebarButton label={t('settings')} icon={SettingsIcon} onClick={onOpenSettings} />
         <UserMenu expanded />
       </div>
