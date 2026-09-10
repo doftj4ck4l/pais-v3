@@ -1,19 +1,25 @@
+import { useState } from 'react'
 import { ArrowUpRightIcon } from 'lucide-react'
 import { useSuggestions } from '@/features/agents/hooks/use-suggestions'
 import { BrandMark } from '@/shared/components/brand'
 import { usePreferences } from '@/shared/hooks/use-preferences'
+import { useMe } from '@/features/workspace/hooks/use-me'
+import type { TranslationKey } from '@/shared/lib/i18n'
 
-/** The quiet prompt that anchors a new conversation. */
+/** One rotating line, picked fresh on every mount, like a chat product's intro. */
 export function Greeting() {
   const { t } = usePreferences()
+  const me = useMe()
+  const [pick] = useState(() => Math.floor(Math.random() * 10))
 
+  const name = me?.name?.trim() || me?.providerName || me?.email || 'there'
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 pb-6 text-center sm:px-6">
       <span className="flex size-10 items-center justify-center rounded-xl border bg-card shadow-sm">
         <BrandMark className="h-[1.125rem]" />
       </span>
       <h1 className="mt-5 text-2xl font-medium tracking-[-0.03em] sm:text-[1.75rem]">
-        {t('howCanIHelp')}
+        {t(`greeting${pick}` as TranslationKey, { name })}
       </h1>
     </div>
   )
