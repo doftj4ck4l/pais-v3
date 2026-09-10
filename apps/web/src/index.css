@@ -2,8 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Everything you read — Plus Jakarta Sans (variable). */
-@import "@fontsource-variable/plus-jakarta-sans/index.css";
+/* Geist has the compact, neutral rhythm of a conversation product without
+   borrowing a proprietary typeface. */
+@import "@fontsource-variable/geist/index.css";
 /* Everything the machine reports — IBM Plex Mono. */
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
@@ -11,7 +12,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-sans: 'Geist Variable', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-heading: var(--font-sans);
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -60,43 +61,43 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* ── Paper: white ground, black ink. ─────────────────────────────────── */
+/* Chat canvas: soft navigation chrome around a clean reading surface. */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.13 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.13 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.13 0 0);
-    --primary: oklch(0.13 0 0);
-    --primary-foreground: oklch(1 0 0);
-    --secondary: oklch(0.968 0 0);
-    --secondary-foreground: oklch(0.13 0 0);
-    --muted: oklch(0.968 0 0);
-    --muted-foreground: oklch(0.53 0 0);
-    --accent: oklch(0.955 0 0);
-    --accent-foreground: oklch(0.13 0 0);
-    --destructive: oklch(0.42 0 0);
-    --border: oklch(0.905 0 0);
-    --input: oklch(0.905 0 0);
-    --ring: oklch(0.13 0 0);
+    --background: #ffffff;
+    --foreground: #0d0d0d;
+    --card: #ffffff;
+    --card-foreground: #0d0d0d;
+    --popover: #ffffff;
+    --popover-foreground: #0d0d0d;
+    --primary: #0d0d0d;
+    --primary-foreground: #ffffff;
+    --secondary: #f4f4f4;
+    --secondary-foreground: #0d0d0d;
+    --muted: #f4f4f4;
+    --muted-foreground: #6b6b6b;
+    --accent: #ececec;
+    --accent-foreground: #0d0d0d;
+    --destructive: #d00e17;
+    --border: #e5e5e5;
+    --input: #d9d9d9;
+    --ring: #0d0d0d;
     --chart-1: oklch(0.13 0 0);
     --chart-2: oklch(0.35 0 0);
     --chart-3: oklch(0.53 0 0);
     --chart-4: oklch(0.72 0 0);
     --chart-5: oklch(0.88 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.98 0 0);
-    --sidebar-foreground: oklch(0.13 0 0);
-    --sidebar-primary: oklch(0.13 0 0);
-    --sidebar-primary-foreground: oklch(1 0 0);
-    --sidebar-accent: oklch(0.945 0 0);
-    --sidebar-accent-foreground: oklch(0.13 0 0);
-    --sidebar-border: oklch(0.905 0 0);
-    --sidebar-ring: oklch(0.13 0 0);
+    --radius: 0.75rem;
+    --sidebar: #f9f9f9;
+    --sidebar-foreground: #0d0d0d;
+    --sidebar-primary: #0d0d0d;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #ececec;
+    --sidebar-accent-foreground: #0d0d0d;
+    --sidebar-border: #e7e7e7;
+    --sidebar-ring: #0d0d0d;
 
-    --rail: oklch(0.885 0 0);
-    --rail-strong: oklch(0.13 0 0);
+    --rail: #d9d9d9;
+    --rail-strong: #0d0d0d;
     /* The wordmark's own ramp, sampled from logos/pixelspace.png. The only
        place brand colour appears in the console, so it stays a token rather
        than a hex buried in one component. */
@@ -104,42 +105,42 @@
     --brand-to: oklch(0.55 0.08 216);
 }
 
-/* ── Console: true black ground, white ink. ──────────────────────────── */
+/* ChatGPT-like dark surfaces are warm charcoal, not pure black. */
 .dark {
-    --background: oklch(0 0 0);
-    --foreground: oklch(0.97 0 0);
-    --card: oklch(0.16 0 0);
-    --card-foreground: oklch(0.97 0 0);
-    --popover: oklch(0.16 0 0);
-    --popover-foreground: oklch(0.97 0 0);
-    --primary: oklch(1 0 0);
-    --primary-foreground: oklch(0 0 0);
-    --secondary: oklch(0.2 0 0);
-    --secondary-foreground: oklch(0.97 0 0);
-    --muted: oklch(0.18 0 0);
-    --muted-foreground: oklch(0.66 0 0);
-    --accent: oklch(0.24 0 0);
-    --accent-foreground: oklch(0.99 0 0);
-    --destructive: oklch(0.75 0 0);
-    --border: oklch(0.27 0 0);
-    --input: oklch(0.3 0 0);
-    --ring: oklch(0.75 0 0);
+    --background: #212121;
+    --foreground: #ececec;
+    --card: #2f2f2f;
+    --card-foreground: #ececec;
+    --popover: #2f2f2f;
+    --popover-foreground: #ececec;
+    --primary: #ececec;
+    --primary-foreground: #0d0d0d;
+    --secondary: #2f2f2f;
+    --secondary-foreground: #ececec;
+    --muted: #2f2f2f;
+    --muted-foreground: #b4b4b4;
+    --accent: #363636;
+    --accent-foreground: #ececec;
+    --destructive: #ff858d;
+    --border: #424242;
+    --input: #525252;
+    --ring: #ececec;
     --chart-1: oklch(0.99 0 0);
     --chart-2: oklch(0.8 0 0);
     --chart-3: oklch(0.62 0 0);
     --chart-4: oklch(0.44 0 0);
     --chart-5: oklch(0.28 0 0);
-    --sidebar: oklch(0.06 0 0);
-    --sidebar-foreground: oklch(0.97 0 0);
-    --sidebar-primary: oklch(1 0 0);
-    --sidebar-primary-foreground: oklch(0 0 0);
-    --sidebar-accent: oklch(0.2 0 0);
-    --sidebar-accent-foreground: oklch(0.99 0 0);
-    --sidebar-border: oklch(0.24 0 0);
-    --sidebar-ring: oklch(0.75 0 0);
+    --sidebar: #171717;
+    --sidebar-foreground: #ececec;
+    --sidebar-primary: #ececec;
+    --sidebar-primary-foreground: #0d0d0d;
+    --sidebar-accent: #2f2f2f;
+    --sidebar-accent-foreground: #ececec;
+    --sidebar-border: #303030;
+    --sidebar-ring: #ececec;
 
-    --rail: oklch(0.29 0 0);
-    --rail-strong: oklch(1 0 0);
+    --rail: #424242;
+    --rail-strong: #ececec;
     /* Lifted on the dark ground: the same ramp at light-theme lightness sits
        too close to the background to read as colour. */
     --brand-from: oklch(0.78 0.11 176);
@@ -159,6 +160,7 @@
         @apply bg-background text-foreground antialiased;
         font-synthesis-weight: none;
         text-rendering: optimizeLegibility;
+        letter-spacing: -0.006em;
     }
 
     html,
@@ -172,7 +174,7 @@
     /* Quiet sentence-case label. Names a thing, then gets out of the way. */
     .label {
         font-size: 0.75rem;
-        font-weight: 600;
+        font-weight: 500;
         line-height: 1.2;
         letter-spacing: 0.005em;
     }
@@ -188,15 +190,15 @@
 
 /* ── Streamed markdown inside an agent turn ──────────────────────────── */
 .prose-agent {
-    font-size: 0.9375rem;
-    line-height: 1.65;
+    font-size: 1rem;
+    line-height: 1.7;
 }
 .prose-agent > :first-child { margin-top: 0; }
 .prose-agent > :last-child { margin-bottom: 0; }
 .prose-agent p { margin: 0 0 0.75em; }
 .prose-agent ul,
 .prose-agent ol { margin: 0 0 0.75em; padding-left: 1.25em; }
-.prose-agent ul { list-style: square; }
+.prose-agent ul { list-style: disc; }
 .prose-agent ol { list-style: decimal; }
 .prose-agent li { margin: 0.2em 0; }
 .prose-agent li::marker { color: var(--muted-foreground); }
@@ -204,8 +206,8 @@
 .prose-agent h2,
 .prose-agent h3,
 .prose-agent h4 {
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     margin: 1.1em 0 0.4em;
     line-height: 1.25;
 }
@@ -221,18 +223,17 @@
     font-family: var(--font-mono);
     font-size: 0.86em;
     background: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.08em 0.32em;
+    border-radius: 0.35rem;
+    padding: 0.12em 0.34em;
 }
 .prose-agent pre {
     font-family: var(--font-mono);
     font-size: 0.8em;
     line-height: 1.6;
     background: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 0.85em 1em;
+    border: 0;
+    border-radius: var(--radius-lg);
+    padding: 1em 1.1em;
     overflow-x: auto;
     margin: 0 0 0.75em;
 }
@@ -284,16 +285,16 @@
  * named directly because an arbitrary value compiles to a literal, not a token.
  */
 .page-scale {
-    --text-xs: 0.8125rem;
-    --text-xs--line-height: calc(1.15 / 0.8125);
-    --text-sm: 0.9375rem;
-    --text-sm--line-height: calc(1.45 / 0.9375);
+    --text-xs: 0.75rem;
+    --text-xs--line-height: calc(1 / 0.75);
+    --text-sm: 0.875rem;
+    --text-sm--line-height: calc(1.35 / 0.875);
     font-size: var(--text-sm);
 }
 
 .page-scale .label,
 .page-scale .readout {
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
 }
 
 .page-scale .text-\[0\.625rem\],
@@ -372,13 +373,13 @@
     }
 }
 
-/* Scrollbars, tuned to the monochrome. */
+/* Quiet scrollbars disappear into the sidebar until they are needed. */
 @supports selector(::-webkit-scrollbar) {
-    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
         background: var(--border);
-        border: 3px solid transparent;
+        border: 2px solid transparent;
         background-clip: content-box;
         border-radius: 999px;
     }

@@ -28,12 +28,9 @@ export function Brand({ className }: { className?: string }) {
 }
 
 /**
- * The mark on its own, for the places the lockup will not fit.
- *
- * The rail is 56px wide, which is the whole reason this exists: the wordmark is
- * 2100x393 and would render there as a teal smear. Sized on height like the
- * lockup, because the mark is 452x393 rather than square and a `size-*` would
- * squash it.
+ * The mark on its own, for compact identity moments such as the empty chat and
+ * sign-in prompt. Sized on height because the mark is 452x393 rather than
+ * square and a `size-*` would squash it.
  */
 export function BrandMark({ className }: { className?: string }) {
   return (

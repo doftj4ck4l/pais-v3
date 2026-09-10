@@ -61,13 +61,13 @@ export function SettingsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t('settings')}</DialogTitle>
           <DialogDescription>{t('settingsDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 px-5 py-4">
+        <div className="flex flex-col gap-4 px-6 py-4">
           <Field label={t('model')}>
             <Select value={modelId} onValueChange={onModelChange}>
               <SelectTrigger className="h-9 w-full">
@@ -101,9 +101,9 @@ export function SettingsModal({
 
         <Separator />
 
-        <div className="px-5 py-4">
+        <div className="px-6 py-4">
           <h2 className="label mb-3 text-muted-foreground">{t('display')}</h2>
-          <div className="divide-y rounded-lg border">
+          <div className="divide-y divide-border/70 rounded-xl bg-muted/60 px-1">
             <PreferenceRow label={t('language')} description={t('languageDescription')}>
               <Select value={language} onValueChange={(value) => setLanguage(value === 'ms' ? 'ms' : 'en')}>
                 <SelectTrigger className="h-8 min-w-40">
@@ -142,7 +142,7 @@ export function SettingsModal({
 
         <Separator />
 
-        <div className="flex items-center gap-3 px-5 py-3.5">
+        <div className="flex items-center gap-3 px-6 py-4">
           <span className="min-w-0">
             <span className="label block text-muted-foreground">{t('agents')}</span>
             <span className="readout text-[0.6875rem] text-muted-foreground">
@@ -192,7 +192,7 @@ function PreferenceRow({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex items-center gap-4 px-3 py-3">
+    <div className="flex items-center gap-4 px-3 py-3.5">
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{label}</span>
         {description ? (

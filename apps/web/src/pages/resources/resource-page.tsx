@@ -30,17 +30,17 @@ export function ResourcePage({
     <AppShell
       topbar={
         <div className="flex min-w-0 items-baseline gap-3">
-          <h1 className="shrink-0 text-sm font-semibold">{title}</h1>
+          <h1 className="shrink-0 text-base font-medium tracking-[-0.015em]">{title}</h1>
           {/* Dropped rather than wrapped on a narrow screen: the title is the
               part you navigated for. */}
           <p className="hidden truncate text-xs text-muted-foreground lg:block">{description}</p>
         </div>
       }
     >
-      <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-7">
         {/* No surface of its own: what a page lists is a grid of cards, and a
             card holding cards is a border around a border. */}
-        <div key={workspace.current ?? 'none'} className="page-scale">
+        <div key={workspace.current ?? 'none'} className="page-scale mx-auto w-full max-w-6xl">
           {children}
         </div>
       </main>

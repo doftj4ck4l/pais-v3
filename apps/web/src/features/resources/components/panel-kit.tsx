@@ -71,13 +71,13 @@ export function ItemCard({
   label?: string
 }) {
   return (
-    <li className="group relative flex flex-col gap-1.5 rounded-lg border bg-card p-3.5 transition-colors hover:border-foreground/25">
+    <li className="group relative flex flex-col gap-1.5 rounded-xl border border-border/80 bg-card p-4 transition-[background-color,border-color,box-shadow] hover:border-foreground/15 hover:bg-muted/30 hover:shadow-sm">
       {href ? (
         <a
           href={href}
           download={download}
           aria-label={label}
-          className="absolute inset-0 rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="absolute inset-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
         />
       ) : onSelect ? (
         // A stretched button rather than a click handler on the <li>: the card
@@ -88,7 +88,7 @@ export function ItemCard({
           type="button"
           onClick={onSelect}
           aria-label={label}
-          className="absolute inset-0 rounded-lg focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="absolute inset-0 rounded-xl focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
         />
       ) : null}
 
@@ -133,7 +133,7 @@ export function PanelEmpty({
     >
       <span
         aria-hidden
-        className="flex size-11 items-center justify-center rounded-xl border bg-muted/40 text-muted-foreground"
+        className="flex size-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"
       >
         <Icon className="size-5" />
       </span>

@@ -57,11 +57,11 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
           disabled={loading}
           aria-label={open ? t('workspaceNamed', { name: open.name }) : t('workspace')}
           className={cn(
-            'transition-colors hover:bg-accent',
-            'outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
+            'transition-colors hover:bg-sidebar-accent',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/30',
             compact
               ? 'mb-1 flex size-9 items-center justify-center rounded-lg'
-              : 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left',
+              : 'flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left',
           )}
         >
           <Monogram name={open?.name ?? '—'} />
@@ -70,7 +70,7 @@ export function WorkspacePicker({ compact = false }: { compact?: boolean } = {})
               <span className="min-w-0 flex-1 truncate text-sm font-medium">
                 {open?.name ?? (loading ? t('loading') : t('noWorkspace'))}
               </span>
-              <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
             </>
           )}
         </DropdownMenuTrigger>
@@ -138,7 +138,7 @@ function Monogram({ name }: { name: string }) {
   return (
     <span
       aria-hidden
-      className="flex size-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-brand-from to-brand-to text-[0.625rem] font-semibold uppercase text-white"
+      className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-from to-brand-to text-[0.625rem] font-semibold uppercase text-white shadow-sm"
     >
       {initials(name)}
     </span>

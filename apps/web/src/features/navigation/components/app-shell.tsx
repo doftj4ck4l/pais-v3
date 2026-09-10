@@ -6,7 +6,6 @@ import { SettingsModal } from '@/pages/console/components/settings-modal'
 import { Sidebar } from '@/features/navigation/components/sidebar'
 import { WorkspaceOnboarding } from '@/features/workspace/components/workspace-onboarding'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
-import { useOnChats } from '@/features/navigation/lib/rail'
 import { useSidebar } from '@/features/navigation/hooks/use-sidebar'
 import { useTheme } from '@/shared/hooks/use-theme'
 import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
@@ -41,8 +40,6 @@ export function AppShell({
   const board = useBoard()
   const { theme, toggle } = useTheme()
   const sidebar = useSidebar()
-  // The second column only exists on Chats, so only Chats reserves its width.
-  const onChats = useOnChats()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { t } = usePreferences()
@@ -56,62 +53,41 @@ export function AppShell({
 
   return (
     <AsideCloseContext.Provider value={() => setSheetOpen(false)}>
-      <div className="relative flex h-full">
-        {/* Always mounted, and animated by width rather than by unmounting:
-            the sidebar holds the run list, and rebuilding it on every collapse
-            would refetch and flash. The content is held at its full width
-            inside, which is what makes it slide rather than reflow.
-
-            Collapsing takes the chat list, never the rail: the rail is how you
-            leave the page you are on, and a console with no visible way out is
-            a console you have to guess at. */}
+      <div className="relative flex h-full bg-background">
+        {/* One labelled column, matching the mental model of a chat product.
+            It stays mounted so live chat history does not flash on collapse. */}
         <aside
           className={cn(
-            'w-14 shrink-0 overflow-hidden border-r transition-[width] duration-300 ease-out',
+            'hidden shrink-0 overflow-hidden transition-[width] duration-200 ease-out lg:block',
             'motion-reduce:transition-none',
-            sidebar.open && onChats && 'lg:w-[19.5rem]',
+            sidebar.open ? 'lg:w-[16.25rem]' : 'lg:w-0',
           )}
         >
-          <div className="h-full w-[19.5rem]">
+          <div className="h-full w-[16.25rem]">
             <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={sidebar.toggle} />
           </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          {/*
-            One bar, two jobs, and which one depends on the width: below `lg`
-            the sidebar is a sheet, above it is a column that can be collapsed.
-            Without a `topbar` it is not rendered while the column is already
-            showing on a wide screen — a control for something you can see is
-            one more thing to read.
-          */}
           <header
             className={cn(
-              'sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3',
-              sidebar.open && onChats && !topbar && 'lg:hidden',
+              'sticky top-0 z-30 flex h-13 shrink-0 items-center gap-2 bg-background/90 px-3 backdrop-blur-sm sm:px-4',
+              sidebar.open && !topbar && 'lg:hidden',
             )}
           >
             <button
               type="button"
               onClick={() => (isWide() ? sidebar.toggle() : setSheetOpen(true))}
               aria-label={t('toggleNavigation')}
-              // The icon rail is always visible, including on narrow screens.
-              // Only Chats needs this separate control for its session list.
-              className={cn(
-                'flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
-                !onChats && 'hidden',
-              )}
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none"
             >
-              <PanelLeftIcon className="size-4" />
+              <PanelLeftIcon className="size-[1.125rem]" />
             </button>
 
             {topbar ? (
-              <>
-                <span className="h-4 w-px shrink-0 bg-border" aria-hidden />
-                {topbar}
-              </>
+              topbar
             ) : (
-              <Brand className="h-4 shrink-0" />
+              <Brand className="h-[1.125rem] shrink-0" />
             )}
           </header>
 
@@ -120,7 +96,7 @@ export function AppShell({
       </div>
 
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent side="left" className="w-[19.5rem] gap-0 p-0 sm:max-w-[19.5rem]">
+        <SheetContent side="left" className="w-[16.25rem] gap-0 border-0 p-0 sm:max-w-[16.25rem]">
           <SheetTitle className="sr-only">{t('navigationAndAgents')}</SheetTitle>
           <Sidebar onOpenSettings={() => setSettingsOpen(true)} onCollapse={null} />
         </SheetContent>

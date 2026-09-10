@@ -30,12 +30,12 @@ export function AgentHeader({
   const { t } = usePreferences()
 
   return (
-    <header className="flex items-center gap-3 border-b px-4 py-3 sm:px-6">
+    <header className="flex h-13 shrink-0 items-center gap-3 bg-background/90 px-4 backdrop-blur-sm sm:px-5">
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-[0.9375rem] leading-snug font-bold tracking-[-0.01em]">
+        <h1 className="truncate text-sm leading-snug font-medium">
           {agent.task}
         </h1>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <p className="mt-0.5 hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
           <ModelLogo model={model} size={13} className="rounded-[3px]" />
           <span className="truncate">{model?.label ?? agent.modelId}</span>
           <span aria-hidden>·</span>

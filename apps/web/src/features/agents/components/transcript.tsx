@@ -41,7 +41,7 @@ export function Transcript({
   return (
     // Top-aligned: the agent header anchors the top of this column, so the
     // transcript starts right under it rather than floating above the composer.
-    <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-4 sm:px-6">
+    <div className="mx-auto w-full max-w-3xl px-4 pt-7 pb-4 sm:px-6">
       <TranscriptBody items={items} running={running} showToolTrace={showToolTrace} />
 
       {running ? (
@@ -94,8 +94,8 @@ function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; strea
       //
       // Capped rather than full width: a bubble that reaches both edges has no
       // side to be on, and a pasted paragraph would look like the agent's own.
-      <div className="mt-8 mb-4 flex justify-end first:mt-0">
-        <div className="max-w-[85%] rounded-lg rounded-tr-none bg-primary px-3.5 py-2.5 text-[0.9375rem] leading-relaxed font-medium text-primary-foreground">
+      <div className="mt-8 mb-6 flex justify-end first:mt-0">
+        <div className="max-w-[85%] rounded-[1.4rem] bg-secondary px-4 py-2.5 text-[0.9375rem] leading-relaxed text-secondary-foreground sm:max-w-[75%]">
           {attached.length ? (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {attached.map((url) => (
@@ -103,7 +103,7 @@ function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; strea
                   <img
                     src={url}
                     alt="Attached"
-                    className="max-h-40 max-w-full rounded border border-primary-foreground/20 object-contain"
+                    className="max-h-40 max-w-full rounded-xl border object-contain"
                   />
                 </a>
               ))}
@@ -116,7 +116,7 @@ function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; strea
                   key={file.path}
                   href={file.url}
                   download
-                  className="flex min-w-0 items-center gap-2 rounded-md border border-primary-foreground/20 bg-primary-foreground/10 px-2.5 py-2 transition-colors hover:bg-primary-foreground/15"
+                  className="flex min-w-0 items-center gap-2 rounded-xl border bg-background/60 px-2.5 py-2 transition-colors hover:bg-background"
                 >
                   <FileSpreadsheetIcon className="size-4 shrink-0" />
                   <span className="min-w-0 flex-1 truncate text-xs">{file.name}</span>
@@ -156,9 +156,9 @@ function ToolActivityGroup({ tools }: { tools: Array<Extract<Item, { kind: 'tool
   })
 
   return (
-    <div className="my-2 rounded-lg border bg-muted/20">
+    <div className="my-3 rounded-xl bg-muted/60">
       <Collapsible>
-        <CollapsibleTrigger className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+        <CollapsibleTrigger className="group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none">
           <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
             {pending ? <Spinner className="size-3.5" /> : <WrenchIcon className="size-3.5" />}
           </span>
@@ -176,7 +176,7 @@ function ToolActivityGroup({ tools }: { tools: Array<Extract<Item, { kind: 'tool
         </CollapsibleTrigger>
 
         <CollapsibleContent>
-          <div className="divide-y border-t">
+          <div className="divide-y border-t border-border/70">
             {tools.map((tool) => (
               <ToolCallDetail key={tool.id} tool={tool} />
             ))}
@@ -240,7 +240,7 @@ function AssistantMessage({ text, streaming }: { text: string; streaming: boolea
   if (!hasUiBlock(text)) {
     return (
       <div
-        className={cn('prose-agent mt-2 mb-6 max-w-none break-words', streaming && 'caret')}
+        className={cn('prose-agent mb-7 max-w-none break-words', streaming && 'caret')}
         dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
       />
     )

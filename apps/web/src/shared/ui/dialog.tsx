@@ -33,7 +33,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 z-50 bg-black/45 duration-150 supports-backdrop-filter:backdrop-blur-[2px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}
@@ -53,8 +53,8 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2",
-          "flex-col gap-0 overflow-hidden rounded-xl border bg-background shadow-lg duration-100",
+          "fixed top-1/2 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2",
+          "flex-col gap-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-2xl duration-150",
           "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
           "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
@@ -78,7 +78,7 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-header" className={cn("border-b px-5 py-4", className)} {...props} />
+  return <div data-slot="dialog-header" className={cn("px-6 pt-5 pb-3", className)} {...props} />
 }
 
 function DialogTitle({
@@ -88,7 +88,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-sm font-bold tracking-[-0.01em]", className)}
+      className={cn("text-lg font-semibold tracking-[-0.02em]", className)}
       {...props}
     />
   )
@@ -101,7 +101,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("mt-1 text-xs text-muted-foreground", className)}
+      className={cn("mt-1.5 text-sm leading-relaxed text-muted-foreground", className)}
       {...props}
     />
   )
