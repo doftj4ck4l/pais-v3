@@ -85,6 +85,13 @@
       "when": 1788833197684,
       "tag": "0011_groovy_brother_voodoo",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789014056629,
+      "tag": "0012_typical_kronos",
+      "breakpoints": true
     }
   ]
 }

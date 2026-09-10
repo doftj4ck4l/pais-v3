@@ -9,5 +9,6 @@ documentRoutes.post("/", documentController.create);
 documentRoutes.get("/search", documentController.search);
 documentRoutes.post("/transcribe", documentController.transcribe);
 documentRoutes.get("/transcriptions", documentController.listTranscriptions);
+documentRoutes.get("/transcriptions/:id/transcript", documentController.transcript);
 documentRoutes.delete("/transcriptions/:id", documentController.destroyTranscription);
 documentRoutes.delete("/:id", documentController.destroy);

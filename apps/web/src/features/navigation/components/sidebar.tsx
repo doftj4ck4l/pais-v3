@@ -9,7 +9,6 @@ import {
 import { AgentList } from '@/features/agents/components/agent-list'
 import { Brand } from '@/shared/components/brand'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
-import { TranscribeControl } from '@/features/navigation/components/transcribe-control'
 import { UserMenu } from '@/features/navigation/components/user-menu'
 import { WorkspacePicker } from '@/features/navigation/components/workspace-picker'
 import { useBoard } from '@/features/agents/hooks/use-agent-board'
@@ -91,8 +90,6 @@ export function Sidebar({
           {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
             <SidebarLink key={item.to} to={item.to} label={t(item.label)} icon={item.icon} />
           ))}
-
-          <TranscribeControl />
 
           {me?.canAdministerOrganizations ? (
             <SidebarLink to="/admin" label={t('adminPanel')} icon={ShieldCheckIcon} />

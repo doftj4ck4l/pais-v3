@@ -6,7 +6,7 @@ export function TranscriptionsPage() {
   const { t } = usePreferences()
   return (
     <ResourcePage
-      title={t('transcriptions')}
+      title={t('transcribeAudio')}
       description={t('transcriptionsPageDescription')}
     >
       <TranscriptionsPanel />

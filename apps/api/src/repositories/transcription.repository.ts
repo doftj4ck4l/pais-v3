@@ -22,9 +22,11 @@ export type NewTranscription = {
 export interface TranscriptionStore {
   create(input: NewTranscription, at?: number): Promise<TranscriptionRow>;
   markTranscribing(id: string, at?: number): Promise<void>;
-  markDone(id: string, documentId: string, model: string, at?: number): Promise<void>;
+  markDone(id: string, documentId: string, model: string, transcriptText: string, at?: number): Promise<void>;
   markFailed(id: string, error: string, at?: number): Promise<void>;
   list(workspaceId: string): Promise<TranscriptionRow[]>;
+  /** A single job within one workspace; the caller owns the workspace check. */
+  get(workspaceId: string, id: string): Promise<TranscriptionRow | undefined>;
   remove(workspaceId: string, id: string): Promise<boolean>;
   /** Close rows orphaned by a previous API process before accepting traffic. */
   stopInterrupted(at?: number): Promise<number>;
@@ -43,6 +45,7 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
       model: null,
       error: null,
       documentId: null,
+      transcriptText: null,
       createdAt: at,
       updatedAt: at,
     };
@@ -52,7 +55,13 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
 
   private async set(
     id: string,
-    patch: Partial<{ status: TranscriptionStatus; model: string | null; error: string | null; documentId: string | null }>,
+    patch: Partial<{
+      status: TranscriptionStatus;
+      model: string | null;
+      error: string | null;
+      documentId: string | null;
+      transcriptText: string | null;
+    }>,
     at = Date.now(),
   ): Promise<void> {
     this.dbImpl.update(transcriptions).set({ ...patch, updatedAt: at }).where(eq(transcriptions.id, id)).run();
@@ -62,8 +71,8 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
     await this.set(id, { status: "transcribing" }, at);
   }
 
-  async markDone(id: string, documentId: string, model: string, at?: number): Promise<void> {
-    await this.set(id, { status: "done", documentId, model }, at);
+  async markDone(id: string, documentId: string, model: string, transcriptText: string, at?: number): Promise<void> {
+    await this.set(id, { status: "done", documentId, model, transcriptText }, at);
   }
 
   async markFailed(id: string, error: string, at?: number): Promise<void> {
@@ -77,6 +86,15 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
       .where(eq(transcriptions.workspaceId, workspaceId))
       .orderBy(sql`created_at desc`);
     return rows as TranscriptionRow[];
+  }
+
+  async get(workspaceId: string, id: string): Promise<TranscriptionRow | undefined> {
+    const rows = await this.dbImpl
+      .select()
+      .from(transcriptions)
+      .where(and(eq(transcriptions.workspaceId, workspaceId), eq(transcriptions.id, id)))
+      .limit(1);
+    return rows[0] as TranscriptionRow | undefined;
   }
 
   async remove(workspaceId: string, id: string): Promise<boolean> {

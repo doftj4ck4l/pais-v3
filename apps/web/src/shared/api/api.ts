@@ -424,6 +424,18 @@ export async function deleteTranscription(scope: Scope, id: string): Promise<voi
   })
 }
 
+/** The `.txt` download for a finished transcription, as a same-origin URL. */
+export function transcriptDownloadUrl(scope: Scope, id: string): string {
+  return `/api/documents/transcriptions/${encodeURIComponent(id)}/transcript?${scoped(scope)}`
+}
+
+/** Fetch the finished transcript's text to show it in a dialog. */
+export async function fetchTranscript(scope: Scope, id: string): Promise<string> {
+  const res = await fetch(transcriptDownloadUrl(scope, id))
+  if (!res.ok) throw new Error(`Transcript not ready (${res.status})`)
+  return res.text()
+}
+
 /**
  * Attach an image the user pasted into the composer.
  *
