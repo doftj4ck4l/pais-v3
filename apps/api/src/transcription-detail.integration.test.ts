@@ -119,19 +119,37 @@ describe("chunked transcription upload HTTP API", () => {
     expect(cancelled.status).toBe(204);
   });
 
-  it("rejects an oversized recording before receiving audio bytes", async () => {
+  it("accepts a 728.4MB recording and rejects only above 2GiB", async () => {
     const owner = `oversized-upload-${Date.now()}`;
     const workspace = await workspaceRegistry.create(owner, "Large recordings");
-    const response = await createApp().request(
+    const app = createApp();
+    const accepted = await app.request(
       `/api/documents/transcription-uploads?workspaceId=${workspace.id}`,
       {
         method: "POST",
         headers: { "x-authentik-uid": owner, "content-type": "application/json" },
-        body: JSON.stringify({ title: "too-large.wav", contentType: "audio/wav", size: 513 * 1024 * 1024 }),
+        body: JSON.stringify({ title: "500.mp4", contentType: "video/mp4", size: 728_400_000 }),
+      },
+    );
+
+    expect(accepted.status).toBe(201);
+    const session = await accepted.json() as { uploadId: string };
+    const cancelled = await app.request(
+      `/api/documents/transcription-uploads/${session.uploadId}?workspaceId=${workspace.id}`,
+      { method: "DELETE", headers: { "x-authentik-uid": owner } },
+    );
+    expect(cancelled.status).toBe(204);
+
+    const response = await app.request(
+      `/api/documents/transcription-uploads?workspaceId=${workspace.id}`,
+      {
+        method: "POST",
+        headers: { "x-authentik-uid": owner, "content-type": "application/json" },
+        body: JSON.stringify({ title: "too-large.wav", contentType: "audio/wav", size: 2049 * 1024 * 1024 }),
       },
     );
 
     expect(response.status).toBe(413);
-    expect(await response.json()).toEqual({ error: expect.stringContaining("512MiB limit") });
+    expect(await response.json()).toEqual({ error: expect.stringContaining("2048MiB limit") });
   });
 });

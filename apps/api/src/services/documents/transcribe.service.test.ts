@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { applySchema } from "../../db/client";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { searchDocuments } from "./search.service";
@@ -78,6 +81,30 @@ describe("transcribeAudio", () => {
     expect(form.get("response_format")).toBe("verbose_json");
     const file = form.get("file") as File;
     expect(file.name).toBe("call.mp3");
+  });
+
+  it("streams a disk-backed recording into the Whisper multipart request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pixelspace-whisper-test-"));
+    const filePath = join(root, "upload");
+    await writeFile(filePath, AUDIO);
+    const captured: { file?: File } = {};
+    try {
+      await transcribeAudio(
+        { filePath, byteLength: AUDIO.byteLength, contentType: "video/mp4", filename: "500.mp4" },
+        {
+          ...CREDS,
+          fetchImpl: (async (_url: unknown, init: RequestInit) => {
+            captured.file = (init.body as FormData).get("file") as File;
+            return reply({ text: "ok", segments: [{ start: 0, text: "ok" }] });
+          }) as any,
+        },
+      );
+      expect(captured.file?.name).toBe("500.mp4");
+      expect(captured.file?.type).toBe("video/mp4");
+      expect(captured.file?.size).toBe(AUDIO.byteLength);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("surfaces the whisper server's own refusal, which names the fix", async () => {

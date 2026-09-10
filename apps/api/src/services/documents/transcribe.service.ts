@@ -42,10 +42,17 @@ type TranscribeDeps = {
   onIndexing?: () => void | Promise<void>;
 };
 
-const audioFile = (bytes: Uint8Array, filename: string, contentType: string) => {
-  // `File` is global in Bun (undici), so no polyfill is needed for fetch.
-  return new File([bytes], filename, { type: contentType || "application/octet-stream" });
+export type TranscriptionAudioSource =
+  | { bytes: Uint8Array }
+  | { filePath: string; byteLength: number };
+
+export type TranscriptionAudioInput = TranscriptionAudioSource & {
+  contentType: string;
+  filename: string;
 };
+
+export const transcriptionAudioBytes = (input: TranscriptionAudioSource) =>
+  "bytes" in input ? input.bytes.byteLength : input.byteLength;
 
 /**
  * The whisper endpoint's own config, borrowed from the chat gateway because the
@@ -69,7 +76,7 @@ export function transcribeConfig(): { baseUrl: string; apiKey: string | undefine
  * thrown away.
  */
 export async function transcribeAudio(
-  input: { bytes: Uint8Array; contentType: string; filename: string },
+  input: TranscriptionAudioInput,
   deps: TranscribeDeps = {},
 ): Promise<TranscribeResult> {
   const config = transcribeConfig();
@@ -85,7 +92,21 @@ export async function transcribeAudio(
 
   const form = new FormData();
   form.append("model", model);
-  form.append("file", audioFile(input.bytes, input.filename, input.contentType));
+  if ("bytes" in input) {
+    // `File` is global in Bun (undici), so no polyfill is needed for fetch.
+    form.append("file", new File(
+      [input.bytes],
+      input.filename,
+      { type: input.contentType || "application/octet-stream" },
+    ));
+  } else {
+    // Bun.file is a lazy, disk-backed Blob. Wrapping that Blob gives multipart
+    // the original filename without reading/copying its contents into memory.
+    const diskFile = Bun.file(input.filePath, {
+      type: input.contentType || "application/octet-stream",
+    });
+    form.append("file", new File([diskFile], input.filename, { type: diskFile.type }));
+  }
   form.append("response_format", "verbose_json");
   if (deps.language) form.append("language", deps.language);
 
@@ -141,7 +162,7 @@ export async function transcribeAudio(
       logger.info("transcribe.ok", {
         model,
         ms: Date.now() - startedAt,
-        bytes: input.bytes.byteLength,
+        bytes: transcriptionAudioBytes(input),
         segments: flattened.length,
         chars: flattened.reduce((n, s) => n + s.text.length, 0),
       });
@@ -181,7 +202,7 @@ export function formatTranscript(segments: TranscriptionSegment[]): string {
 export async function transcribeToCorpus(
   workspaceId: string,
   title: string,
-  input: { bytes: Uint8Array; contentType: string; filename: string },
+  input: TranscriptionAudioInput,
   deps: TranscribeDeps = {},
 ): Promise<CorpusOutcome> {
   const t = await transcribeAudio(input, deps);

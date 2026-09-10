@@ -52,7 +52,15 @@ describe("transcriptionQueue", () => {
         stages.push((await store.find("ws1", job.id))!.status);
         inflight -= 1;
         await docs.save(
-          { id: `doc_${job.id}`, workspaceId: "ws1", title: job.title, bytes: job.bytes.byteLength, pages: 1, status: "indexed", error: null },
+          {
+            id: `doc_${job.id}`,
+            workspaceId: "ws1",
+            title: job.title,
+            bytes: "bytes" in job ? job.bytes.byteLength : job.byteLength,
+            pages: 1,
+            status: "indexed",
+            error: null,
+          },
           [],
         );
         return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en" };
@@ -123,6 +131,50 @@ describe("transcriptionQueue", () => {
     const rows = await store.list("ws1");
     expect(rows.find((r) => r.title === "boom.mp3")!.status).toBe("failed");
     expect(rows.find((r) => r.title === "after.mp3")!.status).toBe("done");
+  });
+
+  it("cleans up disk-backed recordings after success or failure", async () => {
+    const { store, docs } = fresh();
+    const cleaned: string[] = [];
+    const queue = createTranscriber({
+      store,
+      run: async (job) => {
+        if (job.title === "failed.mp4") return { ok: false as const, error: "no speech" };
+        await docs.save(
+          {
+            id: "doc_ok",
+            workspaceId: "ws1",
+            title: job.title,
+            bytes: "bytes" in job ? job.bytes.byteLength : job.byteLength,
+            pages: 1,
+            status: "indexed",
+            error: null,
+          },
+          [],
+        );
+        return { ok: true as const, documentId: "doc_ok", chunks: 1, model: "whisper-1", language: "en" };
+      },
+    });
+
+    await queue.enqueue({
+      workspaceId: "ws1",
+      title: "done.mp4",
+      filePath: "/tmp/done",
+      byteLength: 728_400_000,
+      contentType: "video/mp4",
+      cleanup: async () => { cleaned.push("done.mp4"); },
+    });
+    await queue.enqueue({
+      workspaceId: "ws1",
+      title: "failed.mp4",
+      filePath: "/tmp/failed",
+      byteLength: 12,
+      contentType: "video/mp4",
+      cleanup: async () => { cleaned.push("failed.mp4"); },
+    });
+
+    await waitUntilDone(store);
+    expect(cleaned).toEqual(["done.mp4", "failed.mp4"]);
   });
 
   it("refuses to enqueue once the line is full", async () => {

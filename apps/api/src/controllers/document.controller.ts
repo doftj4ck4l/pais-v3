@@ -157,7 +157,7 @@ export async function createTranscriptionUpload(c: Context) {
   }
   try {
     return c.json(
-      transcriptionUploadStore.create(workspaceId, {
+      await transcriptionUploadStore.create(workspaceId, {
         title: body.title,
         contentType: body.contentType,
         size: body.size,
@@ -177,7 +177,7 @@ export async function appendTranscriptionUpload(c: Context) {
   const part = Number(c.req.param("part"));
   try {
     const bytes = new Uint8Array(await c.req.arrayBuffer());
-    return c.json(transcriptionUploadStore.append(workspaceId, id, part, bytes));
+    return c.json(await transcriptionUploadStore.append(workspaceId, id, part, bytes));
   } catch (error) {
     return transcriptionUploadFailure(c, error);
   }
@@ -188,23 +188,27 @@ export async function completeTranscriptionUpload(c: Context) {
   const workspaceId = await workspaceIdOf(c);
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing upload id" }, 400);
+  let upload: Awaited<ReturnType<typeof transcriptionUploadStore.finish>> | undefined;
   try {
-    const upload = transcriptionUploadStore.finish(workspaceId, id);
+    upload = await transcriptionUploadStore.finish(workspaceId, id);
     const row = await transcriptionQueue.enqueue({ workspaceId, ...upload });
     return c.json({ transcriptionId: row.id, status: row.status }, 202);
   } catch (error) {
+    // Once finish detaches the session, the queue owns the temp file only if
+    // enqueue succeeds. Avoid leaking it when the queue rejects the job.
+    if (upload) await upload.cleanup();
     if (error instanceof TranscriptionQueueFullError) return c.json({ error: error.message }, 429);
     return transcriptionUploadFailure(c, error);
   }
 }
 
-/** Abandon chunks after a browser/network failure and release their memory. */
+/** Abandon chunks after a browser/network failure and delete their temp file. */
 export async function destroyTranscriptionUpload(c: Context) {
   const workspaceId = await workspaceIdOf(c);
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing upload id" }, 400);
   try {
-    transcriptionUploadStore.cancel(workspaceId, id);
+    await transcriptionUploadStore.cancel(workspaceId, id);
     return c.body(null, 204);
   } catch (error) {
     return transcriptionUploadFailure(c, error);

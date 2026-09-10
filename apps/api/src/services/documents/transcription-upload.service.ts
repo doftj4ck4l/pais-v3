@@ -1,12 +1,16 @@
+import { mkdir, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 /**
  * Browser-to-API upload sessions for recordings that are too large for one
- * proxy request. Each request stays below 1 MiB, while the completed bytes keep
- * the same in-memory queue contract used by the transcription worker.
+ * proxy request. Requests stay below 1 MiB and are appended to a temporary
+ * file, so accepting a multi-gigabyte recording does not pin it in API memory.
  */
 
 export const TRANSCRIPTION_CHUNK_BYTES = 768 * 1024;
-export const MAX_TRANSCRIPTION_BYTES = 512 * 1024 * 1024;
-const MAX_RESERVED_BYTES = 1024 * 1024 * 1024;
+export const MAX_TRANSCRIPTION_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_RESERVED_BYTES = 4 * 1024 * 1024 * 1024;
 const SESSION_TTL_MS = 60 * 60 * 1000;
 
 type UploadSession = {
@@ -18,7 +22,9 @@ type UploadSession = {
   partCount: number;
   nextPart: number;
   receivedBytes: number;
-  parts: Uint8Array[];
+  filePath: string;
+  lastPart: Uint8Array | null;
+  writing: boolean;
   updatedAt: number;
 };
 
@@ -31,7 +37,9 @@ export type TranscriptionUpload = {
 export type CompletedTranscriptionUpload = {
   title: string;
   contentType: string;
-  bytes: Uint8Array;
+  filePath: string;
+  byteLength: number;
+  cleanup: () => Promise<void>;
 };
 
 export class TranscriptionUploadError extends Error {
@@ -44,6 +52,9 @@ export class TranscriptionUploadError extends Error {
 const uploadId = () =>
   `trup_${Date.now().toString(36)}${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
 
+const sameBytes = (left: Uint8Array | null, right: Uint8Array) =>
+  left?.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
+
 export function createTranscriptionUploadStore(
   options: {
     chunkBytes?: number;
@@ -51,6 +62,7 @@ export function createTranscriptionUploadStore(
     maxReservedBytes?: number;
     ttlMs?: number;
     now?: () => number;
+    root?: string;
   } = {},
 ) {
   const chunkBytes = options.chunkBytes ?? TRANSCRIPTION_CHUNK_BYTES;
@@ -58,23 +70,31 @@ export function createTranscriptionUploadStore(
   const maxReservedBytes = options.maxReservedBytes ?? MAX_RESERVED_BYTES;
   const ttlMs = options.ttlMs ?? SESSION_TTL_MS;
   const now = options.now ?? Date.now;
+  const root = options.root ?? join(tmpdir(), "pixelspace-transcription-uploads", String(process.pid));
   const sessions = new Map<string, UploadSession>();
   let reservedBytes = 0;
 
   const discard = (session: UploadSession) => {
-    if (!sessions.delete(session.id)) return;
+    if (!sessions.delete(session.id)) return false;
     reservedBytes -= session.size;
+    return true;
   };
 
-  const sweep = () => {
+  const deleteSession = async (session: UploadSession) => {
+    if (!discard(session)) return;
+    await rm(session.filePath, { force: true });
+  };
+
+  const sweep = async () => {
     const cutoff = now() - ttlMs;
-    for (const session of sessions.values()) {
-      if (session.updatedAt < cutoff) discard(session);
-    }
+    const expired = [...sessions.values()].filter(
+      (session) => !session.writing && session.updatedAt < cutoff,
+    );
+    await Promise.all(expired.map(deleteSession));
   };
 
-  const owned = (workspaceId: string, id: string) => {
-    sweep();
+  const owned = async (workspaceId: string, id: string) => {
+    await sweep();
     const session = sessions.get(id);
     if (!session || session.workspaceId !== workspaceId) {
       throw new TranscriptionUploadError("Upload session not found", 404);
@@ -83,11 +103,11 @@ export function createTranscriptionUploadStore(
   };
 
   return {
-    create(
+    async create(
       workspaceId: string,
       input: { title: string; contentType: string; size: number },
-    ): TranscriptionUpload {
-      sweep();
+    ): Promise<TranscriptionUpload> {
+      await sweep();
       const title = input.title.trim().replace(/[\\/]/g, "_").slice(0, 255);
       if (!title) throw new TranscriptionUploadError("A recording name is required", 400);
       if (!Number.isSafeInteger(input.size) || input.size <= 0) {
@@ -104,6 +124,11 @@ export function createTranscriptionUploadStore(
       }
 
       const id = uploadId();
+      const filePath = join(root, id);
+      await mkdir(root, { recursive: true });
+      const file = await open(filePath, "wx");
+      await file.close();
+
       const partCount = Math.ceil(input.size / chunkBytes);
       sessions.set(id, {
         id,
@@ -114,27 +139,28 @@ export function createTranscriptionUploadStore(
         partCount,
         nextPart: 0,
         receivedBytes: 0,
-        parts: [],
+        filePath,
+        lastPart: null,
+        writing: false,
         updatedAt: now(),
       });
       reservedBytes += input.size;
       return { uploadId: id, chunkBytes, partCount };
     },
 
-    append(workspaceId: string, id: string, part: number, bytes: Uint8Array) {
-      const session = owned(workspaceId, id);
+    async append(workspaceId: string, id: string, part: number, bytes: Uint8Array) {
+      const session = await owned(workspaceId, id);
       // A proxy may deliver the bytes and lose only the response. Accept an
       // exact retry of the most recent part so the browser need not restart a
       // large upload; different bytes at that index still fail closed.
       if (part === session.nextPart - 1) {
-        const previous = session.parts[part];
-        if (previous?.byteLength === bytes.byteLength && previous.every((value, index) => value === bytes[index])) {
+        if (sameBytes(session.lastPart, bytes)) {
           session.updatedAt = now();
           return { receivedBytes: session.receivedBytes, nextPart: session.nextPart };
         }
         throw new TranscriptionUploadError(`Upload part ${part} does not match the received part`, 409);
       }
-      if (!Number.isSafeInteger(part) || part !== session.nextPart) {
+      if (session.writing || !Number.isSafeInteger(part) || part !== session.nextPart) {
         throw new TranscriptionUploadError(`Expected upload part ${session.nextPart}`, 409);
       }
       const expected = Math.min(chunkBytes, session.size - session.receivedBytes);
@@ -145,39 +171,64 @@ export function createTranscriptionUploadStore(
         );
       }
 
-      session.parts.push(bytes.slice());
-      session.nextPart += 1;
-      session.receivedBytes += bytes.byteLength;
-      session.updatedAt = now();
+      session.writing = true;
+      let file: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        file = await open(session.filePath, "r+");
+        let written = 0;
+        while (written < bytes.byteLength) {
+          const result = await file.write(
+            bytes,
+            written,
+            bytes.byteLength - written,
+            session.receivedBytes + written,
+          );
+          if (result.bytesWritten === 0) throw new Error("Could not write the upload chunk");
+          written += result.bytesWritten;
+        }
+        session.lastPart = bytes.slice();
+        session.nextPart += 1;
+        session.receivedBytes += bytes.byteLength;
+        session.updatedAt = now();
+      } catch (error) {
+        await file?.truncate(session.receivedBytes);
+        throw error;
+      } finally {
+        await file?.close();
+        session.writing = false;
+      }
       return { receivedBytes: session.receivedBytes, nextPart: session.nextPart };
     },
 
-    finish(workspaceId: string, id: string): CompletedTranscriptionUpload {
-      const session = owned(workspaceId, id);
-      if (session.receivedBytes !== session.size || session.nextPart !== session.partCount) {
+    async finish(workspaceId: string, id: string): Promise<CompletedTranscriptionUpload> {
+      const session = await owned(workspaceId, id);
+      if (session.writing || session.receivedBytes !== session.size || session.nextPart !== session.partCount) {
         throw new TranscriptionUploadError(
           `Upload is incomplete (${session.receivedBytes} of ${session.size} bytes received)`,
           409,
         );
       }
 
-      const bytes = new Uint8Array(session.size);
-      let offset = 0;
-      for (const part of session.parts) {
-        bytes.set(part, offset);
-        offset += part.byteLength;
-      }
       discard(session);
-      return { title: session.title, contentType: session.contentType, bytes };
+      return {
+        title: session.title,
+        contentType: session.contentType,
+        filePath: session.filePath,
+        byteLength: session.size,
+        cleanup: () => rm(session.filePath, { force: true }),
+      };
     },
 
-    cancel(workspaceId: string, id: string): boolean {
-      const session = owned(workspaceId, id);
-      discard(session);
+    async cancel(workspaceId: string, id: string): Promise<boolean> {
+      const session = await owned(workspaceId, id);
+      if (session.writing) {
+        throw new TranscriptionUploadError("An upload part is still being written", 409);
+      }
+      await deleteSession(session);
       return true;
     },
 
-    /** Test/operations visibility without exposing recording bytes. */
+    /** Test/operations visibility without exposing recording bytes or paths. */
     stats: () => ({ sessions: sessions.size, reservedBytes }),
   };
 }
