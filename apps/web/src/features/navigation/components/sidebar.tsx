@@ -49,61 +49,63 @@ export function Sidebar({
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-y-auto bg-sidebar px-2 py-2 text-sidebar-foreground">
-      <div className="flex h-10 items-center gap-2 px-2">
-        <Brand className="h-[1.125rem] min-w-0" />
-        {onCollapse ? (
-          <button
-            type="button"
-            onClick={onCollapse}
-            aria-label={t('hideChatList')}
-            className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/30 focus-visible:outline-none"
-          >
-            <PanelLeftCloseIcon className="size-[1.125rem]" />
-          </button>
-        ) : null}
+    <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="flex h-10 items-center gap-2 px-2">
+          <Brand className="h-[1.125rem] min-w-0" />
+          {onCollapse ? (
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label={t('hideChatList')}
+              className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/30 focus-visible:outline-none"
+            >
+              <PanelLeftCloseIcon className="size-[1.125rem]" />
+            </button>
+          ) : null}
+        </div>
+
+        <div className="mt-1">
+          <WorkspacePicker />
+        </div>
+
+        <nav aria-label={t('console')} className="mt-2 grid gap-0.5">
+          <SidebarButton
+            label={t('newChat')}
+            icon={PlusIcon}
+            onClick={() => openAgent(null)}
+            emphasized
+          />
+          <SidebarButton
+            label={t('chats')}
+            icon={MessageSquareIcon}
+            active={onChat}
+            onClick={() => openAgent(board.selectedId)}
+          />
+
+          {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
+            <SidebarLink key={item.to} to={item.to} label={t(item.label)} icon={item.icon} />
+          ))}
+
+          <TranscribeControl />
+
+          {me?.canAdministerOrganizations ? (
+            <SidebarLink to="/admin" label={t('adminPanel')} icon={ShieldCheckIcon} />
+          ) : null}
+        </nav>
+
+        <section className="mt-4" aria-label={t('chats')}>
+          <h2 className="px-2 pb-2 text-xs font-medium text-muted-foreground">{t('chats')}</h2>
+          <AgentList
+            agents={board.agents}
+            selectedId={board.selectedId}
+            onSelect={openAgent}
+            onRemove={board.remove}
+          />
+        </section>
       </div>
 
-      <div className="mt-1">
-        <WorkspacePicker />
-      </div>
-
-      <nav aria-label={t('console')} className="mt-2 grid gap-0.5">
-        <SidebarButton
-          label={t('newChat')}
-          icon={PlusIcon}
-          onClick={() => openAgent(null)}
-          emphasized
-        />
-        <SidebarButton
-          label={t('chats')}
-          icon={MessageSquareIcon}
-          active={onChat}
-          onClick={() => openAgent(board.selectedId)}
-        />
-
-        {NAV_ITEMS.filter((item) => item.to !== '/').map((item) => (
-          <SidebarLink key={item.to} to={item.to} label={t(item.label)} icon={item.icon} />
-        ))}
-
-        <TranscribeControl />
-
-        {me?.canAdministerOrganizations ? (
-          <SidebarLink to="/admin" label={t('adminPanel')} icon={ShieldCheckIcon} />
-        ) : null}
-      </nav>
-
-      <section className="mt-4" aria-label={t('chats')}>
-        <h2 className="px-2 pb-2 text-xs font-medium text-muted-foreground">{t('chats')}</h2>
-        <AgentList
-          agents={board.agents}
-          selectedId={board.selectedId}
-          onSelect={openAgent}
-          onRemove={board.remove}
-        />
-      </section>
-
-      <div className="mt-2 grid gap-0.5">
+      <div className="mt-2 grid shrink-0 gap-0.5">
         <SidebarButton label={t('settings')} icon={SettingsIcon} onClick={onOpenSettings} />
         <UserMenu expanded />
       </div>
