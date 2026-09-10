@@ -23,13 +23,14 @@ const fakeAdapter = (engine: DatabaseEngine): DatabaseAdapter => ({
 });
 
 describe("DatabaseAdapterRegistry", () => {
-  it("registers both supported drivers without changing the adapter contract", () => {
+  it("registers all supported drivers without changing the adapter contract", () => {
     const registry = new DatabaseAdapterRegistry().register(fakeAdapter("postgresql"));
     const agentToolNames = ["search_schema", "describe_table", "run_query"];
 
     registry.register(fakeAdapter("mysql"));
+    registry.register(fakeAdapter("sqlserver"));
 
-    expect(registry.engines()).toEqual(["postgresql", "mysql"]);
+    expect(registry.engines()).toEqual(["postgresql", "mysql", "sqlserver"]);
     expect(registry.get("mysql")?.defaultPort).toBe(1234);
     expect(agentToolNames).toEqual(["search_schema", "describe_table", "run_query"]);
   });

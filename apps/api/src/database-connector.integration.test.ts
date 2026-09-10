@@ -13,12 +13,12 @@ const headers = (user: string) => ({
 
 const input = (
   password = "never-return-this",
-  engine: "postgresql" | "mysql" = "postgresql",
+  engine: "postgresql" | "mysql" | "sqlserver" = "postgresql",
 ) => ({
   name: "warehouse",
   engine,
   host: "10.35.180.238",
-  port: engine === "mysql" ? 3306 : 5432,
+  port: engine === "mysql" ? 3306 : engine === "sqlserver" ? 1433 : 5432,
   database: "takaful",
   username: "salur_reader",
   password,
@@ -108,6 +108,21 @@ describe("database connector HTTP surface", () => {
     expect(JSON.parse(text).connection).toMatchObject({ engine: "mysql", port: 3306 });
     expect(text).not.toContain("mysql-never-return-this");
     expect(text).not.toContain("mysql://");
+  });
+
+  it("creates and returns a SQL Server connection without exposing credentials", async () => {
+    mockSuccessfulDatabase();
+    const res = await createApp().request("/api/databases", {
+      method: "POST",
+      headers: headers("db-create-sqlserver-user"),
+      body: JSON.stringify(input("sqlserver-never-return-this", "sqlserver")),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(201);
+    expect(JSON.parse(text).connection).toMatchObject({ engine: "sqlserver", port: 1433 });
+    expect(text).not.toContain("sqlserver-never-return-this");
+    expect(text).not.toContain("sqlserver://");
+    expect(text).not.toContain("mssql://");
   });
 
   it("updates settings without requiring the password to be returned and resubmitted", async () => {

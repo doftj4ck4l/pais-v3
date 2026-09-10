@@ -293,7 +293,7 @@ cd apps/api && bun scripts/sandbox-persistence-check.ts
 
 ### Connected databases
 
-The agent can query a workspace's connected PostgreSQL, MySQL, and MariaDB databases read-only,
+The agent can query a workspace's connected PostgreSQL, MySQL, MariaDB, and Microsoft SQL Server databases read-only,
 without switching modes or harnesses. A connection is configured with an explicit engine, host, port,
 database, username, password, and SSL policy. Passwords and private TLS options
 are encrypted with `CONNECTION_SECRET`; full URLs are neither stored nor
@@ -321,8 +321,8 @@ Read-only is enforced in four layers:
 | Layer | Mechanism |
 | --- | --- |
 | Operator | Point the connection at a `GRANT SELECT`-only role |
-| Statement | Only `SELECT` / `WITH` / `EXPLAIN`; write keywords rejected anywhere in the statement |
-| Server | A read-only transaction on modern servers; legacy MySQL/MariaDB is allowed only after `SHOW GRANTS` proves every effective privilege is `SELECT` or `USAGE` |
+| Statement | Only engine-appropriate read statements (`SELECT` / `WITH`, plus PostgreSQL/MySQL `EXPLAIN`); write keywords rejected anywhere in the statement |
+| Server | A read-only transaction where supported; SQL Server requires an effective read-only login and rolls every query transaction back; legacy MySQL/MariaDB is allowed only after `SHOW GRANTS` proves every effective privilege is `SELECT` or `USAGE` |
 | Budget | A server timeout where supported, a 10s client deadline, a 100-row cap, and a 50KB result cap |
 
 The statement guard exists to give the model a correctable error message. A

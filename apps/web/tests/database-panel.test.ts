@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   connectionInput,
   emptyFormFor,
+  engineLabel,
   formatServerVersion,
   formFromConnection,
 } from '../src/features/resources/components/database-form'
@@ -28,6 +29,7 @@ describe('database connector form', () => {
   it('selects the correct default port for each engine', () => {
     expect(emptyFormFor('postgresql').port).toBe('5432')
     expect(emptyFormFor('mysql').port).toBe('3306')
+    expect(emptyFormFor('sqlserver')).toMatchObject({ port: '1433', sslMode: 'require' })
   })
 
   it('preserves MySQL when editing and sends it to the API', () => {
@@ -48,5 +50,28 @@ describe('database connector form', () => {
       .toBe(' · MariaDB 5.5.64')
     expect(formatServerVersion({ serverVersion: '17', serverProduct: 'PostgreSQL' }, 'postgresql'))
       .toBe(' · PostgreSQL 17')
+    expect(engineLabel('sqlserver')).toBe('SQL Server')
+    expect(formatServerVersion({ serverVersion: '15.0.2080.9', serverProduct: 'SQL Server' }, 'sqlserver'))
+      .toBe(' · SQL Server 15.0.2080.9')
+  })
+
+  it('keeps SQL Server password and custom CA behavior engine-neutral', () => {
+    const form = {
+      ...emptyFormFor('sqlserver'),
+      name: 'warehouse',
+      host: 'db.internal',
+      database: 'Inventory',
+      username: 'reader',
+      password: 'test-only',
+      sslMode: 'verify-full' as const,
+      sslCa: 'PEM',
+      serverName: 'tls.internal',
+    }
+    expect(connectionInput(form, null)).toMatchObject({
+      engine: 'sqlserver',
+      port: 1433,
+      password: 'test-only',
+      ssl: { mode: 'verify-full', ca: 'PEM', serverName: 'tls.internal' },
+    })
   })
 })
