@@ -3,6 +3,8 @@ import {
   AlertTriangleIcon,
   CheckIcon,
   ClockIcon,
+  DownloadIcon,
+  FileTextIcon,
   MicIcon,
   Trash2Icon,
   UploadIcon,
@@ -16,8 +18,15 @@ import {
   PanelGrid,
   PanelHeader,
 } from '@/features/resources/components/panel-kit'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
-import { deleteTranscription, enqueueTranscription, listTranscriptions } from '@/shared/api/api'
+import {
+  deleteTranscription,
+  enqueueTranscription,
+  fetchTranscript,
+  listTranscriptions,
+  transcriptDownloadUrl,
+} from '@/shared/api/api'
 import { recentlyFinished } from '@/features/resources/lib/transcriptions'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { usePreferences } from '@/shared/hooks/use-preferences'
@@ -51,6 +60,8 @@ export function TranscriptionsPanel() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   /** Titles of jobs that finished while this page was open. */
   const [justFinished, setJustFinished] = useState<string[]>([])
+  /** The finished job whose transcript is being read. */
+  const [viewing, setViewing] = useState<TranscriptionRow | null>(null)
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const previousRef = useRef<TranscriptionRow[]>([])
 
@@ -211,7 +222,12 @@ export function TranscriptionsPanel() {
       {rows.length ? (
         <PanelGrid>
           {rows.map((row) => (
-            <TranscriptionItem key={row.id} row={row} onRemove={() => remove(row.id)} />
+            <TranscriptionItem
+              key={row.id}
+              row={row}
+              onView={row.status === 'done' ? () => setViewing(row) : undefined}
+              onRemove={() => remove(row.id)}
+            />
           ))}
         </PanelGrid>
       ) : (
@@ -231,11 +247,21 @@ export function TranscriptionsPanel() {
           }
         />
       )}
+
+      {viewing ? <TranscriptDialog row={viewing} onClose={() => setViewing(null)} /> : null}
     </div>
   )
 }
 
-function TranscriptionItem({ row, onRemove }: { row: TranscriptionRow; onRemove: () => void }) {
+function TranscriptionItem({
+  row,
+  onView,
+  onRemove,
+}: {
+  row: TranscriptionRow
+  onView?: () => void
+  onRemove: () => void
+}) {
   const { t } = usePreferences()
   const failed = row.status === 'failed'
 
@@ -261,17 +287,85 @@ function TranscriptionItem({ row, onRemove }: { row: TranscriptionRow; onRemove:
       title={<span className={cn(failed && 'text-muted-foreground')}>{row.title}</span>}
       meta={`${statusLabel(t, row.status)} · ${formatBytes(row.bytes)}`}
       actions={
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onRemove}
-          aria-label={t('removeTranscription', { name: row.title })}
-          className="text-muted-foreground hover:text-destructive"
-        >
-          <Trash2Icon />
-        </Button>
+        <>
+          {onView ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onView}
+              aria-label={t('viewTranscript')}
+              className="text-muted-foreground"
+            >
+              <FileTextIcon />
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onRemove}
+            aria-label={t('removeTranscription', { name: row.title })}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2Icon />
+          </Button>
+        </>
       }
     />
+  )
+}
+
+/**
+ * The transcript of one finished job: read it here, or grab it as a `.txt`
+ * file. The Docs page holds the same words as a searchable document; this is
+ * the original, timestamped, exactly as the job stored it.
+ */
+function TranscriptDialog({ row, onClose }: { row: TranscriptionRow; onClose: () => void }) {
+  const scope = useScope()
+  const { t } = usePreferences()
+  const [text, setText] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    setText(null)
+    setFailed(false)
+    fetchTranscript(scope, row.id)
+      .then(setText)
+      .catch(() => setFailed(true))
+  }, [row.id, scope])
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t('viewTranscript')}</DialogTitle>
+          <DialogDescription className="truncate">{row.title}</DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 p-4 text-sm leading-relaxed">
+          {text ??
+            (failed ? (
+              <p className="text-destructive">{t('transcriptionFailed')}</p>
+            ) : (
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <Spinner className="size-3.5" />
+                {t('loading')}
+              </span>
+            ))}
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            {t('statusDone')}
+          </Button>
+          <Button size="sm" asChild>
+            <a href={transcriptDownloadUrl(scope, row.id)} download>
+              <DownloadIcon data-icon="inline-start" />
+              {t('downloadTranscript')}
+            </a>
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

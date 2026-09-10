@@ -34,7 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'chat', hint: 'navChatHint', icon: MessageSquareIcon },
   { to: '/agents', label: 'agents', hint: 'navAgentsHint', icon: BotIcon },
   { to: '/docs', label: 'docs', hint: 'navDocsHint', icon: FileTextIcon },
-  { to: '/transcriptions', label: 'transcriptions', hint: 'navTranscriptionsHint', icon: MicIcon },
+  { to: '/transcriptions', label: 'transcribeAudio', hint: 'navTranscriptionsHint', icon: MicIcon },
   // Sources is deliberately absent, not deleted: connectors are unfinished, and
   // a destination that half works is worse than one that is not offered yet.
   // The route and its panel are still here — put the entry back to restore it.

@@ -78,7 +78,7 @@ export function createTranscriber(
     try {
       const outcome = await run(job);
       if (outcome.ok) {
-        await store.markDone(job.id, outcome.documentId, outcome.model);
+        await store.markDone(job.id, outcome.documentId, outcome.model, outcome.text);
         logger.info("transcribe.job.done", {
           transcriptionId: job.id,
           title: job.title,

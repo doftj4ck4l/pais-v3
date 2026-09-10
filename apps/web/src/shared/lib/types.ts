@@ -150,6 +150,8 @@ export type TranscriptionRow = {
   model: string | null
   error: string | null
   documentId: string | null
+  /** The exact `[MM:SS] line` transcript, once the job finishes. */
+  transcriptText?: string | null
   createdAt: number
   updatedAt: number
 }
