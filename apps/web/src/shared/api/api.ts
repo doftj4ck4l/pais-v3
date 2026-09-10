@@ -518,7 +518,7 @@ export type DatabaseApiError = {
 
 export type DatabaseConnectionInput = {
   name: string
-  engine: 'postgresql' | 'mysql'
+  engine: 'postgresql' | 'mysql' | 'sqlserver'
   host: string
   port: number
   database: string
@@ -536,7 +536,7 @@ type DatabaseResult<T> = { ok: true; value: T } | { ok: false; error: DatabaseAp
 export type DatabaseTestResult = {
   latencyMs: number
   serverVersion?: string
-  serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB'
+  serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB' | 'SQL Server'
 }
 
 async function databaseError(res: Response): Promise<DatabaseApiError> {

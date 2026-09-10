@@ -6,7 +6,7 @@
  * on an engine name.
  */
 
-export type DatabaseEngine = "postgresql" | "mysql";
+export type DatabaseEngine = "postgresql" | "mysql" | "sqlserver";
 
 export type DatabaseSslMode = "disable" | "require" | "verify-full";
 
@@ -118,7 +118,7 @@ export interface DatabaseAdapter {
     target: ApprovedDatabaseTarget,
   ): Promise<DatabaseResult<{
     serverVersion?: string;
-    serverProduct?: "PostgreSQL" | "MySQL" | "MariaDB";
+    serverProduct?: "PostgreSQL" | "MySQL" | "MariaDB" | "SQL Server";
   }>>;
   fetchCatalog(
     config: DatabaseConnectionConfig,
@@ -139,7 +139,7 @@ export function scrubDatabaseMessage(
   config: Pick<DatabaseConnectionConfig, "password">,
   urlReplacement = "database://***",
 ): string {
-  let scrubbed = message.replace(/(?:postgres(?:ql)?|mysql|mssql):\/\/[^\s"']+/gi, urlReplacement);
+  let scrubbed = message.replace(/(?:postgres(?:ql)?|mysql|mssql|sqlserver):\/\/[^\s"']+/gi, urlReplacement);
   if (config.password) {
     scrubbed = scrubbed.split(config.password).join("***");
     const encoded = encodeURIComponent(config.password);

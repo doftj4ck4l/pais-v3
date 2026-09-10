@@ -620,7 +620,7 @@ export type DbConnectionRow = {
   id: string;
   workspaceId: string | null;
   name: string;
-  engine: "postgresql" | "mysql";
+  engine: "postgresql" | "mysql" | "sqlserver";
   status: DbConnectionStatus;
   error: string | null;
   host: string;

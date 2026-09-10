@@ -152,6 +152,7 @@ type StoredSecretV2 = {
 const normalizeEngine = (engine: string): DatabaseEngine => {
   if (engine === "postgres" || engine === "postgresql") return "postgresql";
   if (engine === "mysql") return "mysql";
+  if (engine === "sqlserver") return "sqlserver";
   throw new Error(`Unsupported stored database engine: ${engine}`);
 };
 

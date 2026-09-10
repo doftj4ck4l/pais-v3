@@ -83,6 +83,20 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(JSON.stringify((await store.list("ws1"))[0])).not.toContain("mysql-test-secret");
   });
 
+  it("preserves a SQL Server engine and port through encrypted storage", async () => {
+    const sqlserverConfig = {
+      ...baseConfig,
+      engine: "sqlserver" as const,
+      port: 1433,
+      password: "sqlserver-test-secret",
+      ssl: { mode: "require" as const, ca: null, serverName: null },
+    };
+    await store.create(conn({ config: sqlserverConfig }));
+    expect((await store.list("ws1"))[0]).toMatchObject({ engine: "sqlserver", port: 1433 });
+    expect(await store.resolveConfig("ws1", "c1")).toEqual(sqlserverConfig);
+    expect(JSON.stringify((await store.list("ws1"))[0])).not.toContain("sqlserver-test-secret");
+  });
+
   it("resolves public fields and private config together without mixing ownership", async () => {
     await store.create(conn());
     const resolved = await store.resolveConnection("ws1", "c1");
