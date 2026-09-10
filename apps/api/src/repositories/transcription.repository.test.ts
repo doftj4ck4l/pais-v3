@@ -33,12 +33,13 @@ describe("SqliteTranscriptionStore", () => {
     await store.markTranscribing(row.id);
     await store.markIndexing(row.id);
     expect((await store.find("ws1", row.id))!.status).toBe("indexing");
-    await store.markDone(row.id, "doc_9", "whisper-1");
+    await store.markDone(row.id, "doc_9", "whisper-1", "[00:00] quarterly budget");
 
     const [listed] = await store.list("ws1");
     expect(listed!.status).toBe("done");
     expect(listed!.documentId).toBe("doc_9");
     expect(listed!.model).toBe("whisper-1");
+    expect(listed!.transcriptText).toContain("quarterly");
     expect(listed!.updatedAt).toBeGreaterThanOrEqual(row.createdAt);
   });
 

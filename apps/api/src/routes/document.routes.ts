@@ -13,6 +13,7 @@ documentRoutes.put("/transcription-uploads/:id/chunks/:part", documentController
 documentRoutes.post("/transcription-uploads/:id/complete", documentController.completeTranscriptionUpload);
 documentRoutes.delete("/transcription-uploads/:id", documentController.destroyTranscriptionUpload);
 documentRoutes.get("/transcriptions", documentController.listTranscriptions);
+documentRoutes.get("/transcriptions/:id/transcript", documentController.transcript);
 documentRoutes.get("/transcriptions/:id", documentController.showTranscription);
 documentRoutes.delete("/transcriptions/:id", documentController.destroyTranscription);
 documentRoutes.delete("/:id", documentController.destroy);

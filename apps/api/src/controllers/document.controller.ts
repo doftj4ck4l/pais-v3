@@ -244,6 +244,30 @@ export async function showTranscription(c: Context) {
 }
 
 /**
+ * GET /api/documents/transcriptions/:id/transcript — the finished transcript
+ * as a downloadable `.txt` file.
+ *
+ * The text is the exact `[MM:SS] line` output the job was marked done with;
+ * the corpus chunks say the same words but the chunker decided their
+ * boundaries. Only a finished job has one, and only within its own workspace.
+ */
+export async function transcript(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing transcription id" }, 400);
+
+  const job = await transcriptionStore.find(await workspaceIdOf(c), id);
+  if (!job || job.status !== "done" || !job.transcriptText) {
+    return c.json({ error: "Transcript not found" }, 404);
+  }
+
+  const filename = `${job.title.replace(/\.[^.]+$/, "")}.txt`;
+  return c.body(job.transcriptText, 200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${filename.slice(0, 60)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  });
+}
+
+/**
  * DELETE /api/documents/transcriptions/:id — drop the job *and* its transcript.
  *
  * The `document_id` foreign key is `set null`, so the transcript would survive

@@ -94,7 +94,7 @@ export function createTranscriber(
         if (stage === "indexing") await store.markIndexing(job.id);
       });
       if (outcome.ok) {
-        await store.markDone(job.id, outcome.documentId, outcome.model);
+        await store.markDone(job.id, outcome.documentId, outcome.model, outcome.text);
         logger.info("transcribe.job.done", {
           transcriptionId: job.id,
           title: job.title,

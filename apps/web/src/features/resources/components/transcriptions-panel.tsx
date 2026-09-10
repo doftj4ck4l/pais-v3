@@ -31,6 +31,7 @@ import {
   enqueueTranscription,
   getTranscription,
   listTranscriptions,
+  transcriptDownloadUrl,
 } from '@/shared/api/api'
 import {
   groupTranscriptionsByDate,
@@ -294,6 +295,7 @@ export function TranscriptionsPanel() {
             detail={detail}
             loading={detailLoading}
             copied={copied}
+            downloadUrl={selected ? transcriptDownloadUrl(scope, selected.id) : null}
             onCopy={() => {
               if (!detail?.content) return
               void navigator.clipboard.writeText(detail.content).then(() => setCopied(true))
@@ -533,12 +535,14 @@ function TranscriptPreview({
   detail,
   loading,
   copied,
+  downloadUrl,
   onCopy,
 }: {
   row: TranscriptionRow | null
   detail: TranscriptionDetail | null
   loading: boolean
   copied: boolean
+  downloadUrl: string | null
   onCopy: () => void
 }) {
   const { language, t } = usePreferences()
@@ -571,13 +575,10 @@ function TranscriptPreview({
             <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={t('copyTranscript')}>
               {copied ? <CheckIcon /> : <CopyIcon />}
             </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => downloadTranscript(row.title, content)}
-              aria-label={t('downloadTranscript')}
-            >
-              <DownloadIcon />
+            <Button variant="ghost" size="icon-sm" aria-label={t('downloadTranscript')} asChild>
+              <a href={downloadUrl ?? undefined} download>
+                <DownloadIcon />
+              </a>
             </Button>
           </div>
         ) : null}
@@ -808,13 +809,4 @@ function formatBytes(bytes: number): string {
     unit += 1
   }
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unit]}`
-}
-
-function downloadTranscript(title: string, content: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `${title.replace(/\.[^.]+$/, '') || 'transcript'}.txt`
-  anchor.click()
-  URL.revokeObjectURL(url)
 }

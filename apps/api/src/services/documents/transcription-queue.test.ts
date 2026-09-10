@@ -24,7 +24,7 @@ function okRun(docs: SqliteDocumentStore) {
       { id: `doc_${title}_${Math.random().toString(36).slice(2, 8)}`, workspaceId: "ws1", title, bytes: 4, pages: 1, status: "indexed", error: null },
       [],
     );
-    return { ok: true as const, documentId: (await docs.list("ws1"))[0]!.id, chunks: 1, model: "whisper-1", language: "en" };
+    return { ok: true as const, documentId: (await docs.list("ws1"))[0]!.id, chunks: 1, model: "whisper-1", language: "en", text: "[00:00] hello" };
   };
   return run;
 }
@@ -63,7 +63,7 @@ describe("transcriptionQueue", () => {
           },
           [],
         );
-        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en" };
+        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en", text: "[00:00] hello" };
       },
     });
 
@@ -93,7 +93,7 @@ describe("transcriptionQueue", () => {
           { id: `doc_${job.id}`, workspaceId: "ws1", title: job.title, bytes: 1, pages: 1, status: "indexed", error: null },
           [],
         );
-        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en" };
+        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en", text: "[00:00] hello" };
       },
     });
 
@@ -120,7 +120,7 @@ describe("transcriptionQueue", () => {
           { id: `doc_${job.id}`, workspaceId: "ws1", title: job.title, bytes: 1, pages: 1, status: "indexed", error: null },
           [],
         );
-        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en" };
+        return { ok: true as const, documentId: `doc_${job.id}`, chunks: 1, model: "whisper-1", language: "en", text: "[00:00] hello" };
       },
     });
 
@@ -152,7 +152,14 @@ describe("transcriptionQueue", () => {
           },
           [],
         );
-        return { ok: true as const, documentId: "doc_ok", chunks: 1, model: "whisper-1", language: "en" };
+        return {
+          ok: true as const,
+          documentId: "doc_ok",
+          chunks: 1,
+          model: "whisper-1",
+          language: "en",
+          text: "[00:00] hello",
+        };
       },
     });
 

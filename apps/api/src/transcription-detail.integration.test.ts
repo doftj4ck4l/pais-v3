@@ -50,6 +50,7 @@ describe("GET /api/documents/transcriptions/:id", () => {
       "trx_transcript_detail",
       "doc_transcript_detail",
       "whisper-large-v3",
+      "[00:00] Opening note\n[00:12] Ship on Thursday",
     );
 
     const owned = await createApp().request(

@@ -243,6 +243,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                     <select disabled value={form.engine} className={inputClass}>
                       <option value="postgresql">PostgreSQL</option>
                       <option value="mysql">MySQL / MariaDB</option>
+                      <option value="sqlserver">SQL Server</option>
                     </select>
                   </label>
                   <Field label="Host" value={form.host} onChange={(host) => setForm((v) => ({ ...v, host }))} placeholder="10.35.180.238" />
@@ -289,6 +290,12 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                     </>
                   ) : null}
                 </div>
+
+                {form.engine === 'sqlserver' ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    SQL Server requires a server-side read-only login.
+                  </p>
+                ) : null}
 
                 {steps.length ? <div className="mt-3"><AttachLog steps={steps} /></div> : null}
                 {error ? <p className="mt-3 text-xs text-muted-foreground">{error}</p> : null}
@@ -406,9 +413,9 @@ const DATABASE_CONNECTORS = [
   {
     engine: 'sqlserver',
     name: 'SQL Server',
-    summary: 'Explore Microsoft SQL Server without changing agent workflows.',
-    detail: 'Coming soon',
-    available: false,
+    summary: 'Connect Microsoft SQL Server using a read-only database login.',
+    detail: 'Read-only login required · port 1433',
+    available: true,
     tint: '204 41 38',
   },
 ] as const
@@ -432,9 +439,7 @@ function DatabaseConnectorPicker({ onChoose }: { onChoose: (engine: DatabaseConn
               key={connector.engine}
               type="button"
               disabled={!connector.available}
-              onClick={() => {
-                if (connector.engine === 'postgresql' || connector.engine === 'mysql') onChoose(connector.engine)
-              }}
+              onClick={() => onChoose(connector.engine)}
               className={cn(
                 'flex flex-col items-start gap-1.5 rounded-lg border p-4 text-left',
                 'transition-colors outline-none',

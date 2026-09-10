@@ -150,6 +150,8 @@ export type TranscriptionRow = {
   model: string | null
   error: string | null
   documentId: string | null
+  /** The exact `[MM:SS] line` transcript, once the job finishes. */
+  transcriptText?: string | null
   createdAt: number
   updatedAt: number
 }
@@ -242,7 +244,7 @@ export type PlaybookBullet = {
 export type DbConnectionRow = {
   id: string
   name: string
-  engine: 'postgresql' | 'mysql'
+  engine: 'postgresql' | 'mysql' | 'sqlserver'
   status: 'connected' | 'error'
   error: string | null
   host: string

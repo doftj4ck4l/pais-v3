@@ -13,6 +13,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0",
+    "mssql": "^12.7.1",
     "mysql2": "^3.24.3",
     "unpdf": "^1.8.1"
   },

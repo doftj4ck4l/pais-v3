@@ -554,6 +554,13 @@ export const transcriptions = sqliteTable(
     error: text("error"), // why status is `failed`, shown verbatim in the UI
     /** The transcript in the docs corpus, once it exists. */
     documentId: text("document_id").references(() => documents.id, { onDelete: "set null" }),
+    /**
+     * The exact `[MM:SS] line` transcript, kept so a finished job can be
+     * viewed or downloaded as a `.txt` file. The corpus chunks carry the same
+     * words but chunk boundaries are the chunker's, not the source's; this is
+     * the original, byte-for-byte.
+     */
+    transcriptText: text("transcript_text"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -570,6 +577,7 @@ export type TranscriptionRow = {
   model: string | null;
   error: string | null;
   documentId: string | null;
+  transcriptText: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -620,7 +628,7 @@ export type DbConnectionRow = {
   id: string;
   workspaceId: string | null;
   name: string;
-  engine: "postgresql" | "mysql";
+  engine: "postgresql" | "mysql" | "sqlserver";
   status: DbConnectionStatus;
   error: string | null;
   host: string;

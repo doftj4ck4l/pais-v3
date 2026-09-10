@@ -285,7 +285,8 @@ export async function transcribeToCorpus(
   // `ingestText` handles an empty transcript too, but an empty audio upload is
   // a failure worth surfacing as such, not an empty document in the corpus.
   await deps.onIndexing?.();
-  const result = await ingestText(workspaceId, title, formatTranscript(t.segments), deps.store);
+  const text = formatTranscript(t.segments);
+  const result = await ingestText(workspaceId, title, text, deps.store);
   if (result.status === "indexed") {
     return {
       ok: true,
@@ -293,6 +294,9 @@ export async function transcribeToCorpus(
       chunks: result.chunks,
       model: t.model,
       language: t.language ?? null,
+      // Keep the exact formatted text for a byte-stable `.txt` export; corpus
+      // chunks are shaped for search and may have different boundaries.
+      text,
     };
   }
   return { ok: false, error: result.error ?? "the exported transcript was empty" };
@@ -303,5 +307,5 @@ export async function transcribeToCorpus(
  * the corpus to link; nothing is written on the failure branch.
  */
 export type CorpusOutcome =
-  | { ok: true; documentId: string; chunks: number; model: string; language: string | null }
+  | { ok: true; documentId: string; chunks: number; model: string; language: string | null; text: string }
   | { ok: false; error: string };
