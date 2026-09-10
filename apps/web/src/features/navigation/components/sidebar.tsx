@@ -51,7 +51,7 @@ export function Sidebar({
     <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
       <div className="flex shrink-0 flex-col">
         <div className="flex h-10 items-center gap-2 px-2">
-          <Brand className="h-[1.125rem] min-w-0" />
+          <Brand className="h-8 min-w-0" />
           {onCollapse ? (
             <button
               type="button"
