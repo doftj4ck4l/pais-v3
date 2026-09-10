@@ -69,3 +69,69 @@ describe("GET /api/documents/transcriptions/:id", () => {
     expect(hidden.status).toBe(404);
   });
 });
+
+describe("chunked transcription upload HTTP API", () => {
+  it("accepts proxy-sized raw parts and keeps the session workspace-private", async () => {
+    const owner = `upload-owner-${Date.now()}`;
+    const stranger = `upload-stranger-${Date.now()}`;
+    const workspace = await workspaceRegistry.create(owner, "Recordings");
+    await workspaceRegistry.create(stranger, "Other recordings");
+    const app = createApp();
+
+    const created = await app.request(
+      `/api/documents/transcription-uploads?workspaceId=${workspace.id}`,
+      {
+        method: "POST",
+        headers: { "x-authentik-uid": owner, "content-type": "application/json" },
+        body: JSON.stringify({ title: "town-hall.wav", contentType: "audio/wav", size: 4 }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const session = (await created.json()) as { uploadId: string; chunkBytes: number; partCount: number };
+    expect(session.chunkBytes).toBeLessThan(1024 * 1024);
+    expect(session.partCount).toBe(1);
+
+    const hidden = await app.request(
+      `/api/documents/transcription-uploads/${session.uploadId}/chunks/0?workspaceId=${workspace.id}`,
+      {
+        method: "PUT",
+        headers: { "x-authentik-uid": stranger, "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3, 4]),
+      },
+    );
+    expect(hidden.status).toBe(404);
+
+    const chunk = await app.request(
+      `/api/documents/transcription-uploads/${session.uploadId}/chunks/0?workspaceId=${workspace.id}`,
+      {
+        method: "PUT",
+        headers: { "x-authentik-uid": owner, "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3, 4]),
+      },
+    );
+    expect(chunk.status).toBe(200);
+    expect(await chunk.json()).toEqual({ receivedBytes: 4, nextPart: 1 });
+
+    const cancelled = await app.request(
+      `/api/documents/transcription-uploads/${session.uploadId}?workspaceId=${workspace.id}`,
+      { method: "DELETE", headers: { "x-authentik-uid": owner } },
+    );
+    expect(cancelled.status).toBe(204);
+  });
+
+  it("rejects an oversized recording before receiving audio bytes", async () => {
+    const owner = `oversized-upload-${Date.now()}`;
+    const workspace = await workspaceRegistry.create(owner, "Large recordings");
+    const response = await createApp().request(
+      `/api/documents/transcription-uploads?workspaceId=${workspace.id}`,
+      {
+        method: "POST",
+        headers: { "x-authentik-uid": owner, "content-type": "application/json" },
+        body: JSON.stringify({ title: "too-large.wav", contentType: "audio/wav", size: 513 * 1024 * 1024 }),
+      },
+    );
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: expect.stringContaining("512MiB limit") });
+  });
+});

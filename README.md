@@ -174,6 +174,7 @@ Flow in `services/agent.service.ts`:
 | GET    | `/api/conversations/:id` | One conversation + its messages and traces |
 | DELETE | `/api/conversations/:id` | Delete a conversation (cascades)           |
 | POST   | `/api/documents/transcribe` | Queue an audio file for transcription    |
+| POST/PUT | `/api/documents/transcription-uploads/*` | Upload large audio in proxy-safe chunks     |
 | GET    | `/api/documents/transcriptions` | List transcription jobs                |
 | GET    | `/api/documents/transcriptions/:id` | Read one job and its transcript      |
 | DELETE | `/api/documents/transcriptions/:id` | Delete a job and indexed transcript   |

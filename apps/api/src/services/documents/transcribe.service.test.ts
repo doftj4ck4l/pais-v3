@@ -8,7 +8,9 @@ import { formatTranscript, stamp, transcribeAudio, transcribeToCorpus } from "./
 
 const AUDIO = new Uint8Array([0, 1, 2, 3]);
 const INPUT = { bytes: AUDIO, contentType: "audio/mpeg", filename: "call.mp3" };
-const CREDS = { apiKey: "k", baseUrl: "http://gw/v1" };
+// Explicit because a developer or deployment may override TRANSCRIBE_MODEL;
+// these assertions exercise the request shape, not the machine's .env.
+const CREDS = { apiKey: "k", baseUrl: "http://gw/v1", model: "whisper-1" };
 
 const reply = (json: any) => new Response(JSON.stringify(json), { status: 200 });
 

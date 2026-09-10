@@ -56,6 +56,7 @@ type LocalUpload = {
   key: string
   title: string
   status: 'uploading' | 'failed'
+  progress: number
   error?: string
 }
 
@@ -183,6 +184,7 @@ export function TranscriptionsPanel() {
       key: `${Date.now()}-${index}-${file.name}`,
       title: file.name,
       status: 'uploading' as const,
+      progress: 0,
     }))
     setLocalUploads((current) => [
       ...current.filter((upload) => upload.status === 'uploading'),
@@ -195,7 +197,11 @@ export function TranscriptionsPanel() {
     for (const [index, file] of audio.entries()) {
       const local = incoming[index]!
       try {
-        const result = await enqueueTranscription(scope, file)
+        const result = await enqueueTranscription(scope, file, (progress) => {
+          setLocalUploads((current) => current.map((upload) =>
+            upload.key === local.key ? { ...upload, progress } : upload,
+          ))
+        })
         knownActive.current.add(result.transcriptionId)
         setTrackedIds((current) => [...new Set([...current, result.transcriptionId])])
         setLocalUploads((current) => current.filter((upload) => upload.key !== local.key))
@@ -680,8 +686,8 @@ function ProgressDialog({
               key={upload.key}
               title={upload.title}
               status={upload.status === 'uploading' ? t('uploadingAudio') : t('transcriptionFailed')}
-              description={upload.error ?? t('uploadingAudio')}
-              progress={upload.status === 'uploading' ? 10 : 100}
+              description={upload.error ?? t('uploadProgress', { percent: upload.progress })}
+              progress={upload.status === 'uploading' ? Math.max(3, upload.progress * 0.2) : 100}
               failed={upload.status === 'failed'}
             />
           ))}

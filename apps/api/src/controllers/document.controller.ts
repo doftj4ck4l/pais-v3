@@ -3,6 +3,11 @@ import { documentStore } from "../repositories/document.repository";
 import { transcriptionStore } from "../repositories/transcription.repository";
 import { ingestPdf } from "../services/documents/ingest.service";
 import { transcriptionQueue, TranscriptionQueueFullError } from "../services/documents/transcription-queue";
+import {
+  MAX_TRANSCRIPTION_BYTES,
+  TranscriptionUploadError,
+  transcriptionUploadStore,
+} from "../services/documents/transcription-upload.service";
 import { searchDocuments } from "../services/documents/search.service";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
@@ -28,8 +33,6 @@ const MAX_BYTES = 25 * 1024 * 1024;
  * Cap an audio upload. A recording is bigger than a page: an hour of MP3 at
  * 128kbps is ~57MB, and whisper wants the whole file, not a clip.
  */
-const MAX_TRANSCRIBE_BYTES = 100 * 1024 * 1024;
-
 /** GET /api/documents — a workspace's uploads, newest first. */
 export async function index(c: Context) {
   const documents = await documentStore.list(await workspaceIdOf(c));
@@ -114,10 +117,10 @@ export async function transcribe(c: Context) {
     return c.json({ error: "No audio file supplied under the 'file' field" }, 400);
   }
 
-  if (file.size > MAX_TRANSCRIBE_BYTES) {
+  if (file.size > MAX_TRANSCRIPTION_BYTES) {
     return c.json(
       {
-        error: `file is ${(file.size / 1e6).toFixed(1)}MB, over the ${MAX_TRANSCRIBE_BYTES / 1e6}MB limit`,
+        error: `file is ${(file.size / 1e6).toFixed(1)}MB, over the ${MAX_TRANSCRIPTION_BYTES / 1024 / 1024}MiB limit`,
       },
       413,
     );
@@ -133,6 +136,86 @@ export async function transcribe(c: Context) {
     }
     throw e;
   }
+}
+
+/** Start a chunked recording upload. The recording itself is not sent here. */
+export async function createTranscriptionUpload(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+  let input: unknown;
+  try {
+    input = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected a JSON upload description" }, 400);
+  }
+  if (!input || typeof input !== "object") {
+    return c.json({ error: "Expected a JSON upload description" }, 400);
+  }
+
+  const body = input as Record<string, unknown>;
+  if (typeof body.title !== "string" || typeof body.contentType !== "string" || typeof body.size !== "number") {
+    return c.json({ error: "title, contentType, and size are required" }, 400);
+  }
+  try {
+    return c.json(
+      transcriptionUploadStore.create(workspaceId, {
+        title: body.title,
+        contentType: body.contentType,
+        size: body.size,
+      }),
+      201,
+    );
+  } catch (error) {
+    return transcriptionUploadFailure(c, error);
+  }
+}
+
+/** Accept one small raw chunk, ordered so retries cannot silently corrupt it. */
+export async function appendTranscriptionUpload(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing upload id" }, 400);
+  const part = Number(c.req.param("part"));
+  try {
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    return c.json(transcriptionUploadStore.append(workspaceId, id, part, bytes));
+  } catch (error) {
+    return transcriptionUploadFailure(c, error);
+  }
+}
+
+/** Assemble a completed upload and put it on the existing FIFO worker. */
+export async function completeTranscriptionUpload(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing upload id" }, 400);
+  try {
+    const upload = transcriptionUploadStore.finish(workspaceId, id);
+    const row = await transcriptionQueue.enqueue({ workspaceId, ...upload });
+    return c.json({ transcriptionId: row.id, status: row.status }, 202);
+  } catch (error) {
+    if (error instanceof TranscriptionQueueFullError) return c.json({ error: error.message }, 429);
+    return transcriptionUploadFailure(c, error);
+  }
+}
+
+/** Abandon chunks after a browser/network failure and release their memory. */
+export async function destroyTranscriptionUpload(c: Context) {
+  const workspaceId = await workspaceIdOf(c);
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing upload id" }, 400);
+  try {
+    transcriptionUploadStore.cancel(workspaceId, id);
+    return c.body(null, 204);
+  } catch (error) {
+    return transcriptionUploadFailure(c, error);
+  }
+}
+
+function transcriptionUploadFailure(c: Context, error: unknown) {
+  if (error instanceof TranscriptionUploadError) {
+    return c.json({ error: error.message }, error.status);
+  }
+  throw error;
 }
 
 /** GET /api/documents/transcriptions — a workspace's jobs, newest first. */

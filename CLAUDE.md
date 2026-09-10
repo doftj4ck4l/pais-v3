@@ -499,6 +499,16 @@ searchable document corpus. The queue holds uploaded audio bytes in memory, so
 an API restart marks any queued, transcribing, or indexing job failed rather
 than pretending work can resume.
 
+The web client does not send a recording as one multipart request. It creates a
+session at `/api/documents/transcription-uploads`, sends ordered 768 KiB raw
+parts, then completes the session to enqueue the assembled audio. The part size
+stays below the common 1 MiB reverse-proxy default that caused large recordings
+to fail with 413 before the API saw them. Sessions are workspace-scoped, reserve
+their declared size up front, expire after one hour, and cap a recording at 512
+MiB. They live in API memory just like the queue, so a restart requires the
+browser to begin the upload again. Keep the old `/transcribe` multipart route
+for compatibility, but the console must use the chunked path.
+
 `GET /api/documents/transcriptions` intentionally returns job metadata only.
 The Finder-style browser fetches the selected result lazily from
 `GET /api/documents/transcriptions/:id`. That detail lookup is scoped by
