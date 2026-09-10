@@ -385,3 +385,18 @@
     }
     ::-webkit-scrollbar-thumb:hover { background-color: var(--muted-foreground); }
 }
+
+/* The sidebar's own scrollbar stays hidden until the pointer is over its
+   scroll area, so an idle column is calm and the marker of scrollability
+   appears exactly when the user is about to scroll it. */
+.sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+.sidebar-scroll:hover {
+    scrollbar-color: var(--border) transparent;
+}
+@supports selector(::-webkit-scrollbar) {
+    .sidebar-scroll::-webkit-scrollbar-thumb { background: transparent; }
+    .sidebar-scroll:hover::-webkit-scrollbar-thumb { background: var(--border); }
+}

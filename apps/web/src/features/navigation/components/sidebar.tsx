@@ -50,7 +50,7 @@ export function Sidebar({
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex h-10 items-center gap-2 px-2">
           <Brand className="h-[1.125rem] min-w-0" />
           {onCollapse ? (
