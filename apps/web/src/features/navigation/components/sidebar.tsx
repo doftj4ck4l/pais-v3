@@ -50,7 +50,7 @@ export function Sidebar({
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
-      <div className="sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="flex shrink-0 flex-col">
         <div className="flex h-10 items-center gap-2 px-2">
           <Brand className="h-[1.125rem] min-w-0" />
           {onCollapse ? (
@@ -69,13 +69,18 @@ export function Sidebar({
           <WorkspacePicker />
         </div>
 
-        <nav aria-label={t('console')} className="mt-2 grid gap-0.5">
+        <div className="mt-2">
           <SidebarButton
             label={t('newChat')}
             icon={PlusIcon}
             onClick={() => openAgent(null)}
             emphasized
           />
+        </div>
+      </div>
+
+      <div className="sidebar-scroll mt-2 flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <nav aria-label={t('console')} className="grid gap-0.5">
           <SidebarButton
             label={t('chats')}
             icon={MessageSquareIcon}
