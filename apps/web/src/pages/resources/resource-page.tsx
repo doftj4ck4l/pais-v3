@@ -1,5 +1,6 @@
 import { AppShell } from '@/features/navigation/components/app-shell'
 import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
+import { cn } from '@/shared/lib/utils'
 import type { ReactNode } from 'react'
 
 /**
@@ -18,10 +19,13 @@ import type { ReactNode } from 'react'
 export function ResourcePage({
   title,
   description,
+  fullBleed = false,
   children,
 }: {
   title: string
   description: string
+  /** Let browser-style resources use every pixel below the top bar. */
+  fullBleed?: boolean
   children: ReactNode
 }) {
   const workspace = useWorkspace()
@@ -37,10 +41,21 @@ export function ResourcePage({
         </div>
       }
     >
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-7">
+      <main
+        className={cn(
+          'min-h-0 flex-1',
+          fullBleed ? 'overflow-hidden' : 'overflow-y-auto px-4 py-5 sm:px-8 sm:py-7',
+        )}
+      >
         {/* No surface of its own: what a page lists is a grid of cards, and a
             card holding cards is a border around a border. */}
-        <div key={workspace.current ?? 'none'} className="page-scale mx-auto w-full max-w-6xl">
+        <div
+          key={workspace.current ?? 'none'}
+          className={cn(
+            'page-scale w-full',
+            fullBleed ? 'h-full min-h-0' : 'mx-auto max-w-6xl',
+          )}
+        >
           {children}
         </div>
       </main>

@@ -8,6 +8,7 @@ export function DocsPage() {
     <ResourcePage
       title={t('docs')}
       description={t('docsPageDescription')}
+      fullBleed
     >
       <DocumentPanel />
     </ResourcePage>

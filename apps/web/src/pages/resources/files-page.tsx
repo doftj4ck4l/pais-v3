@@ -13,6 +13,7 @@ export function FilesPage() {
     <ResourcePage
       title={t('assets')}
       description={t('assetsPageDescription')}
+      fullBleed
     >
       <FilesPanel refreshKey={board.runsCompleted} />
     </ResourcePage>

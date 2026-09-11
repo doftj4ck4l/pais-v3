@@ -22,6 +22,51 @@ beforeAll(async () => {
 
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+describe("GET /api/documents/:id", () => {
+  it("returns searchable text only through its owning workspace", async () => {
+    const suffix = Date.now();
+    const owner = `document-owner-${suffix}`;
+    const stranger = `document-stranger-${suffix}`;
+    const workspace = await workspaceRegistry.create(owner, "Research");
+    await workspaceRegistry.create(stranger, "Other research");
+    const documentId = `doc_detail_${suffix}`;
+
+    await documentStore.save(
+      {
+        id: documentId,
+        workspaceId: workspace.id,
+        title: "field-notes.pdf",
+        bytes: 64,
+        pages: 2,
+        status: "indexed",
+      },
+      [
+        { seq: 0, page: 1, text: "First searchable paragraph." },
+        { seq: 1, page: 2, text: "Second searchable paragraph." },
+      ],
+    );
+
+    const owned = await createApp().request(
+      `/api/documents/${documentId}?workspaceId=${workspace.id}`,
+      { headers: { "x-authentik-uid": owner } },
+    );
+    expect(owned.status).toBe(200);
+    expect(await owned.json()).toMatchObject({
+      document: {
+        title: "field-notes.pdf",
+        content: expect.stringContaining("Second searchable paragraph."),
+        chunkCount: 2,
+      },
+    });
+
+    const hidden = await createApp().request(
+      `/api/documents/${documentId}?workspaceId=${workspace.id}`,
+      { headers: { "x-authentik-uid": stranger } },
+    );
+    expect(hidden.status).toBe(404);
+  });
+});
+
 describe("GET /api/documents/transcriptions/:id", () => {
   it("returns readable timestamped output only through its owning workspace", async () => {
     const owner = `transcript-owner-${Date.now()}`;

@@ -16,4 +16,5 @@ documentRoutes.get("/transcriptions", documentController.listTranscriptions);
 documentRoutes.get("/transcriptions/:id/transcript", documentController.transcript);
 documentRoutes.get("/transcriptions/:id", documentController.showTranscription);
 documentRoutes.delete("/transcriptions/:id", documentController.destroyTranscription);
+documentRoutes.get("/:id", documentController.show);
 documentRoutes.delete("/:id", documentController.destroy);

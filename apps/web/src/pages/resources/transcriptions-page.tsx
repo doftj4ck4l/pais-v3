@@ -8,6 +8,7 @@ export function TranscriptionsPage() {
     <ResourcePage
       title={t('transcribeAudio')}
       description={t('transcriptionsPageDescription')}
+      fullBleed
     >
       <TranscriptionsPanel />
     </ResourcePage>

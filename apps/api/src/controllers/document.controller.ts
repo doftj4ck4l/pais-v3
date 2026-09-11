@@ -228,6 +228,16 @@ export async function listTranscriptions(c: Context) {
   return c.json({ transcriptions });
 }
 
+/** GET /api/documents/:id — one indexed document as safe, plain JSON text. */
+export async function show(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing document id" }, 400);
+
+  const document = await documentStore.read(await workspaceIdOf(c), id);
+  if (!document) return c.json({ error: "Document not found" }, 404);
+  return c.json({ document });
+}
+
 /** GET /api/documents/transcriptions/:id — one job and its readable transcript. */
 export async function showTranscription(c: Context) {
   const id = c.req.param("id");

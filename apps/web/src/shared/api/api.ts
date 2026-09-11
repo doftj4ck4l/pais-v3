@@ -2,6 +2,7 @@ import type {
   ConversationDetail,
   ConversationRow,
   DbConnectionRow,
+  DocumentDetail,
   DocumentRow,
   IngestResult,
   McpServerRow,
@@ -392,6 +393,13 @@ export async function uploadDocuments(scope: Scope, files: File[]): Promise<Inge
 
 export async function deleteDocument(scope: Scope, id: string): Promise<void> {
   await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+}
+
+/** Read the safe plain-text representation stored in the searchable corpus. */
+export async function getDocument(scope: Scope, id: string): Promise<DocumentDetail> {
+  return json<DocumentDetail>(
+    await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`),
+  )
 }
 
 /**
