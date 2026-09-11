@@ -128,6 +128,14 @@ export type DocumentRow = {
   createdAt: number
 }
 
+export type DocumentDetail = {
+  document: {
+    title: string
+    content: string
+    chunkCount: number
+  }
+}
+
 /** One file's outcome from an upload — the whole batch never fails as a unit. */
 export type IngestResult = {
   documentId?: string

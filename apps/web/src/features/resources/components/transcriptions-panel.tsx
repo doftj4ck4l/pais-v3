@@ -236,8 +236,8 @@ export function TranscriptionsPanel() {
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm',
-        dragging && 'ring-2 ring-blue-500/50 ring-offset-2 ring-offset-background',
+        'relative flex h-full min-h-0 flex-col overflow-hidden bg-background',
+        dragging && 'ring-2 ring-inset ring-blue-500/50',
       )}
       onDragOver={(event) => {
         event.preventDefault()
@@ -277,7 +277,7 @@ export function TranscriptionsPanel() {
       ) : null}
 
       {rows.length ? (
-        <div className="grid min-h-[34rem] min-w-0 grid-cols-[minmax(0,1fr)] lg:h-[calc(100dvh-12rem)] lg:max-h-[48rem] lg:grid-cols-[13rem_minmax(20rem,0.9fr)_minmax(22rem,1.15fr)]">
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-y-auto lg:grid-cols-[13rem_minmax(20rem,0.9fr)_minmax(22rem,1.15fr)] lg:overflow-hidden">
           <FolderRail
             folders={folders}
             selected={selectedFolder}
@@ -307,7 +307,7 @@ export function TranscriptionsPanel() {
           icon={MicIcon}
           title={t('noTranscriptions')}
           description={t('noTranscriptionsDescription')}
-          className="border-t"
+          className="min-h-0 flex-1 border-t"
           action={(
             <label htmlFor={inputId}>
               <Button size="sm" asChild>
@@ -319,7 +319,7 @@ export function TranscriptionsPanel() {
       )}
 
       {dragging ? (
-        <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500/50 bg-background/90 backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-blue-500/50 bg-background/90 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3 text-center">
             <FolderOpenIcon className="size-10 fill-blue-500/15 text-blue-500" />
             <p className="text-sm font-medium">{t('transcribeAudio')}</p>
@@ -367,7 +367,7 @@ function BrowserToolbar({
 }) {
   const { t } = usePreferences()
   return (
-    <header className="flex min-h-14 min-w-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2 sm:gap-3 sm:px-4">
+    <header className="flex min-h-14 min-w-0 shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2 sm:gap-3 sm:px-4">
       <div className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden text-sm font-medium sm:w-auto">
         <FolderOpenIcon className="size-4 fill-blue-500/15 text-blue-500" />
         <span>{t('transcriptions')}</span>
@@ -379,6 +379,7 @@ function BrowserToolbar({
           <button
             type="button"
             onClick={onShowProgress}
+            aria-label={t('workingInBackground')}
             className="flex h-8 items-center gap-2 rounded-lg bg-blue-500/10 px-2.5 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/15 dark:text-blue-400"
           >
             <Spinner className="size-3.5" />
@@ -395,11 +396,14 @@ function BrowserToolbar({
             className="h-8 w-full rounded-lg border bg-background pr-3 pl-8 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-blue-500/25"
           />
         </label>
-        <label htmlFor={inputId}>
-          <Button size="sm" asChild>
-            <span><UploadIcon data-icon="inline-start" />{t('transcribeAudio')}</span>
-          </Button>
-        </label>
+        <Button
+          size="sm"
+          onClick={() => document.getElementById(inputId)?.click()}
+          aria-label={t('transcribeAudio')}
+        >
+          <UploadIcon data-icon="inline-start" />
+          <span className="hidden sm:inline">{t('transcribeAudio')}</span>
+        </Button>
       </div>
     </header>
   )
