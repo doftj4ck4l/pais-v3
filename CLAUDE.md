@@ -565,6 +565,16 @@ the stream kept arriving and the answer landed in a component nobody would see
 again. `apps/web/src/routes/index.tsx` renders the chat page, but it does not
 own the runs.
 
+Sending while the selected conversation is running queues a follow-up on that
+same local agent; it must never call `spawn`, which creates the unrelated chat
+the user was trying to avoid. Queued turns stay outside `itemsRef` until the
+active stream closes so they render after the current answer and do not enter
+model history out of order. `conversationIdsRef` carries the id into an
+immediate follow-up because React may not have committed the conversation event
+to `agentsRef` yet. The queue is browser-live state, like the SSE controller:
+navigation preserves it because the provider is above the router, while a page
+reload cannot preserve the stream it is waiting behind.
+
 Every page is wrapped in `AppShell` (`features/navigation`), which draws the
 sidebar and owns the settings modal. There is **one 260px labelled sidebar**,
 and it holds both kinds of navigation: icon-and-word destinations at the top,
