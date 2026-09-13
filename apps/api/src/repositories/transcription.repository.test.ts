@@ -18,11 +18,19 @@ function freshStore() {
 describe("SqliteTranscriptionStore", () => {
   it("creates a job queued, then walks it through terminal states", async () => {
     const { store, docs } = freshStore();
-    const row = await store.create({ id: "trx_1", workspaceId: "ws1", title: "call.mp3", bytes: 1024 });
+    const row = await store.create({
+      id: "trx_1",
+      workspaceId: "ws1",
+      title: "call.mp3",
+      bytes: 1024,
+      audioPath: ".pixelspace/transcriptions/trx_1.mp3",
+      audioContentType: "audio/mpeg",
+    });
 
     expect(row.status).toBe("queued");
     expect(row.error).toBeNull();
     expect(row.documentId).toBeNull();
+    expect(row.audioPath).toEndWith("trx_1.mp3");
 
     // `document_id` is a real foreign key: the transcript row must exist first.
     await docs.save(
@@ -41,6 +49,10 @@ describe("SqliteTranscriptionStore", () => {
     expect(listed!.model).toBe("whisper-1");
     expect(listed!.transcriptText).toContain("quarterly");
     expect(listed!.updatedAt).toBeGreaterThanOrEqual(row.createdAt);
+
+    expect(await store.updateTranscript("ws2", row.id, "[00:00] hidden")).toBe(false);
+    expect(await store.updateTranscript("ws1", row.id, "[00:00] corrected", row.createdAt + 10)).toBe(true);
+    expect((await store.find("ws1", row.id))!.transcriptText).toBe("[00:00] corrected");
   });
 
   it("records a failure with the reason", async () => {

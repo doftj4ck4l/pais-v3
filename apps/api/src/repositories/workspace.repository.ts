@@ -92,6 +92,9 @@ export async function list(workspaceId: string, limit = 200): Promise<WorkspaceF
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (out.length >= limit) return;
+      // Application-owned recordings and spilled tool results have their own
+      // UI/links; listing `.pixelspace` as agent output would duplicate them.
+      if (depth === 0 && entry.name === ".pixelspace") continue;
       const full = path.join(dir, entry.name);
       // Do not follow links while walking: a link out of the workspace would
       // otherwise be listed as if it belonged to the user.

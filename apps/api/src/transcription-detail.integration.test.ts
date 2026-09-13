@@ -7,6 +7,7 @@ let dir: string;
 let createApp: typeof import("./app").createApp;
 let documentStore: typeof import("./repositories/document.repository").documentStore;
 let transcriptionStore: typeof import("./repositories/transcription.repository").transcriptionStore;
+let rangedAudioResponse: typeof import("./controllers/document.controller").rangedAudioResponse;
 let workspaceRegistry: typeof import("./repositories/workspace-registry.repository").workspaceRegistry;
 
 beforeAll(async () => {
@@ -17,6 +18,7 @@ beforeAll(async () => {
   ({ createApp } = await import("./app"));
   ({ documentStore } = await import("./repositories/document.repository"));
   ({ transcriptionStore } = await import("./repositories/transcription.repository"));
+  ({ rangedAudioResponse } = await import("./controllers/document.controller"));
   ({ workspaceRegistry } = await import("./repositories/workspace-registry.repository"));
 });
 
@@ -104,8 +106,9 @@ describe("GET /api/documents/transcriptions/:id", () => {
     );
     expect(owned.status).toBe(200);
     expect(await owned.json()).toMatchObject({
-      transcription: { id: "trx_transcript_detail", status: "done" },
+      transcription: { id: "trx_transcript_detail", status: "done", hasAudio: false },
       content: "[00:00] Opening note\n[00:12] Ship on Thursday",
+      segments: [{ start: 0, text: "Opening note" }, { start: 12, text: "Ship on Thursday" }],
     });
 
     const hidden = await createApp().request(
@@ -113,6 +116,92 @@ describe("GET /api/documents/transcriptions/:id", () => {
       { headers: { "x-authentik-uid": stranger } },
     );
     expect(hidden.status).toBe(404);
+  });
+
+  it("streams a private byte range and reindexes corrected passages", async () => {
+    const owner = `audio-owner-${Date.now()}`;
+    const stranger = `audio-stranger-${Date.now()}`;
+    const workspace = await workspaceRegistry.create(owner, "Recorded interviews");
+    await workspaceRegistry.create(stranger, "Other interviews");
+    const audioPath = path.join(dir, "review.mp3");
+    fs.writeFileSync(audioPath, new Uint8Array([10, 20, 30, 40, 50]));
+
+    await documentStore.save(
+      { id: "doc_audio_review", workspaceId: workspace.id, title: "review.mp3", bytes: 20, pages: 1, status: "indexed" },
+      [{ seq: 0, page: 1, text: "[00:00] Old wording" }],
+    );
+    await transcriptionStore.create({
+      id: "trx_audio_review",
+      workspaceId: workspace.id,
+      title: "review.mp3",
+      bytes: 5,
+      audioPath: ".pixelspace/transcriptions/trx_audio_review.mp3",
+      audioContentType: "audio/mpeg",
+    });
+    await transcriptionStore.markDone(
+      "trx_audio_review",
+      "doc_audio_review",
+      "whisper-large-v3",
+      "[00:00] Old wording",
+    );
+
+    const app = createApp();
+    const ranged = rangedAudioResponse({
+      relativePath: ".pixelspace/transcriptions/trx_audio_review.mp3",
+      absolutePath: audioPath,
+      byteLength: 5,
+      contentType: "audio/mpeg",
+      file: Bun.file(audioPath),
+    }, "bytes=1-3");
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers.get("content-range")).toBe("bytes 1-3/5");
+    expect(new Uint8Array(await ranged.arrayBuffer())).toEqual(new Uint8Array([20, 30, 40]));
+    const invalidRange = rangedAudioResponse({
+      relativePath: ".pixelspace/transcriptions/trx_audio_review.mp3",
+      absolutePath: audioPath,
+      byteLength: 5,
+      contentType: "audio/mpeg",
+      file: Bun.file(audioPath),
+    }, "bytes=9-");
+    expect(invalidRange.status).toBe(416);
+    expect(invalidRange.headers.get("content-range")).toBe("bytes */5");
+
+    const hidden = await app.request(
+      `/api/documents/transcriptions/trx_audio_review/audio?workspaceId=${workspace.id}`,
+      { headers: { "x-authentik-uid": stranger } },
+    );
+    expect(hidden.status).toBe(404);
+
+    const edited = await app.request(
+      `/api/documents/transcriptions/trx_audio_review?workspaceId=${workspace.id}`,
+      {
+        method: "PATCH",
+        headers: { "x-authentik-uid": owner, "content-type": "application/json" },
+        body: JSON.stringify({ segments: [
+          { start: 0, text: "Correct opening" },
+          { start: 8, text: "Approved decision" },
+        ] }),
+      },
+    );
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({
+      transcription: { id: "trx_audio_review", hasAudio: true },
+      content: "[00:00] Correct opening\n[00:08] Approved decision",
+    });
+    expect((await documentStore.read(workspace.id, "doc_audio_review"))?.content).toContain("Approved decision");
+    expect((await transcriptionStore.find(workspace.id, "trx_audio_review"))?.transcriptText).not.toContain("Old wording");
+    expect(await documentStore.search(workspace.id, "Approved", 5)).toHaveLength(1);
+    expect(await documentStore.search(workspace.id, "Old", 5)).toHaveLength(0);
+
+    const hiddenEdit = await app.request(
+      `/api/documents/transcriptions/trx_audio_review?workspaceId=${workspace.id}`,
+      {
+        method: "PATCH",
+        headers: { "x-authentik-uid": stranger, "content-type": "application/json" },
+        body: JSON.stringify({ segments: [{ start: 0, text: "Tampered" }] }),
+      },
+    );
+    expect(hiddenEdit.status).toBe(404);
   });
 });
 

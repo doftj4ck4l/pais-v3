@@ -7,23 +7,25 @@ export type NewTranscription = {
   workspaceId: string;
   title: string;
   bytes: number;
+  audioPath?: string | null;
+  audioContentType?: string | null;
 };
 
 /**
  * The only thing that touches `transcriptions`.
  *
  * The table is a job log plus the immediate status of each one: the audio
- * bytes never live in SQLite (they are read into the API process for the
- * whisper call and dropped), so a job cannot be resumed by a later process —
- * a restart marks every in-flight row `failed`, exactly as runs are closed
- * out. The transcript that succeeds is linked by `document_id`, because a
- * `documents` row alone cannot tell a transcript from a PDF upload.
+ * source recording is a workspace file and only its internal relative path is
+ * stored here. A job still cannot be resumed by a later process because the
+ * in-memory queue and model request state are gone, so a restart marks every
+ * in-flight row `failed`, exactly as runs are closed out.
  */
 export interface TranscriptionStore {
   create(input: NewTranscription, at?: number): Promise<TranscriptionRow>;
   markTranscribing(id: string, at?: number): Promise<void>;
   markIndexing(id: string, at?: number): Promise<void>;
   markDone(id: string, documentId: string, model: string, transcriptText: string, at?: number): Promise<void>;
+  updateTranscript(workspaceId: string, id: string, transcriptText: string, at?: number): Promise<boolean>;
   markFailed(id: string, error: string, at?: number): Promise<void>;
   list(workspaceId: string): Promise<TranscriptionRow[]>;
   find(workspaceId: string, id: string): Promise<TranscriptionRow | null>;
@@ -46,6 +48,8 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
       error: null,
       documentId: null,
       transcriptText: null,
+      audioPath: input.audioPath ?? null,
+      audioContentType: input.audioContentType ?? null,
       createdAt: at,
       updatedAt: at,
     };
@@ -77,6 +81,25 @@ export class SqliteTranscriptionStore implements TranscriptionStore {
 
   async markDone(id: string, documentId: string, model: string, transcriptText: string, at?: number): Promise<void> {
     await this.set(id, { status: "done", documentId, model, transcriptText }, at);
+  }
+
+  async updateTranscript(
+    workspaceId: string,
+    id: string,
+    transcriptText: string,
+    at = Date.now(),
+  ): Promise<boolean> {
+    const changed = this.dbImpl
+      .update(transcriptions)
+      .set({ transcriptText, updatedAt: at })
+      .where(and(
+        eq(transcriptions.id, id),
+        eq(transcriptions.workspaceId, workspaceId),
+        eq(transcriptions.status, "done"),
+      ))
+      .returning({ id: transcriptions.id })
+      .get();
+    return Boolean(changed);
   }
 
   async markFailed(id: string, error: string, at?: number): Promise<void> {

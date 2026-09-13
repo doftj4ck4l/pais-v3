@@ -109,6 +109,12 @@ describe("list", () => {
     expect(files.map((f) => f.path)).toEqual(["real.txt"]);
   });
 
+  it("keeps application-owned files out of the agent output browser", async () => {
+    write("report.txt");
+    write(".pixelspace/transcriptions/trx_demo.mp3");
+    expect((await list(WS)).map((file) => file.path)).toEqual(["report.txt"]);
+  });
+
   it("returns nothing for a user with no workspace", async () => {
     expect(await list("never-seen")).toEqual([]);
   });

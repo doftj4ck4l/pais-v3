@@ -177,6 +177,8 @@ Flow in `services/agent.service.ts`:
 | POST/PUT | `/api/documents/transcription-uploads/*` | Upload large audio in proxy-safe chunks     |
 | GET    | `/api/documents/transcriptions` | List transcription jobs                |
 | GET    | `/api/documents/transcriptions/:id` | Read one job and its transcript      |
+| GET    | `/api/documents/transcriptions/:id/audio` | Stream retained audio with seek support |
+| PATCH  | `/api/documents/transcriptions/:id` | Correct timed passages and refresh search |
 | DELETE | `/api/documents/transcriptions/:id` | Delete a job and indexed transcript   |
 | GET    | `/api/workspaces`        | List the user's workspaces                 |
 | POST   | `/api/workspaces`        | Create one                                 |

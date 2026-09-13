@@ -10,6 +10,10 @@ import {
   type CorpusOutcome,
   type TranscriptionAudioSource,
 } from "./transcribe.service";
+import {
+  transcriptionAudioStorage,
+  type TranscriptionAudioStorage,
+} from "./transcription-audio.service";
 
 /**
  * The audio transcription queue.
@@ -59,9 +63,14 @@ const newTranscriptionId = () =>
   `trx_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 export function createTranscriber(
-  deps: { store?: TranscriptionStore; run?: RunTranscription } = {},
+  deps: {
+    store?: TranscriptionStore;
+    run?: RunTranscription;
+    audioStorage?: TranscriptionAudioStorage;
+  } = {},
 ) {
   const store = deps.store ?? transcriptionStore;
+  const audioStorage = deps.audioStorage ?? transcriptionAudioStorage;
   const run = deps.run ?? ((job, reportStage) => transcribeToCorpus(
     job.workspaceId,
     job.title,
@@ -143,13 +152,51 @@ export function createTranscriber(
       if (pendingBytes + byteLength > MAX_PENDING_BYTES) {
         throw new TranscriptionQueueFullError();
       }
-      const row = await store.create(
-        { id: newTranscriptionId(), workspaceId: input.workspaceId, title: input.title, bytes: byteLength },
-      );
+      const id = newTranscriptionId();
+      const saved = await audioStorage.save({
+        id,
+        workspaceId: input.workspaceId,
+        title: input.title,
+        contentType: input.contentType,
+        source: input,
+        moveSource: "filePath" in input && Boolean(input.cleanup),
+      });
+      let row: TranscriptionRow;
+      try {
+        row = await store.create({
+          id,
+          workspaceId: input.workspaceId,
+          title: input.title,
+          bytes: byteLength,
+          audioPath: saved.relativePath,
+          audioContentType: saved.contentType,
+        });
+      } catch (error) {
+        await audioStorage.remove(input.workspaceId, saved.relativePath).catch(() => undefined);
+        throw error;
+      }
+
+      // Chunk-upload temp files can disappear as soon as their durable copy is
+      // complete. The queue and Whisper now read the persistent recording.
+      if (input.cleanup) {
+        try {
+          await input.cleanup();
+        } catch (error: any) {
+          logger.warn("transcribe.upload.cleanup_failed", {
+            transcriptionId: id,
+            message: String(error?.message ?? error),
+          });
+        }
+      }
+
       pending.push({
-        ...input,
-        id: row.id,
+        id,
+        workspaceId: input.workspaceId,
+        title: input.title,
         filename: input.title,
+        filePath: saved.absolutePath,
+        byteLength: saved.byteLength,
+        contentType: saved.contentType,
       });
       pendingBytes += byteLength;
       void drain();

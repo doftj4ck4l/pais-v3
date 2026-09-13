@@ -41,6 +41,11 @@ export type IndexedSource = { documentId: string; externalVersion: string | null
 
 export interface DocumentStore {
   save(doc: NewDocument, docChunks: Chunk[]): Promise<void>;
+  replaceContent(
+    workspaceId: string,
+    documentId: string,
+    input: { bytes: number; pages: number; chunks: Chunk[] },
+  ): Promise<boolean>;
   list(workspaceId: string): Promise<DocumentRow[]>;
   read(workspaceId: string, documentId: string): Promise<DocumentContent | null>;
   remove(workspaceId: string, documentId: string): Promise<boolean>;
@@ -108,6 +113,52 @@ export class SqliteDocumentStore implements DocumentStore {
         );
       }
     });
+  }
+
+  /** Replace one indexed document and its FTS mirror as a single transaction. */
+  async replaceContent(
+    workspaceId: string,
+    documentId: string,
+    input: { bytes: number; pages: number; chunks: Chunk[] },
+  ): Promise<boolean> {
+    const owned = await this.dbImpl
+      .select({ id: documents.id })
+      .from(documents)
+      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.id, documentId)))
+      .get();
+    if (!owned) return false;
+
+    this.dbImpl.transaction((tx) => {
+      tx.run(sql`DELETE FROM chunks_fts WHERE document_id = ${documentId}`);
+      tx.delete(chunks).where(eq(chunks.documentId, documentId)).run();
+      tx.update(documents)
+        .set({
+          bytes: input.bytes,
+          pages: input.pages,
+          chunkCount: input.chunks.length,
+          status: "indexed",
+          error: null,
+        })
+        .where(and(eq(documents.workspaceId, workspaceId), eq(documents.id, documentId)))
+        .run();
+
+      for (const chunk of input.chunks) {
+        const chunkId = `${documentId}-${chunk.seq}`;
+        tx.insert(chunks)
+          .values({
+            id: chunkId,
+            documentId,
+            workspaceId,
+            seq: chunk.seq,
+            page: chunk.page,
+            text: chunk.text,
+          })
+          .run();
+        tx.run(sql`INSERT INTO chunks_fts (text, chunk_id, document_id)
+                   VALUES (${chunk.text}, ${chunkId}, ${documentId})`);
+      }
+    });
+    return true;
   }
 
   async list(workspaceId: string): Promise<DocumentRow[]> {

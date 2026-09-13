@@ -264,6 +264,23 @@ export function formatTranscript(segments: TranscriptionSegment[]): string {
   return segments.map((s) => `${stamp(s.start)} ${s.text}`.trim()).join("\n").trim();
 }
 
+/** Recover timestamped segments from the exact text kept with a finished job. */
+export function parseFormattedTranscript(text: string): TranscriptionSegment[] {
+  return text
+    .split("\n")
+    .map((line) => {
+      const match = line.trim().match(/^\[(\d+):(\d{2})(?::(\d{2}))?\]\s*(.*)$/);
+      if (!match) return null;
+      const first = Number(match[1]);
+      const second = Number(match[2]);
+      const hasHours = match[3] !== undefined;
+      const start = hasHours ? first * 3600 + second * 60 + Number(match[3]) : first * 60 + second;
+      const content = match[4].trim();
+      return content ? { start, text: content } : null;
+    })
+    .filter((segment): segment is TranscriptionSegment => segment !== null);
+}
+
 /**
  * Transcribe an upload and index the result, as one unit.
  *

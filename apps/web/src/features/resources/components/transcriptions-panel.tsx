@@ -11,6 +11,8 @@ import {
   FolderIcon,
   FolderOpenIcon,
   MicIcon,
+  PencilLineIcon,
+  PlayIcon,
   SearchIcon,
   Trash2Icon,
   UploadIcon,
@@ -31,11 +33,15 @@ import {
   enqueueTranscription,
   getTranscription,
   listTranscriptions,
+  transcriptionAudioUrl,
   transcriptDownloadUrl,
+  updateTranscription,
 } from '@/shared/api/api'
 import {
   groupTranscriptionsByDate,
   hasActiveJobs,
+  activeTranscriptSegment,
+  transcriptTimestamp,
   transcriptionProgress,
 } from '@/features/resources/lib/transcriptions'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
@@ -44,6 +50,7 @@ import { localeFor } from '@/shared/lib/i18n'
 import type {
   TranscriptionDetail,
   TranscriptionRow,
+  TranscriptionSegment,
   TranscriptionStatus,
 } from '@/shared/lib/types'
 import type { TranslationKey } from '@/shared/lib/i18n'
@@ -79,6 +86,7 @@ export function TranscriptionsPanel() {
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([])
   const [trackedIds, setTrackedIds] = useState<string[]>([])
   const [progressOpen, setProgressOpen] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<TranscriptionRow | null>(null)
   const knownActive = useRef(new Set<string>())
 
@@ -156,6 +164,7 @@ export function TranscriptionsPanel() {
 
   useEffect(() => {
     setCopied(false)
+    setEditorOpen(false)
     if (!detailId) {
       setDetail(null)
       setDetailLoading(false)
@@ -296,10 +305,12 @@ export function TranscriptionsPanel() {
             loading={detailLoading}
             copied={copied}
             downloadUrl={selected ? transcriptDownloadUrl(scope, selected.id) : null}
+            audioUrl={selected?.hasAudio ? transcriptionAudioUrl(scope, selected.id) : null}
             onCopy={() => {
               if (!detail?.content) return
               void navigator.clipboard.writeText(detail.content).then(() => setCopied(true))
             }}
+            onEdit={() => setEditorOpen(true)}
           />
         </div>
       ) : (
@@ -337,6 +348,22 @@ export function TranscriptionsPanel() {
           setQuery('')
           setSelectedId(id)
           setProgressOpen(false)
+        }}
+      />
+
+      <TranscriptEditorDialog
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        row={selected}
+        detail={detail}
+        audioUrl={selected?.hasAudio ? transcriptionAudioUrl(scope, selected.id) : null}
+        onSave={async (segments) => {
+          if (!selected) throw new Error(t('transcriptSaveFailed'))
+          const updated = await updateTranscription(scope, selected.id, segments)
+          setDetail(updated)
+          setRows((current) => current.map((row) => row.id === selected.id
+            ? { ...row, updatedAt: updated.transcription.updatedAt }
+            : row))
         }}
       />
 
@@ -540,14 +567,18 @@ function TranscriptPreview({
   loading,
   copied,
   downloadUrl,
+  audioUrl,
   onCopy,
+  onEdit,
 }: {
   row: TranscriptionRow | null
   detail: TranscriptionDetail | null
   loading: boolean
   copied: boolean
   downloadUrl: string | null
+  audioUrl: string | null
   onCopy: () => void
+  onEdit: () => void
 }) {
   const { language, t } = usePreferences()
   if (!row) {
@@ -576,6 +607,9 @@ function TranscriptPreview({
         </div>
         {content ? (
           <div className="flex shrink-0 gap-1">
+            <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label={t('editTranscript')}>
+              <PencilLineIcon />
+            </Button>
             <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={t('copyTranscript')}>
               {copied ? <CheckIcon /> : <CopyIcon />}
             </Button>
@@ -592,9 +626,12 @@ function TranscriptPreview({
         {loading ? (
           <div className="flex h-full min-h-64 items-center justify-center"><Spinner className="size-5 text-muted-foreground" /></div>
         ) : content ? (
-          <div className="mx-auto max-w-2xl px-5 py-6">
-            <p className="mb-5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t('transcriptPreview')}</p>
-            <TranscriptLines content={content} />
+          <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col px-5 py-5">
+            <TranscriptPlayer
+              segments={detail?.segments ?? []}
+              audioUrl={audioUrl}
+              label={row.title}
+            />
           </div>
         ) : row.status === 'failed' ? (
           <PreviewMessage icon={AlertTriangleIcon} title={t('transcriptionFailed')} description={row.error ?? t('transcriptNotReady')} destructive />
@@ -619,19 +656,203 @@ function TranscriptPreview({
   )
 }
 
-function TranscriptLines({ content }: { content: string }) {
+function TranscriptPlayer({
+  segments,
+  audioUrl,
+  label,
+  editable = false,
+  onChange,
+}: {
+  segments: TranscriptionSegment[]
+  audioUrl: string | null
+  label: string
+  editable?: boolean
+  onChange?: (segments: TranscriptionSegment[]) => void
+}) {
+  const { t } = usePreferences()
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const lineRefs = useRef<(HTMLDivElement | null)[]>([])
+  const [currentTime, setCurrentTime] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const activeIndex = audioUrl ? activeTranscriptSegment(segments, currentTime) : -1
+
+  useEffect(() => {
+    if (!playing || activeIndex < 0) return
+    lineRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, playing])
+
+  const seek = (seconds: number) => {
+    if (!audioRef.current) return
+    audioRef.current.currentTime = seconds
+    setCurrentTime(seconds)
+    void audioRef.current.play()
+  }
+
   return (
-    <div className="space-y-3 text-sm leading-7">
-      {content.split('\n').filter(Boolean).map((line, index) => {
-        const match = line.match(/^\[(\d{2}:\d{2}(?::\d{2})?)\]\s*(.*)$/)
-        return (
-          <div key={`${index}-${line.slice(0, 12)}`} className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-3">
-            <span className="readout pt-0.5 text-[11px] text-blue-500">{match?.[1] ?? ''}</span>
-            <p className="min-w-0 whitespace-pre-wrap break-words text-foreground/90">{match?.[2] ?? line}</p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {audioUrl ? (
+        <div className="sticky top-0 z-10 mb-5 rounded-xl border border-amber-300/55 bg-amber-50/90 p-3 shadow-sm backdrop-blur dark:border-amber-700/50 dark:bg-amber-950/35">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="flex items-center gap-2 text-xs font-medium text-amber-950 dark:text-amber-100">
+              <span className="size-2 rounded-full bg-amber-400 shadow-[0_0_0_3px_rgb(251_191_36_/_0.18)]" />
+              {t('audioFollowHighlight')}
+            </p>
+            <span className="readout text-[10px] text-amber-800/70 dark:text-amber-200/65">
+              {transcriptTimestamp(currentTime)}
+            </span>
           </div>
-        )
-      })}
+          <audio
+            ref={audioRef}
+            src={audioUrl}
+            controls
+            preload="metadata"
+            aria-label={t('replayRecording', { name: label })}
+            className="h-9 w-full"
+            onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
+          />
+        </div>
+      ) : (
+        <p className="mb-5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          {t('audioUnavailable')}
+        </p>
+      )}
+
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          {editable ? t('editTimedPassages') : t('transcriptPreview')}
+        </p>
+        {audioUrl ? <p className="text-[11px] text-muted-foreground">{t('clickPassageToPlay')}</p> : null}
+      </div>
+      <div className="space-y-1.5 text-sm leading-7">
+        {segments.map((segment, index) => {
+          const highlighted = index === activeIndex
+          return (
+            <div
+              key={`${segment.start}-${index}`}
+              ref={(element) => { lineRefs.current[index] = element }}
+              className={cn(
+                'group grid grid-cols-[3.75rem_minmax(0,1fr)] gap-2 rounded-lg px-2 py-1.5 transition-colors duration-200 motion-reduce:transition-none',
+                highlighted
+                  ? 'bg-amber-200/80 text-amber-950 ring-1 ring-amber-300/80 dark:bg-amber-300/85 dark:text-amber-950'
+                  : 'hover:bg-muted/55',
+              )}
+            >
+              <button
+                type="button"
+                disabled={!audioUrl}
+                onClick={() => seek(segment.start)}
+                className={cn(
+                  'readout mt-0.5 flex h-6 items-center gap-1 self-start rounded px-1 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30',
+                  highlighted ? 'font-semibold text-amber-900' : 'text-blue-500',
+                  audioUrl && 'hover:bg-background/60',
+                )}
+                aria-label={t('playFromTime', { time: transcriptTimestamp(segment.start) })}
+              >
+                {audioUrl ? <PlayIcon className="size-2.5 fill-current" /> : null}
+                {transcriptTimestamp(segment.start)}
+              </button>
+              {editable ? (
+                <textarea
+                  value={segment.text}
+                  rows={Math.max(1, Math.ceil(segment.text.length / 72))}
+                  onChange={(event) => onChange?.(segments.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, text: event.target.value } : item,
+                  ))}
+                  aria-label={t('transcriptPassage', { number: index + 1 })}
+                  className="min-h-9 w-full resize-y rounded-md border border-transparent bg-transparent px-2 py-1 leading-6 outline-none transition-colors placeholder:text-muted-foreground focus:border-blue-500/35 focus:bg-background focus:ring-2 focus:ring-blue-500/15"
+                  spellCheck
+                />
+              ) : (
+                <p className="min-w-0 whitespace-pre-wrap break-words px-2 text-foreground/90 group-hover:text-foreground">
+                  {segment.text}
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
+  )
+}
+
+function TranscriptEditorDialog({
+  open,
+  onOpenChange,
+  row,
+  detail,
+  audioUrl,
+  onSave,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  row: TranscriptionRow | null
+  detail: TranscriptionDetail | null
+  audioUrl: string | null
+  onSave: (segments: TranscriptionSegment[]) => Promise<void>
+}) {
+  const { t } = usePreferences()
+  const [segments, setSegments] = useState<TranscriptionSegment[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setSegments(detail?.segments.map((segment) => ({ ...segment })) ?? [])
+    setError(null)
+  }, [detail, open])
+
+  const save = async () => {
+    if (!segments.length || segments.some((segment) => !segment.text.trim())) {
+      setError(t('transcriptEmptyPassage'))
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(segments)
+      onOpenChange(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('transcriptSaveFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+      <DialogContent className="h-[min(52rem,calc(100vh-2rem))] sm:max-w-4xl">
+        <DialogHeader className="border-b pr-14">
+          <DialogTitle>{t('editTranscript')}</DialogTitle>
+          <DialogDescription>
+            {t('editTranscriptDescription', { name: row?.title ?? '' })}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-7">
+          <TranscriptPlayer
+            segments={segments}
+            audioUrl={audioUrl}
+            label={row?.title ?? t('transcriptions')}
+            editable
+            onChange={setSegments}
+          />
+        </div>
+        <footer className="flex items-center justify-between gap-3 border-t bg-muted/20 px-5 py-3 sm:px-7">
+          <p className={cn('text-xs', error ? 'text-destructive' : 'text-muted-foreground')} role={error ? 'alert' : undefined}>
+            {error ?? t('transcriptEditorHint')}
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>{t('cancel')}</Button>
+            <Button onClick={() => void save()} disabled={saving || !segments.length}>
+              {saving ? <Spinner className="size-4" /> : <PencilLineIcon data-icon="inline-start" />}
+              {t(saving ? 'saving' : 'saveChanges')}
+            </Button>
+          </div>
+        </footer>
+      </DialogContent>
+    </Dialog>
   )
 }
 

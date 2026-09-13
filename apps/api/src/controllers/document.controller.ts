@@ -12,6 +12,17 @@ import { searchDocuments } from "../services/documents/search.service";
 import { logger } from "../lib/logger";
 import { workspaceRegistry } from "../repositories/workspace-registry.repository";
 import { currentUserId } from "../middleware/auth";
+import { chunkPages } from "../services/documents/chunk.service";
+import {
+  transcriptionAudioStorage,
+  type OpenTranscriptionAudio,
+} from "../services/documents/transcription-audio.service";
+import {
+  formatTranscript,
+  parseFormattedTranscript,
+  type TranscriptionSegment,
+} from "../services/documents/transcribe.service";
+import type { TranscriptionRow } from "../models/schema";
 
 /**
  * The workspace this request applies to.
@@ -28,6 +39,8 @@ const workspaceIdOf = async (c: Context) => {
 
 /** Cap per file. Generous for a document, small enough to bound a bad upload. */
 const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_TRANSCRIPT_CHARS = 2_000_000;
+const MAX_TRANSCRIPT_SEGMENTS = 20_000;
 
 /**
  * Cap an audio upload. A recording is bigger than a page: an hour of MP3 at
@@ -225,7 +238,7 @@ function transcriptionUploadFailure(c: Context, error: unknown) {
 /** GET /api/documents/transcriptions — a workspace's jobs, newest first. */
 export async function listTranscriptions(c: Context) {
   const transcriptions = await transcriptionStore.list(await workspaceIdOf(c));
-  return c.json({ transcriptions });
+  return c.json({ transcriptions: transcriptions.map(publicTranscription) });
 }
 
 /** GET /api/documents/:id — one indexed document as safe, plain JSON text. */
@@ -250,7 +263,167 @@ export async function showTranscription(c: Context) {
   const document = transcription.documentId
     ? await documentStore.read(workspaceId, transcription.documentId)
     : null;
-  return c.json({ transcription, content: document?.content ?? null });
+  const content = document
+    ? transcription.transcriptText ?? document.content
+    : null;
+  return c.json({
+    transcription: publicTranscription(transcription),
+    content,
+    segments: content ? parseFormattedTranscript(content) : [],
+  });
+}
+
+/** PATCH /api/documents/transcriptions/:id — replace its timed text and search index. */
+export async function updateTranscription(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing transcription id" }, 400);
+
+  let input: unknown;
+  try {
+    input = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected a JSON transcript" }, 400);
+  }
+  const parsed = editableSegments(input);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const workspaceId = await workspaceIdOf(c);
+  const job = await transcriptionStore.find(workspaceId, id);
+  if (!job) return c.json({ error: "Transcription not found" }, 404);
+  if (job.status !== "done" || !job.documentId) {
+    return c.json({ error: "Only completed transcriptions can be edited" }, 409);
+  }
+
+  const content = formatTranscript(parsed.segments);
+  if (content.length > MAX_TRANSCRIPT_CHARS) {
+    return c.json({ error: "Transcript is too large to save" }, 413);
+  }
+  const chunks = chunkPages([{ page: 1, text: content }]);
+  const replaced = await documentStore.replaceContent(workspaceId, job.documentId, {
+    bytes: Buffer.byteLength(content, "utf8"),
+    pages: 1,
+    chunks,
+  });
+  if (!replaced) return c.json({ error: "The linked transcript is no longer available" }, 409);
+
+  const persisted = await transcriptionStore.updateTranscript(workspaceId, id, content);
+  if (!persisted) return c.json({ error: "Transcription changed before it could be saved" }, 409);
+  const updated = await transcriptionStore.find(workspaceId, id);
+  return c.json({
+    transcription: publicTranscription(updated ?? job),
+    content,
+    segments: parseFormattedTranscript(content),
+  });
+}
+
+/** GET /api/documents/transcriptions/:id/audio — seekable source recording. */
+export async function transcriptionAudio(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing transcription id" }, 400);
+
+  const workspaceId = await workspaceIdOf(c);
+  const job = await transcriptionStore.find(workspaceId, id);
+  if (!job?.audioPath) return c.json({ error: "Recording not found" }, 404);
+
+  const audio = await transcriptionAudioStorage.open(workspaceId, job.audioPath, job.audioContentType);
+  if (!audio) return c.json({ error: "Recording not found" }, 404);
+  return rangedAudioResponse(audio, c.req.header("range"));
+}
+
+function publicTranscription(row: TranscriptionRow) {
+  const { audioPath: _audioPath, audioContentType: _audioContentType, transcriptText: _transcriptText, ...visible } = row;
+  return { ...visible, hasAudio: Boolean(row.audioPath) };
+}
+
+function editableSegments(input: unknown):
+  | { ok: true; segments: TranscriptionSegment[] }
+  | { ok: false; error: string } {
+  const raw = input && typeof input === "object"
+    ? (input as { segments?: unknown }).segments
+    : null;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { ok: false, error: "Transcript must contain at least one timed passage" };
+  }
+  if (raw.length > MAX_TRANSCRIPT_SEGMENTS) {
+    return { ok: false, error: "Transcript contains too many passages" };
+  }
+
+  const segments: TranscriptionSegment[] = [];
+  let previous = -1;
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      return { ok: false, error: "Each transcript passage needs a time and text" };
+    }
+    const { start, text } = item as { start?: unknown; text?: unknown };
+    if (typeof start !== "number" || !Number.isFinite(start) || start < 0 || start > 604_800) {
+      return { ok: false, error: "Transcript times must be between 0 and 168 hours" };
+    }
+    if (start < previous) {
+      return { ok: false, error: "Transcript passages must stay in time order" };
+    }
+    if (typeof text !== "string") {
+      return { ok: false, error: "Each transcript passage needs text" };
+    }
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (!normalized) return { ok: false, error: "Transcript passages cannot be empty" };
+    if (normalized.length > 20_000 || normalized.includes("\0")) {
+      return { ok: false, error: "A transcript passage is too large to save" };
+    }
+    segments.push({ start, text: normalized });
+    previous = start;
+  }
+  return { ok: true, segments };
+}
+
+export function rangedAudioResponse(audio: OpenTranscriptionAudio, rangeHeader?: string): Response {
+  const common = {
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, no-store",
+    "Content-Type": audio.contentType,
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (!rangeHeader) {
+    return new Response(audio.file, {
+      status: 200,
+      headers: { ...common, "Content-Length": String(audio.byteLength) },
+    });
+  }
+
+  const range = parseByteRange(rangeHeader, audio.byteLength);
+  if (!range) {
+    return new Response(null, {
+      status: 416,
+      headers: { ...common, "Content-Range": `bytes */${audio.byteLength}` },
+    });
+  }
+  const length = range.end - range.start + 1;
+  return new Response(audio.file.slice(range.start, range.end + 1, audio.contentType), {
+    status: 206,
+    headers: {
+      ...common,
+      "Content-Length": String(length),
+      "Content-Range": `bytes ${range.start}-${range.end}/${audio.byteLength}`,
+    },
+  });
+}
+
+export function parseByteRange(value: string, size: number): { start: number; end: number } | null {
+  if (!Number.isSafeInteger(size) || size <= 0) return null;
+  const match = value.trim().match(/^bytes=(\d*)-(\d*)$/i);
+  if (!match || (!match[1] && !match[2])) return null;
+
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start >= size || requestedEnd < start) {
+    return null;
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
 }
 
 /**
@@ -296,6 +469,14 @@ export async function destroyTranscription(c: Context) {
 
   await transcriptionStore.remove(workspaceId, id);
   if (job.documentId) await documentStore.remove(workspaceId, job.documentId);
+  if (job.audioPath) {
+    await transcriptionAudioStorage.remove(workspaceId, job.audioPath).catch((error: any) => {
+      logger.warn("transcribe.audio.cleanup_failed", {
+        transcriptionId: id,
+        message: String(error?.message ?? error),
+      });
+    });
+  }
   return c.body(null, 204);
 }
 
