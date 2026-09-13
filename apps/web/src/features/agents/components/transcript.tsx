@@ -1,5 +1,6 @@
 import { memo } from 'react'
-import { ChevronRightIcon, FileSpreadsheetIcon, WrenchIcon } from 'lucide-react'
+import { ChevronRightIcon, Clock3Icon, FileSpreadsheetIcon, WrenchIcon, XIcon } from 'lucide-react'
+import { Button } from '@/shared/ui/button'
 import { Spinner } from '@/shared/ui/spinner'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
 import { visibleTranscriptItems } from '@/features/agents/lib/transcript'
@@ -15,6 +16,7 @@ import { cn } from '@/shared/lib/utils'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Item } from '@/shared/lib/types'
 import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
+import type { QueuedFollowUp } from '@/features/agents/lib/follow-up-queue'
 
 /**
  * The transcript reads as a conversation: what the user asked, what the agent
@@ -28,11 +30,15 @@ export function Transcript({
   running,
   runSummary,
   showToolTrace = false,
+  queuedFollowUps = [],
+  onRemoveQueuedFollowUp,
 }: {
   items: Item[]
   running: boolean
   runSummary: string | null
   showToolTrace?: boolean
+  queuedFollowUps?: QueuedFollowUp[]
+  onRemoveQueuedFollowUp?: (id: string) => void
 }) {
   const { t } = usePreferences()
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
@@ -55,6 +61,76 @@ export function Transcript({
           </span>
         </div>
       ) : null}
+
+      {queuedFollowUps.map((followUp, index) => (
+        <QueuedMessage
+          key={followUp.id}
+          followUp={followUp}
+          position={index + 1}
+          onRemove={onRemoveQueuedFollowUp}
+        />
+      ))}
+    </div>
+  )
+}
+
+function QueuedMessage({
+  followUp,
+  position,
+  onRemove,
+}: {
+  followUp: QueuedFollowUp
+  position: number
+  onRemove?: (id: string) => void
+}) {
+  const { t } = usePreferences()
+  const { images, dataFiles } = followUp.attachments
+
+  return (
+    <div className="mt-4 mb-2 flex justify-end">
+      <div className="max-w-[85%] overflow-hidden rounded-[1.4rem] border border-dashed border-border bg-secondary/70 text-secondary-foreground sm:max-w-[75%]">
+        <div className="px-4 pt-2.5 text-[0.9375rem] leading-relaxed">
+          {images.length ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {images.map((image) => (
+                <img
+                  key={image.id}
+                  src={image.url}
+                  alt={image.name}
+                  className="max-h-32 max-w-full rounded-xl border object-contain opacity-75"
+                />
+              ))}
+            </div>
+          ) : null}
+          {dataFiles.length ? (
+            <div className="mb-2 flex flex-col gap-1.5">
+              {dataFiles.map((file) => (
+                <span key={file.path} className="flex min-w-0 items-center gap-2 rounded-xl border bg-background/50 px-2.5 py-2">
+                  <FileSpreadsheetIcon className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-xs">{file.name}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <p className="whitespace-pre-wrap break-words">{followUp.text}</p>
+        </div>
+        <div className="mt-2 flex min-h-8 items-center gap-2 border-t border-border/70 px-3 text-[0.6875rem] text-muted-foreground">
+          <Clock3Icon className="size-3.5" />
+          <span>{t('queuedMessage', { position })}</span>
+          {onRemove ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onRemove(followUp.id)}
+              aria-label={t('removeQueuedMessage')}
+              className="ml-auto rounded-full"
+            >
+              <XIcon />
+            </Button>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }

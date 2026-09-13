@@ -6,6 +6,9 @@ const en = {
   save: 'Save',
   saving: 'Saving…',
   send: 'Send',
+  queueMessageAction: 'Queue message',
+  queuedMessage: 'Queued · {position}',
+  removeQueuedMessage: 'Remove queued message',
   dismiss: 'Dismiss',
   retry: 'Retry',
   close: 'Close',
@@ -315,7 +318,7 @@ const en = {
 export type TranslationKey = keyof typeof en
 
 const ms: Record<TranslationKey, string> = {
-  loading: 'Memuatkan…', cancel: 'Batal', save: 'Simpan', saving: 'Menyimpan…', send: 'Hantar', dismiss: 'Tutup', retry: 'Cuba lagi', close: 'Tutup', remove: 'Buang', light: 'Cerah', dark: 'Gelap', hidden: 'Disembunyikan', shown: 'Dipaparkan',
+  loading: 'Memuatkan…', cancel: 'Batal', save: 'Simpan', saving: 'Menyimpan…', send: 'Hantar', queueMessageAction: 'Bariskan mesej', queuedMessage: 'Dalam barisan · {position}', removeQueuedMessage: 'Buang mesej daripada barisan', dismiss: 'Tutup', retry: 'Cuba lagi', close: 'Tutup', remove: 'Buang', light: 'Cerah', dark: 'Gelap', hidden: 'Disembunyikan', shown: 'Dipaparkan',
   settings: 'Tetapan', settingsDescription: 'Pilihan digunakan serta-merta. Model digunakan untuk ejen seterusnya.', model: 'Model', modelChatOnly: 'Prompt teks sahaja. Alat, sumber bersambung dan imej tidak tersedia.', modelNeedsKey: 'Tambah kunci API untuk menggunakan model ini.', display: 'Paparan', appearance: 'Penampilan', language: 'Bahasa', languageDescription: 'Menukar bahasa konsol pada pelayar ini.', english: 'English', malay: 'Bahasa Melayu', toolTrace: 'Butiran panggilan alat', toolTraceDescription: 'Paparkan argumen, hasil, tempoh dan status kegagalan setiap alat dalam sembang.', agents: 'Ejen', agentsStored: '{count} disimpan dalam ruang kerja ini', removeAll: 'Buang semua', removeAllTitle: 'Buang semua ejen?', removeAllDescription: 'Kesemua {count} {agents} dan transkripnya akan dipadam daripada ruang kerja ini. Tindakan ini tidak boleh dibatalkan.', agentSingular: 'ejen', agentPlural: 'ejen',
   console: 'Konsol', chat: 'Sembang', chats: 'Sembang', docs: 'Dokumen', data: 'Data', connectors: 'Penyambung', assets: 'Aset', learned: 'Dipelajari', adminPanel: 'Panel pentadbir', new: 'Baharu', newChat: 'Sembang baharu', thisAgent: 'Ejen ini', navigationAndAgents: 'Navigasi dan ejen', toggleNavigation: 'Togol navigasi dan senarai sembang', hideChatList: 'Sembunyikan senarai sembang', navChatHint: 'Ejen dan transkrip', navAgentsHint: 'Bina ejen prompt yang boleh digunakan semula', navDocsHint: 'Dokumen dimuat naik', navDataHint: 'Sambungan pangkalan data', navConnectorsHint: 'Perkhidmatan yang boleh digunakan oleh ejen', navAssetsHint: 'Semua yang telah ditulis oleh ejen', navLearnedHint: 'Pengetahuan ruang kerja ini',
   profile: 'Profil', signOut: 'Log keluar', signedInAs: 'Log masuk sebagai {name}', workspace: 'Ruang kerja', workspaceNamed: 'Ruang kerja: {name}', workspaces: 'Ruang kerja', noWorkspace: 'Tiada ruang kerja', addWorkspace: 'Tambah ruang kerja', newWorkspace: 'Ruang kerja baharu', workspaceDescription: 'Setiap ruang kerja menyimpan ejen, dokumen, pangkalan data dan failnya sendiri. Tiada apa-apa dikongsi antara ruang kerja.', name: 'Nama', research: 'Penyelidikan', duplicateWorkspace: 'Anda sudah mempunyai ruang kerja bernama “{name}”.', workspaceCreateFailed: 'Ruang kerja tidak dapat dicipta.', createWorkspace: 'Cipta ruang kerja', create: 'Cipta', creating: 'Mencipta…', workspaceName: 'Nama ruang kerja', welcomeName: 'Selamat datang, {name}', welcomePixelspace: 'Selamat datang ke Pixelspace', onboardingDescription: 'Setiap ruang kerja menyimpan ejen, dokumen, pangkalan data dan failnya sendiri. Namakan ruang kerja pertama anda untuk bermula.',

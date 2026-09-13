@@ -27,8 +27,8 @@ const dataFileLabel = (name: string) =>
   DATA_FILE_LABELS[name.toLowerCase().split('.').pop() ?? ''] ?? 'File'
 
 /**
- * Starts a new agent. It is never bound to a running agent — stopping one
- * happens on that agent's own header.
+ * Starts a new agent or continues the selected one. A send during an active
+ * turn is queued by the board and runs on the same conversation afterwards.
  *
  * Attachments are uploaded before send, so their preview appears while the
  * user is still typing and the chat request carries references rather than
@@ -46,6 +46,7 @@ export function Composer({
   onEffortChange,
   conversationId = null,
   docked = true,
+  queueing = false,
 }: {
   notice: string | null
   onDismissNotice: () => void
@@ -65,6 +66,8 @@ export function Composer({
   /** False while it sits mid-page waiting for the first question, where a rule
    *  across the window would divide a page that has nothing above it. */
   docked?: boolean
+  /** The selected conversation is active, so this send will wait behind it. */
+  queueing?: boolean
 }) {
   const [value, setValue] = useState('')
   const [images, setImages] = useState<UploadedImage[]>([])
@@ -329,7 +332,8 @@ export function Composer({
             <Button
               type="submit"
               size="icon"
-              aria-label={t('send')}
+              aria-label={queueing ? t('queueMessageAction') : t('send')}
+              title={queueing ? t('queueMessageAction') : t('send')}
               disabled={(!value.trim() && !images.length && !files.length) || uploading > 0}
               className="mb-0.5 size-8 rounded-full"
             >

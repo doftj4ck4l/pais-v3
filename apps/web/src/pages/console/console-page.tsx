@@ -74,9 +74,8 @@ export function Console() {
    * sidebar), which is what the board is for.
    */
   const send = (text: string, attachments: ChatAttachments) => {
-    if (selected && selected.status !== 'running') {
-      board.sendFollowUp(selected.id, text, attachments)
-    } else board.spawn(text, board.modelIdForNew, attachments)
+    if (selected) board.sendFollowUp(selected.id, text, attachments)
+    else board.spawn(text, board.modelIdForNew, attachments)
   }
 
   return (
@@ -122,6 +121,8 @@ export function Console() {
                       seconds: (selected.elapsed / 1000).toFixed(1),
                     })}
                     showToolTrace={showToolTrace}
+                    queuedFollowUps={selected.queuedFollowUps}
+                    onRemoveQueuedFollowUp={(id) => board.removeQueuedFollowUp(selected.id, id)}
                   />
                 ) : (
                   <Greeting />
@@ -165,6 +166,7 @@ export function Console() {
               lockedModelId={selected?.modelId ?? null}
               effort={board.effort}
               onEffortChange={board.setEffort}
+              queueing={selected?.status === 'running'}
             />
 
             <div className="min-h-0 overflow-hidden">

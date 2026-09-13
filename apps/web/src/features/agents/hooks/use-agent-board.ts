@@ -9,6 +9,12 @@ import {
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
 import { historyFrom } from '@/features/agents/lib/attachment-notes'
+import {
+  appendQueuedFollowUp,
+  shiftQueuedFollowUp,
+  shouldQueueFollowUp,
+} from '@/features/agents/lib/follow-up-queue'
+import type { QueuedFollowUp } from '@/features/agents/lib/follow-up-queue'
 import type { Scope } from '@/shared/api/api'
 import type {
   ConversationRow,
@@ -45,6 +51,8 @@ export type AgentRun = {
    * at a time — the run blocks on it.
    */
   pendingQuestion: PendingQuestion | null
+  /** Follow-ups waiting for the active turn to settle, in send order. */
+  queuedFollowUps: QueuedFollowUp[]
 }
 
 export type PendingQuestion = {
@@ -109,6 +117,8 @@ export function useAgentBoard(scope: Scope) {
   const itemsRef = useRef<Map<string, Item[]>>(new Map())
   const traceRef = useRef<Map<string, TraceLine[]>>(new Map())
   const streamRefs = useRef<Map<string, StreamRef>>(new Map())
+  const queuedFollowUpsRef = useRef<Map<string, QueuedFollowUp[]>>(new Map())
+  const conversationIdsRef = useRef<Map<string, string>>(new Map())
   const effortRef = useRef(effort)
   const agentsRef = useRef<AgentRun[]>([])
 
@@ -186,6 +196,8 @@ export function useAgentBoard(scope: Scope) {
       itemsRef.current.clear()
       traceRef.current.clear()
       streamRefs.current.clear()
+      queuedFollowUpsRef.current.clear()
+      conversationIdsRef.current.clear()
       setAgents([])
       setSelectedId(null)
     }
@@ -197,6 +209,8 @@ export function useAgentBoard(scope: Scope) {
         for (const agent of restored) {
           itemsRef.current.set(agent.id, [...agent.items])
           traceRef.current.set(agent.id, [])
+          queuedFollowUpsRef.current.set(agent.id, [])
+          if (agent.conversationId) conversationIdsRef.current.set(agent.id, agent.conversationId)
         }
         setAgents((prev) => {
           const known = new Set(prev.map((a) => a.id))
@@ -290,6 +304,8 @@ export function useAgentBoard(scope: Scope) {
     itemsRef.current.delete(id)
     traceRef.current.delete(id)
     streamRefs.current.delete(id)
+    queuedFollowUpsRef.current.delete(id)
+    conversationIdsRef.current.delete(id)
     if (agent?.conversationId) void deleteConversation(agent.conversationId)
 
     setAgents((prev) => prev.filter((a) => a.id !== id))
@@ -308,6 +324,8 @@ export function useAgentBoard(scope: Scope) {
     itemsRef.current.clear()
     traceRef.current.clear()
     streamRefs.current.clear()
+    queuedFollowUpsRef.current.clear()
+    conversationIdsRef.current.clear()
     setAgents([])
     setSelectedId(null)
   }, [])
@@ -335,10 +353,12 @@ export function useAgentBoard(scope: Scope) {
       hydrated: true,
       context: null,
       pendingQuestion: null,
+      queuedFollowUps: [],
     }
     itemsRef.current.set(id, [...agent.items])
     traceRef.current.set(id, [])
     streamRefs.current.set(id, freshStream())
+    queuedFollowUpsRef.current.set(id, [])
     // Prepended, because the list is newest-first: restored runs arrive in that
     // order and the reader's own new chat is the newest thing there is.
     // Appending put it under everything else in Today, which read as the run
@@ -361,24 +381,73 @@ export function useAgentBoard(scope: Scope) {
     text: string,
     attachments: ChatAttachments = { images: [], dataFiles: [] },
   ) {
-    const { images, dataFiles } = attachments
     const agent = agentsRef.current.find((a) => a.id === agentId)
-    if (!agent || agent.status === 'running') return
+    if (!agent) return
 
-    const items = itemsRef.current.get(agentId)
+    const followUp: QueuedFollowUp = {
+      id: crypto.randomUUID(),
+      text,
+      attachments,
+    }
+    if (shouldQueueFollowUp(agent.status === 'running', controllersRef.current.has(agentId))) {
+      const queue = appendQueuedFollowUp(
+        queuedFollowUpsRef.current.get(agentId) ?? [],
+        followUp,
+      )
+      queuedFollowUpsRef.current.set(agentId, queue)
+      patchAgent(agentId, { queuedFollowUps: queue, notice: null })
+      return
+    }
+
+    startFollowUp(agent, followUp)
+  }
+
+  function startFollowUp(agent: AgentRun, followUp: QueuedFollowUp) {
+    const { images, dataFiles } = followUp.attachments
+    const { text } = followUp
+
+    const items = itemsRef.current.get(agent.id)
     if (!items) return
 
     const history = [...historyFrom(items), { role: 'user' as const, content: text }]
     items.push({ kind: 'user', text, images: images.map((i) => i.url), files: dataFiles })
-    streamRefs.current.set(agentId, freshStream())
-    patchAgent(agentId, {
+    streamRefs.current.set(agent.id, freshStream())
+    patchAgent(agent.id, {
       status: 'running',
       notice: null,
       items: [...items],
       startedAt: Date.now(),
       elapsed: 0,
     })
-    void run(agentId, agent, history, attachments)
+    void run(
+      agent.id,
+      {
+        ...agent,
+        conversationId: conversationIdsRef.current.get(agent.id) ?? agent.conversationId,
+      },
+      history,
+      followUp.attachments,
+    )
+  }
+
+  const removeQueuedFollowUp = useCallback(
+    (agentId: string, followUpId: string) => {
+      const queue = (queuedFollowUpsRef.current.get(agentId) ?? [])
+        .filter((followUp) => followUp.id !== followUpId)
+      queuedFollowUpsRef.current.set(agentId, queue)
+      patchAgent(agentId, { queuedFollowUps: queue })
+    },
+    [patchAgent],
+  )
+
+  function runNextQueuedFollowUp(id: string) {
+    const agent = agentsRef.current.find((candidate) => candidate.id === id)
+    if (!agent) return
+    const { next, remaining } = shiftQueuedFollowUp(queuedFollowUpsRef.current.get(id) ?? [])
+    if (!next) return
+    queuedFollowUpsRef.current.set(id, remaining)
+    patchAgent(id, { queuedFollowUps: remaining })
+    startFollowUp(agent, next)
   }
 
   async function run(
@@ -455,6 +524,7 @@ export function useAgentBoard(scope: Scope) {
       // A run is the only thing that writes to the workspace, so its end is the
       // one moment worth re-listing files — cheaper and more accurate than polling.
       setRunsCompleted((n) => n + 1)
+      runNextQueuedFollowUp(id)
     }
   }
 
@@ -466,6 +536,7 @@ export function useAgentBoard(scope: Scope) {
 
     switch (event.type) {
       case 'conversation':
+        conversationIdsRef.current.set(id, event.id)
         patchAgent(id, { conversationId: event.id })
         return
 
@@ -617,6 +688,7 @@ export function useAgentBoard(scope: Scope) {
     runsCompleted,
     spawn,
     sendFollowUp,
+    removeQueuedFollowUp,
     stop,
     answer,
     remove,
@@ -647,6 +719,7 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     hydrated: false,
     context: null,
     pendingQuestion: null,
+    queuedFollowUps: [],
   }
 }
 
