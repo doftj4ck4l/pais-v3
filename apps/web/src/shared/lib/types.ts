@@ -158,15 +158,21 @@ export type TranscriptionRow = {
   model: string | null
   error: string | null
   documentId: string | null
-  /** The exact `[MM:SS] line` transcript, once the job finishes. */
-  transcriptText?: string | null
+  /** New recordings retain their source; older rows may not have one. */
+  hasAudio: boolean
   createdAt: number
   updatedAt: number
+}
+
+export type TranscriptionSegment = {
+  start: number
+  text: string
 }
 
 export type TranscriptionDetail = {
   transcription: TranscriptionRow
   content: string | null
+  segments: TranscriptionSegment[]
 }
 
 export type WorkspaceFile = {

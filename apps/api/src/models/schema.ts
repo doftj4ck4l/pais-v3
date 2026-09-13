@@ -528,8 +528,9 @@ export type ChunkRow = {
 
 /**
  * Where a transcription job stands. `queued`, `transcribing`, and `indexing` are in flight
- * and can be resumed by nothing — a restart marks them `failed` (the audio
- * bytes only ever lived in the process that was holding them).
+ * and can be resumed by nothing — a restart marks them `failed`. New jobs keep
+ * their source recording for replay, but replayable bytes alone are not enough
+ * to safely reconstruct the in-process queue after a restart.
  */
 export type TranscriptionStatus = "queued" | "transcribing" | "indexing" | "done" | "failed";
 
@@ -538,9 +539,9 @@ export type TranscriptionStatus = "queued" | "transcribing" | "indexing" | "done
  *
  * The document it produced, if any, is linked rather than merged: the older
  * `documents` rows cannot distinguish a transcript from a PDF upload, and this
- * page needs to. The bytes themselves are never stored — they are read into the
- * API process for the whisper call and then dropped, exactly as `documents`
- * stores the extracted text and not the source file.
+ * page needs to. Source audio lives in the workspace's persistent internal
+ * directory rather than SQLite: recordings may be gigabytes, and the workspace
+ * tree already participates in backup/restore without inflating the database.
  */
 export const transcriptions = sqliteTable(
   "transcriptions",
@@ -561,6 +562,10 @@ export const transcriptions = sqliteTable(
      * the original, byte-for-byte.
      */
     transcriptText: text("transcript_text"),
+    /** Workspace-relative internal path. Never returned to the browser. */
+    audioPath: text("audio_path"),
+    /** Safe response media type captured when the recording is persisted. */
+    audioContentType: text("audio_content_type"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -578,6 +583,8 @@ export type TranscriptionRow = {
   error: string | null;
   documentId: string | null;
   transcriptText: string | null;
+  audioPath: string | null;
+  audioContentType: string | null;
   createdAt: number;
   updatedAt: number;
 };

@@ -14,6 +14,8 @@ documentRoutes.post("/transcription-uploads/:id/complete", documentController.co
 documentRoutes.delete("/transcription-uploads/:id", documentController.destroyTranscriptionUpload);
 documentRoutes.get("/transcriptions", documentController.listTranscriptions);
 documentRoutes.get("/transcriptions/:id/transcript", documentController.transcript);
+documentRoutes.get("/transcriptions/:id/audio", documentController.transcriptionAudio);
+documentRoutes.patch("/transcriptions/:id", documentController.updateTranscription);
 documentRoutes.get("/transcriptions/:id", documentController.showTranscription);
 documentRoutes.delete("/transcriptions/:id", documentController.destroyTranscription);
 documentRoutes.get("/:id", documentController.show);

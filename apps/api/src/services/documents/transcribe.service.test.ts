@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { applySchema } from "../../db/client";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { searchDocuments } from "./search.service";
-import { formatTranscript, stamp, transcribeAudio, transcribeToCorpus } from "./transcribe.service";
+import { formatTranscript, parseFormattedTranscript, stamp, transcribeAudio, transcribeToCorpus } from "./transcribe.service";
 
 const AUDIO = new Uint8Array([0, 1, 2, 3]);
 const INPUT = { bytes: AUDIO, contentType: "audio/mpeg", filename: "call.mp3" };
@@ -16,6 +16,17 @@ const INPUT = { bytes: AUDIO, contentType: "audio/mpeg", filename: "call.mp3" };
 const CREDS = { apiKey: "k", baseUrl: "http://gw/v1", model: "whisper-1" };
 
 const reply = (json: any) => new Response(JSON.stringify(json), { status: 200 });
+
+describe("formatted transcript", () => {
+  it("round-trips minute and hour timestamps for playback", () => {
+    const text = "[00:00] Opening\n[12:34] Decision\n[01:02:03] Long session";
+    expect(parseFormattedTranscript(text)).toEqual([
+      { start: 0, text: "Opening" },
+      { start: 754, text: "Decision" },
+      { start: 3723, text: "Long session" },
+    ]);
+  });
+});
 
 describe("transcribeAudio", () => {
   it("returns whisper's timestamped segments", async () => {

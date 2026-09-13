@@ -5,6 +5,8 @@ import { applySchema } from "../../db/client";
 import { SqliteTranscriptionStore } from "../../repositories/transcription.repository";
 import { SqliteDocumentStore } from "../../repositories/document.repository";
 import { createTranscriber, TranscriptionQueueFullError } from "./transcription-queue";
+import type { TranscriptionAudioStorage } from "./transcription-audio.service";
+import type { TranscriptionAudioSource } from "./transcribe.service";
 
 function fresh() {
   const sqlite = new Database(":memory:");
@@ -31,6 +33,23 @@ function okRun(docs: SqliteDocumentStore) {
 
 const audio = (mb: number) => new Uint8Array(mb * 1024 * 1024);
 
+const testAudioStorage: TranscriptionAudioStorage = {
+  async save(input: { id: string; contentType: string; source: TranscriptionAudioSource }) {
+    return {
+      relativePath: `.pixelspace/transcriptions/${input.id}.mp3`,
+      absolutePath: "filePath" in input.source ? input.source.filePath : `/tmp/${input.id}.mp3`,
+      byteLength: "bytes" in input.source ? input.source.bytes.byteLength : input.source.byteLength,
+      contentType: input.contentType,
+    };
+  },
+  async open() { return null; },
+  async remove() {},
+};
+
+const createTestTranscriber = (
+  deps: Parameters<typeof createTranscriber>[0] = {},
+) => createTranscriber({ ...deps, audioStorage: testAudioStorage });
+
 describe("transcriptionQueue", () => {
   it("runs queued jobs in FIFO order, one at a time, and marks them done", async () => {
     const { store, docs } = fresh();
@@ -40,7 +59,7 @@ describe("transcriptionQueue", () => {
     let maxInflight = 0;
     const stages: string[] = [];
 
-    const queue = createTranscriber({
+    const queue = createTestTranscriber({
       store,
       run: async (job, reportStage) => {
         inflight += 1;
@@ -79,13 +98,14 @@ describe("transcriptionQueue", () => {
 
     const rows = await store.list("ws1");
     expect(rows.every((r) => r.status === "done")).toBe(true);
+    expect(rows.every((r) => r.audioPath?.startsWith(".pixelspace/transcriptions/"))).toBe(true);
     expect(rows.map((r) => r.title)).toEqual(["c.mp3", "b.mp3", "a.mp3"]); // newest first
     expect(rows.every((r) => r.documentId?.startsWith("doc_trx_"))).toBe(true);
   });
 
   it("marks a failing job failed with the reason, and continues to the next", async () => {
     const { store, docs } = fresh();
-    const queue = createTranscriber({
+    const queue = createTestTranscriber({
       store,
       run: async (job) => {
         if (job.title === "b.mp3") return { ok: false as const, error: "whisper model whisper-1 refused: nope" };
@@ -112,7 +132,7 @@ describe("transcriptionQueue", () => {
 
   it("survives a thrown run and does not stall the queue", async () => {
     const { store, docs } = fresh();
-    const queue = createTranscriber({
+    const queue = createTestTranscriber({
       store,
       run: async (job) => {
         if (job.title === "boom.mp3") throw new Error("ECONNREFUSED");
@@ -136,7 +156,7 @@ describe("transcriptionQueue", () => {
   it("cleans up disk-backed recordings after success or failure", async () => {
     const { store, docs } = fresh();
     const cleaned: string[] = [];
-    const queue = createTranscriber({
+    const queue = createTestTranscriber({
       store,
       run: async (job) => {
         if (job.title === "failed.mp4") return { ok: false as const, error: "no speech" };
@@ -186,7 +206,7 @@ describe("transcriptionQueue", () => {
 
   it("refuses to enqueue once the line is full", async () => {
     const { store } = fresh();
-    const queue = createTranscriber({
+    const queue = createTestTranscriber({
       store,
       run: async () => new Promise(() => {}), // a job that never advances
     });
@@ -202,7 +222,7 @@ describe("transcriptionQueue", () => {
 
   it("recoverInterrupted closes jobs left by a previous process", async () => {
     const { store } = fresh();
-    const queue = createTranscriber({ store });
+    const queue = createTestTranscriber({ store });
     await store.create({ id: "trx_stale", workspaceId: "ws1", title: "stale.mp3", bytes: 4 });
     await store.markTranscribing("trx_stale");
 

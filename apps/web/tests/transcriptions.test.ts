@@ -3,6 +3,8 @@ import {
   groupTranscriptionsByDate,
   hasActiveJobs,
   recentlyFinished,
+  activeTranscriptSegment,
+  transcriptTimestamp,
   transcriptionProgress,
 } from '@/features/resources/lib/transcriptions'
 import type { TranscriptionRow } from '@/shared/lib/types'
@@ -16,6 +18,7 @@ const job = (partial: Partial<TranscriptionRow>): TranscriptionRow => ({
   model: null,
   error: null,
   documentId: null,
+  hasAudio: false,
   createdAt: 1,
   updatedAt: 1,
   ...partial,
@@ -86,5 +89,26 @@ describe('transcriptionProgress', () => {
     expect(['queued', 'transcribing', 'indexing', 'done'].map((status) =>
       transcriptionProgress(status as TranscriptionRow['status']),
     )).toEqual([24, 62, 88, 100])
+  })
+})
+
+describe('audio-follow transcript helpers', () => {
+  const segments = [
+    { start: 0, text: 'Opening' },
+    { start: 4.5, text: 'Decision' },
+    { start: 12, text: 'Close' },
+  ]
+
+  it('selects the most recent passage at the playback time', () => {
+    expect(activeTranscriptSegment(segments, 0)).toBe(0)
+    expect(activeTranscriptSegment(segments, 4.49)).toBe(0)
+    expect(activeTranscriptSegment(segments, 4.5)).toBe(1)
+    expect(activeTranscriptSegment(segments, 99)).toBe(2)
+    expect(activeTranscriptSegment(segments, -1)).toBe(-1)
+  })
+
+  it('formats short and hour-long recording times', () => {
+    expect(transcriptTimestamp(65)).toBe('01:05')
+    expect(transcriptTimestamp(3_661)).toBe('01:01:01')
   })
 })

@@ -13,6 +13,7 @@ import type {
   SessionImage,
   TranscriptionDetail,
   TranscriptionRow,
+  TranscriptionSegment,
   TranscriptionStatus,
   UploadedImage,
   UploadedDataFile,
@@ -472,6 +473,26 @@ export async function getTranscription(scope: Scope, id: string): Promise<Transc
   return json<TranscriptionDetail>(
     await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`),
   )
+}
+
+/** Persist corrected timed passages and refresh the searchable transcript. */
+export async function updateTranscription(
+  scope: Scope,
+  id: string,
+  segments: TranscriptionSegment[],
+): Promise<TranscriptionDetail> {
+  return json<TranscriptionDetail>(
+    await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ segments }),
+    }),
+  )
+}
+
+/** Same-origin source audio URL. The endpoint supports byte ranges for seeking. */
+export function transcriptionAudioUrl(scope: Scope, id: string): string {
+  return `/api/documents/transcriptions/${encodeURIComponent(id)}/audio?${scoped(scope)}`
 }
 
 /** Remove a job and the transcript it produced. */

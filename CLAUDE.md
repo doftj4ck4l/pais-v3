@@ -495,10 +495,14 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 Audio transcription has a separate job lifecycle: `queued` → `transcribing` →
 `indexing` → `done` (or `failed`). Whisper produces the text during
 `transcribing`; `indexing` means the text is being split and written to the
-searchable document corpus. Chunked uploads remain in temporary disk files
-until the worker finishes; the compatibility multipart endpoint still holds its
-audio bytes in memory. An API restart marks any queued, transcribing, or
-indexing job failed rather than pretending work can resume.
+searchable document corpus. Chunked uploads begin in temporary disk files and
+the compatibility multipart endpoint still receives its audio bytes in memory.
+Before a job enters the queue, both are persisted in the workspace's internal
+`.pixelspace/transcriptions` directory (a completed temp upload is renamed when
+the filesystem permits it and copied otherwise). That retained source powers
+seekable replay and is removed with the job. An API restart still marks any
+queued, transcribing, or indexing job failed rather than pretending the lost
+in-memory queue and model request can resume.
 
 The web client does not send a recording as one multipart request. It creates a
 session at `/api/documents/transcription-uploads`, sends ordered 768 KiB raw
@@ -510,8 +514,8 @@ GiB. Parts are appended to a process-scoped temporary file while only the most
 recent 768 KiB part is retained in memory for idempotent retries. The worker
 uses FFmpeg to strip video and split media over 8 MiB into ten-minute mono MP3
 segments (about 4.8 MiB each), sends them to Whisper sequentially, offsets their
-timestamps, and removes both source and derived temporary files on success or
-failure. This second segmentation boundary is distinct from browser chunks:
+timestamps, and removes the derived temporary files on success or failure. The
+durable source remains available for replay. This second segmentation boundary is distinct from browser chunks:
 those raw byte ranges are not independently decodable media. A restart still
 requires the browser to begin the upload again. Keep the old `/transcribe`
 multipart route for compatibility, but the console must use the chunked path.
@@ -519,10 +523,13 @@ multipart route for compatibility, but the console must use the chunked path.
 `GET /api/documents/transcriptions` intentionally returns job metadata only.
 The Finder-style browser fetches the selected result lazily from
 `GET /api/documents/transcriptions/:id`. That detail lookup is scoped by
-workspace and reconstructs readable text from the overlapping search chunks;
-keep the overlap removal in `mergeChunkText` or chunk boundaries will appear
-twice in exported transcripts. There is no progress event stream yet, so the
-browser polls once per second while any job is active and backs off when idle.
+workspace and returns the exact timed passages kept on the job. The player uses
+those starts to follow the spoken passage in yellow; selecting a timestamp seeks
+the byte-range audio endpoint. Editing keeps timestamps fixed and replaces the
+job text plus document chunks and FTS mirror, so agent search cannot retain stale
+wording. Older jobs have no retained audio and remain readable/editable without
+a player. There is no progress event stream yet, so the browser polls once per
+second while any job is active and backs off when idle.
 
 Reasoning rows remain stored but are not drawn in `transcript.tsx`. Tool rows
 are also stored regardless of display state. The user preference
