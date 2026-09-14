@@ -665,6 +665,8 @@ Two internal compatibility values can still contain the former name:
 
 `.forgejo/workflows/deploy.yml` also still deploys to `salur@/opt/salur`: that
 is a user and a directory on the deploy host, not a string in this repo.
+Interactive staging diagnostics use `root@10.92.130.248`; `salur` is the CI
+deployment account, not the operator SSH login.
 
 Everything else — package names, the sandbox container prefix, the sandbox
 image tag, `SANDBOX_ROOT`, and the spill directory — is Pixelspace. The on-prem

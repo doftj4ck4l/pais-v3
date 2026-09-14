@@ -383,7 +383,12 @@ export function rangedAudioResponse(audio: OpenTranscriptionAudio, rangeHeader?:
     "X-Content-Type-Options": "nosniff",
   };
   if (!rangeHeader) {
-    return new Response(audio.file, {
+    // Keep BunFile out of Hono's response reconstruction path. The global CORS
+    // middleware adds headers after this handler returns; on Bun 1.3 that loses
+    // a BunFile slice's bounds and serves the entire underlying recording. A
+    // stream preserves both the byte window and Content-Length through that
+    // middleware without buffering recordings that may be gigabytes large.
+    return new Response(audio.file.stream(), {
       status: 200,
       headers: { ...common, "Content-Length": String(audio.byteLength) },
     });
@@ -397,7 +402,7 @@ export function rangedAudioResponse(audio: OpenTranscriptionAudio, rangeHeader?:
     });
   }
   const length = range.end - range.start + 1;
-  return new Response(audio.file.slice(range.start, range.end + 1, audio.contentType), {
+  return new Response(audio.file.slice(range.start, range.end + 1, audio.contentType).stream(), {
     status: 206,
     headers: {
       ...common,

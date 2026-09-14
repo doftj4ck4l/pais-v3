@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 let dir: string;
 let createApp: typeof import("./app").createApp;
@@ -165,6 +167,36 @@ describe("GET /api/documents/transcriptions/:id", () => {
     }, "bytes=9-");
     expect(invalidRange.status).toBe(416);
     expect(invalidRange.headers.get("content-range")).toBe("bytes */5");
+
+    // Exercise the real HTTP server, not only app.request()/Response.arrayBuffer().
+    // Hono's CORS middleware reconstructs the response after the handler. Bun
+    // 1.3 used to lose a BunFile slice's bounds at that boundary, so Safari's
+    // two-byte metadata probe received the whole recording despite a 0-1 range.
+    const audioApp = new Hono();
+    audioApp.use("*", cors());
+    audioApp.get("/audio", (c) => rangedAudioResponse({
+      relativePath: ".pixelspace/transcriptions/trx_audio_review.mp3",
+      absolutePath: audioPath,
+      byteLength: 5,
+      contentType: "audio/mpeg",
+      file: Bun.file(audioPath),
+    }, c.req.header("range")));
+    const server = Bun.serve({ port: 0, fetch: audioApp.fetch });
+    try {
+      const url = `http://127.0.0.1:${server.port}/audio`;
+      const probe = await fetch(url, { headers: { Range: "bytes=0-1" } });
+      expect(probe.status).toBe(206);
+      expect(probe.headers.get("content-length")).toBe("2");
+      expect(probe.headers.get("content-range")).toBe("bytes 0-1/5");
+      expect(new Uint8Array(await probe.arrayBuffer())).toEqual(new Uint8Array([10, 20]));
+
+      const full = await fetch(url);
+      expect(full.status).toBe(200);
+      expect(full.headers.get("content-length")).toBe("5");
+      expect(new Uint8Array(await full.arrayBuffer())).toEqual(new Uint8Array([10, 20, 30, 40, 50]));
+    } finally {
+      await server.stop(true);
+    }
 
     const hidden = await app.request(
       `/api/documents/transcriptions/trx_audio_review/audio?workspaceId=${workspace.id}`,
