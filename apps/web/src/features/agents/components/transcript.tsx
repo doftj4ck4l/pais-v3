@@ -1,9 +1,10 @@
-import { memo } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { ChevronRightIcon, Clock3Icon, FileSpreadsheetIcon, WrenchIcon, XIcon } from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { Spinner } from '@/shared/ui/spinner'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible'
 import { visibleTranscriptItems } from '@/features/agents/lib/transcript'
+import { liveRunStatus } from '@/features/agents/lib/live-run-status'
 import { renderMarkdown } from '@/features/agents/lib/markdown'
 import { parseMessage, hasUiBlock, validateSpec } from '@/features/agents/lib/ui-blocks'
 import { SegmentView } from '@/features/agents/components/ui-blocks'
@@ -17,6 +18,7 @@ import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Item } from '@/shared/lib/types'
 import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
 import type { QueuedFollowUp } from '@/features/agents/lib/follow-up-queue'
+import type { LiveRunStatusKey } from '@/features/agents/lib/live-run-status'
 
 /**
  * The transcript reads as a conversation: what the user asked, what the agent
@@ -28,19 +30,21 @@ import type { QueuedFollowUp } from '@/features/agents/lib/follow-up-queue'
 export function Transcript({
   items,
   running,
-  runSummary,
+  elapsedMs,
+  waitingForUser = false,
   showToolTrace = false,
   queuedFollowUps = [],
   onRemoveQueuedFollowUp,
 }: {
   items: Item[]
   running: boolean
-  runSummary: string | null
+  elapsedMs?: number
+  waitingForUser?: boolean
   showToolTrace?: boolean
   queuedFollowUps?: QueuedFollowUp[]
   onRemoveQueuedFollowUp?: (id: string) => void
 }) {
-  const { t } = usePreferences()
+  const statusKey = liveRunStatus(items, waitingForUser)
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
   // not by this component. Following from in here would mean scrolling an
   // ancestor it does not own, and would override the reader unconditionally.
@@ -54,11 +58,19 @@ export function Transcript({
         <div
           className="mt-4 mb-1 flex min-h-10 items-center justify-center gap-2.5 text-muted-foreground"
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >
-          <Spinner className="size-4" />
-          <span className="shimmer text-[0.8125rem] font-medium">
-            {runSummary ?? t('statusRunning')}
-          </span>
+          <Spinner className="size-4" aria-hidden="true" />
+          <LiveStatusLabel statusKey={statusKey} />
+          {elapsedMs !== undefined ? (
+            <span
+              className="readout border-l border-border pl-2.5 text-[0.6875rem] tabular-nums text-muted-foreground/70"
+              aria-hidden="true"
+            >
+              {(elapsedMs / 1000).toFixed(1)}s
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -71,6 +83,41 @@ export function Transcript({
         />
       ))}
     </div>
+  )
+}
+
+function LiveStatusLabel({ statusKey }: { statusKey: LiveRunStatusKey }) {
+  const { t } = usePreferences()
+  const [labels, setLabels] = useState<{ current: LiveRunStatusKey; previous: LiveRunStatusKey | null }>({
+    current: statusKey,
+    previous: null,
+  })
+
+  useEffect(() => {
+    setLabels((value) =>
+      value.current === statusKey
+        ? value
+        : { current: statusKey, previous: value.current },
+    )
+
+    const timeout = window.setTimeout(() => {
+      setLabels((value) => ({ ...value, previous: null }))
+    }, 280)
+
+    return () => window.clearTimeout(timeout)
+  }, [statusKey])
+
+  return (
+    <span className="live-status-label text-[0.8125rem] font-medium">
+      {labels.previous ? (
+        <span key={`previous-${labels.previous}`} className="live-status-exit" aria-hidden="true">
+          <span className="shimmer">{t(labels.previous)}</span>
+        </span>
+      ) : null}
+      <span key={labels.current} className="live-status-enter">
+        <span className="shimmer">{t(labels.current)}</span>
+      </span>
+    </span>
   )
 }
 
