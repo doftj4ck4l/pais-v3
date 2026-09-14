@@ -325,7 +325,7 @@ function RunSessionSheet({
               </div>
             </div>
           ) : detail && items.length ? (
-            <Transcript items={items} running={false} runSummary={null} />
+            <Transcript items={items} running={false} />
           ) : detail ? (
             <div className="grid min-h-64 place-items-center p-8 text-center text-sm text-muted-foreground">
               This session has no stored messages.

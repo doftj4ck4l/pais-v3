@@ -117,9 +117,8 @@ export function Console() {
                   <Transcript
                     items={selected.items}
                     running={selected.status === 'running'}
-                    runSummary={t('workingTime', {
-                      seconds: (selected.elapsed / 1000).toFixed(1),
-                    })}
+                    elapsedMs={selected.elapsed}
+                    waitingForUser={Boolean(selected.pendingQuestion)}
                     showToolTrace={showToolTrace}
                     queuedFollowUps={selected.queuedFollowUps}
                     onRemoveQueuedFollowUp={(id) => board.removeQueuedFollowUp(selected.id, id)}
