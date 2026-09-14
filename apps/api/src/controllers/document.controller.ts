@@ -23,6 +23,7 @@ import {
   type TranscriptionSegment,
 } from "../services/documents/transcribe.service";
 import type { TranscriptionRow } from "../models/schema";
+import { env } from "../config/env";
 
 /**
  * The workspace this request applies to.
@@ -38,7 +39,7 @@ const workspaceIdOf = async (c: Context) => {
 };
 
 /** Cap per file. Generous for a document, small enough to bound a bad upload. */
-const MAX_BYTES = 25 * 1024 * 1024;
+const MAX_BYTES = env.documentUploadMaxBytes;
 const MAX_TRANSCRIPT_CHARS = 2_000_000;
 const MAX_TRANSCRIPT_SEGMENTS = 20_000;
 

@@ -59,7 +59,9 @@ jobs:
           bun test "${files[@]}"
 
       - name: Test web
-        run: bun run --cwd apps/web test
+        run: |
+          bun run --cwd apps/web test
+          bun run --cwd apps/web build
 
   deploy:
     needs: test
@@ -90,8 +92,11 @@ jobs:
         run: |
           rsync -az --delete \
             --exclude '.git' \
+            --exclude '.worktrees' \
             --exclude 'node_modules' \
             --exclude '.env' \
+            --include '.env.example' \
+            --exclude '.env.*' \
             --exclude 'apps/api/.env' \
             --exclude 'secrets' \
             --exclude 'apps/api/data' \
@@ -127,6 +132,77 @@ jobs:
           ssh "$DEPLOY_USER@$DEPLOY_HOST" '
             for i in $(seq 1 30); do
               code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:8080/api/meta || true)
+              if [ "$code" = "200" ]; then echo "/api/meta OK after $((i*3))s"; exit 0; fi
+              sleep 3
+            done
+            echo "API did not answer within 90s"
+            cd '"$DEPLOY_PATH"' && docker compose ps && docker compose logs api --tail 40
+            exit 1'
+
+  # The node1 installation is installer-managed: its database, workspaces,
+  # application env and backups all live outside the synced checkout. Keep it
+  # as a separate job so a host-specific failure is named plainly in Forgejo
+  # and cannot change the long-running staging target's deployment settings.
+  deploy-node1:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: 10.36.45.191
+      DEPLOY_USER: node1
+      DEPLOY_PATH: /home/node1/Developer/pixelspacev3
+      DEPLOY_PORT: "18080"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deploy tooling
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq rsync openssh-client curl
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Verify deploy host
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "test -f $DEPLOY_PATH/.env && \
+            test -w $DEPLOY_PATH && \
+            docker ps >/dev/null && \
+            cd $DEPLOY_PATH && docker compose config -q"
+
+      # Host configuration and all mutable state stay where the installer put
+      # them. The checkout is disposable deployment input.
+      - name: Sync tree to node1
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.worktrees' \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --include '.env.example' \
+            --exclude '.env.*' \
+            --exclude 'apps/api/.env' \
+            --exclude 'secrets' \
+            --exclude 'apps/api/data' \
+            --exclude 'backups' \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      # `upgrade` validates the host, creates a consistent recovery backup,
+      # rebuilds API/web/sandbox, recreates the stack, and waits for health.
+      - name: Back up, build and restart node1
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && scripts/pixelspace upgrade --yes"
+
+      - name: Verify node1
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" '
+            for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:'"$DEPLOY_PORT"'/api/meta || true)
               if [ "$code" = "200" ]; then echo "/api/meta OK after $((i*3))s"; exit 0; fi
               sleep 3
             done
