@@ -7,9 +7,28 @@ describe('shared gateway catalog', () => {
   test('lists only deployments verified healthy on the gateway', () => {
     expect(MODELS.map((model) => model.model)).toEqual([
       'qwen3.8-27b',
+      'qwen3.8-flash',
       'ds4-flash',
-      'nemotron-3.5-lightning',
+      'glm-5.3-flash',
+      'vrs_smart',
+      'gemini-3.1-flash-image',
     ])
+  })
+
+  test('keeps non-chat router endpoints out of the model picker', () => {
+    const advertised = MODELS.map((model) => model.model)
+
+    expect(advertised).not.toContain('qwen3-tts')
+    expect(advertised).not.toContain('qwen3-vl-embedding-8b')
+    expect(advertised).not.toContain('whisper-large-v3-turbo')
+    expect(advertised).not.toContain('z-image-turbo')
+  })
+
+  test('marks the Gemini image model chat-only because it does not support tools', () => {
+    expect(MODELS.find((model) => model.model === 'gemini-3.1-flash-image')).toMatchObject({
+      id: 'gw-gemini-3.1-flash-image',
+      mode: 'chat-only',
+    })
   })
 
   test('routes persisted retired ids to Qwen without listing them', () => {
@@ -22,7 +41,7 @@ describe('shared gateway catalog', () => {
       'gw-qwen3.6-35b',
       'gw-ds4-flash-1m',
       'gw-muse-glimmer-30b',
-      'gw-vrs_smart',
+      'gw-nemotron-3.5-lightning',
     ]
 
     process.env.CUSTOM_API_KEY = 'test-key'

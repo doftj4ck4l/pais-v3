@@ -136,8 +136,19 @@ export const MODELS: ModelConfig[] = [
     ...gw("qwen3.8-27b", "Qwen · 27B (thinking)"),
     thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
   },
+  {
+    ...gw("qwen3.8-flash", "Qwen · Flash (thinking)"),
+    thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
+  },
   gw("ds4-flash", "ds4-flash (reasoning)"),
-  gw("nemotron-3.5-lightning", "NVIDIA · Nemotron 3.5 Lightning"),
+  gw("glm-5.3-flash", "GLM · 5.3 Flash"),
+  gw("vrs_smart", "VRS · Smart"),
+  {
+    ...gw("gemini-3.1-flash-image", "Google · Gemini 3.1 Flash Image"),
+    // The router accepts ordinary chat completions for this model but has no
+    // endpoint that supports tool use, so keep agent schemas away from it.
+    mode: "chat-only",
+  },
 ];
 
 // Existing conversations and managed agents persist catalog ids. Keep retired
@@ -151,7 +162,7 @@ const RETIRED_MODEL_IDS = new Set([
   "gw-qwen3.6-35b",
   "gw-ds4-flash-1m",
   "gw-muse-glimmer-30b",
-  "gw-vrs_smart",
+  "gw-nemotron-3.5-lightning",
 ]);
 
 export function getModel(id: string): ModelConfig | undefined {
