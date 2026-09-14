@@ -674,7 +674,14 @@ function TranscriptPlayer({
   const lineRefs = useRef<(HTMLDivElement | null)[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [audioError, setAudioError] = useState(false)
   const activeIndex = audioUrl ? activeTranscriptSegment(segments, currentTime) : -1
+
+  useEffect(() => {
+    setAudioError(false)
+    setCurrentTime(0)
+    setPlaying(false)
+  }, [audioUrl])
 
   useEffect(() => {
     if (!playing || activeIndex < 0) return
@@ -685,7 +692,7 @@ function TranscriptPlayer({
     if (!audioRef.current) return
     audioRef.current.currentTime = seconds
     setCurrentTime(seconds)
-    void audioRef.current.play()
+    void audioRef.current.play().catch(() => setAudioError(true))
   }
 
   return (
@@ -709,10 +716,23 @@ function TranscriptPlayer({
             aria-label={t('replayRecording', { name: label })}
             className="h-9 w-full"
             onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-            onPlay={() => setPlaying(true)}
+            onCanPlay={() => setAudioError(false)}
+            onError={() => {
+              setAudioError(true)
+              setPlaying(false)
+            }}
+            onPlay={() => {
+              setAudioError(false)
+              setPlaying(true)
+            }}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}
           />
+          {audioError ? (
+            <p role="alert" className="mt-2 text-xs text-destructive">
+              {t('audioPlaybackFailed')}
+            </p>
+          ) : null}
         </div>
       ) : (
         <p className="mb-5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
