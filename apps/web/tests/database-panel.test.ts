@@ -30,6 +30,7 @@ describe('database connector form', () => {
     expect(emptyFormFor('postgresql').port).toBe('5432')
     expect(emptyFormFor('mysql').port).toBe('3306')
     expect(emptyFormFor('sqlserver')).toMatchObject({ port: '1433', sslMode: 'require' })
+    expect(emptyFormFor('sybase')).toMatchObject({ port: '5000', sslMode: 'disable' })
   })
 
   it('preserves MySQL when editing and sends it to the API', () => {
@@ -53,6 +54,9 @@ describe('database connector form', () => {
     expect(engineLabel('sqlserver')).toBe('SQL Server')
     expect(formatServerVersion({ serverVersion: '15.0.2080.9', serverProduct: 'SQL Server' }, 'sqlserver'))
       .toBe(' · SQL Server 15.0.2080.9')
+    expect(engineLabel('sybase')).toBe('SAP Sybase ASE')
+    expect(formatServerVersion({ serverVersion: '15.7 SP110', serverProduct: 'SAP ASE' }, 'sybase'))
+      .toBe(' · SAP ASE 15.7 SP110')
   })
 
   it('keeps SQL Server password and custom CA behavior engine-neutral', () => {

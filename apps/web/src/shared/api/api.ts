@@ -608,7 +608,7 @@ export type DatabaseApiError = {
 
 export type DatabaseConnectionInput = {
   name: string
-  engine: 'postgresql' | 'mysql' | 'sqlserver'
+  engine: 'postgresql' | 'mysql' | 'sqlserver' | 'sybase'
   host: string
   port: number
   database: string
@@ -619,6 +619,10 @@ export type DatabaseConnectionInput = {
     ca?: string | null
     serverName?: string | null
   }
+  sybase?: {
+    tdsVersion?: string | null
+    clientCharset?: string | null
+  }
 }
 
 type DatabaseResult<T> = { ok: true; value: T } | { ok: false; error: DatabaseApiError }
@@ -626,7 +630,7 @@ type DatabaseResult<T> = { ok: true; value: T } | { ok: false; error: DatabaseAp
 export type DatabaseTestResult = {
   latencyMs: number
   serverVersion?: string
-  serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB' | 'SQL Server'
+  serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB' | 'SQL Server' | 'SAP ASE'
 }
 
 async function databaseError(res: Response): Promise<DatabaseApiError> {

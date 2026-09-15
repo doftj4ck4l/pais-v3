@@ -244,6 +244,7 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                       <option value="postgresql">PostgreSQL</option>
                       <option value="mysql">MySQL / MariaDB</option>
                       <option value="sqlserver">SQL Server</option>
+                      <option value="sybase">SAP Sybase ASE</option>
                     </select>
                   </label>
                   <Field label="Host" value={form.host} onChange={(host) => setForm((v) => ({ ...v, host }))} placeholder="10.35.180.238" />
@@ -265,8 +266,12 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                       className={inputClass}
                     >
                       <option value="disable">Disable</option>
-                      <option value="require">Require (no certificate verification)</option>
-                      <option value="verify-full">Verify certificate and host</option>
+                      {form.engine !== 'sybase' ? (
+                        <>
+                          <option value="require">Require (no certificate verification)</option>
+                          <option value="verify-full">Verify certificate and host</option>
+                        </>
+                      ) : null}
                     </select>
                   </label>
                   {form.sslMode === 'verify-full' ? (
@@ -291,9 +296,9 @@ export function DatabasePanel({ onCountChange }: { onCountChange?: (n: number) =
                   ) : null}
                 </div>
 
-                {form.engine === 'sqlserver' ? (
+                {form.engine === 'sqlserver' || form.engine === 'sybase' ? (
                   <p className="mt-3 text-xs text-muted-foreground">
-                    SQL Server requires a server-side read-only login.
+                    {engineLabel(form.engine)} requires a server-side read-only login.
                   </p>
                 ) : null}
 
@@ -417,6 +422,14 @@ const DATABASE_CONNECTORS = [
     detail: 'Read-only login required · port 1433',
     available: true,
     tint: '204 41 38',
+  },
+  {
+    engine: 'sybase',
+    name: 'SAP Sybase ASE',
+    summary: 'Explore SAP ASE catalogs through FreeTDS with guarded queries.',
+    detail: 'Read-only login required · port 5000 · SSL disabled',
+    available: true,
+    tint: '0 112 192',
   },
 ] as const
 

@@ -48,7 +48,7 @@ function setup(adapterOverrides: Partial<DatabaseAdapter> = {}) {
 
 describe("DatabaseConnectorService", () => {
   it("registers all production database engines", () => {
-    expect(databaseAdapterRegistry.engines()).toEqual(["postgresql", "mysql", "sqlserver"]);
+    expect(databaseAdapterRegistry.engines()).toEqual(["postgresql", "mysql", "sqlserver", "sybase"]);
   });
 
   it("pins the approved address before calling an adapter", async () => {

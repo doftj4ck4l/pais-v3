@@ -64,6 +64,7 @@ export function effectiveApiKey(model: ModelConfig): string | undefined {
 }
 
 const CUSTOM_BASE = process.env.CUSTOM_BASE_URL ?? "http://60.51.17.97:9999/v1";
+const UNCENSORED_BASE = "http://10.0.151.8:8002/v1";
 
 /**
  * Which logo a gateway model wears, by id prefix.
@@ -128,7 +129,9 @@ const qwenThinking = (levels: string[], defaultLevel: string): ThinkingConfig =>
 // The shared gateway can advertise a model after all of its deployments have
 // gone unhealthy. Keep this list to models verified with a real completion,
 // not merely names returned by `GET /v1/models`; otherwise the picker offers a
-// run that can only return "no healthy deployments".
+// run that can only return "no healthy deployments". The uncensored test model
+// is the one exception: it is a directly reached LAN vLLM service, checked from
+// the deployment host rather than routed through the shared gateway.
 export const MODELS: ModelConfig[] = [
   // Thinking-only: no instruct variant is listed, deliberately — this model is
   // always in thinking mode and the user only adjusts how hard it thinks.
@@ -140,8 +143,21 @@ export const MODELS: ModelConfig[] = [
     ...gw("qwen3.8-flash", "Qwen · Flash (thinking)"),
     thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
   },
+  {
+    id: "local-qwen3-4b-uncensored",
+    label: "qwen3-4b-uncensored",
+    provider: "custom",
+    model: "qwen3-4b-uncensored",
+    // vLLM accepts the conventional EMPTY placeholder when auth is disabled.
+    // Supplying it keeps the provider path identical to authenticated models.
+    apiKeyEnv: "",
+    apiKey: "EMPTY",
+    baseUrl: UNCENSORED_BASE,
+    hint: "Qwen · 4B Uncensored (test)",
+    brand: "qwen",
+    contextWindow: 8_192,
+  },
   gw("ds4-flash", "ds4-flash (reasoning)"),
-  gw("glm-5.3-flash", "GLM · 5.3 Flash"),
   gw("vrs_smart", "VRS · Smart"),
   {
     ...gw("gemini-3.1-flash-image", "Google · Gemini 3.1 Flash Image"),

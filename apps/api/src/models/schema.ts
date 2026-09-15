@@ -635,7 +635,7 @@ export type DbConnectionRow = {
   id: string;
   workspaceId: string | null;
   name: string;
-  engine: "postgresql" | "mysql" | "sqlserver";
+  engine: "postgresql" | "mysql" | "sqlserver" | "sybase";
   status: DbConnectionStatus;
   error: string | null;
   host: string;

@@ -147,12 +147,15 @@ type StoredSecretV2 = {
   password: string;
   sslCa: string | null;
   sslServerName: string | null;
+  sybaseTdsVersion?: string | null;
+  sybaseClientCharset?: string | null;
 };
 
 const normalizeEngine = (engine: string): DatabaseEngine => {
   if (engine === "postgres" || engine === "postgresql") return "postgresql";
   if (engine === "mysql") return "mysql";
   if (engine === "sqlserver") return "sqlserver";
+  if (engine === "sybase" || engine === "ase") return "sybase";
   throw new Error(`Unsupported stored database engine: ${engine}`);
 };
 
@@ -162,6 +165,8 @@ function encodeSecret(config: DatabaseConnectionConfig): string {
     password: config.password,
     sslCa: config.ssl.ca ?? null,
     sslServerName: config.ssl.serverName ?? null,
+    sybaseTdsVersion: config.sybase?.tdsVersion ?? null,
+    sybaseClientCharset: config.sybase?.clientCharset ?? null,
   };
   return encryptSecret(JSON.stringify(value));
 }
@@ -191,6 +196,14 @@ function decodeConfig(row: {
           ca: parsed.sslCa,
           serverName: parsed.sslServerName,
         },
+        ...(row.engine === "sybase" || row.engine === "ase"
+          ? {
+              sybase: {
+                tdsVersion: parsed.sybaseTdsVersion ?? null,
+                clientCharset: parsed.sybaseClientCharset ?? null,
+              },
+            }
+          : {}),
       };
     }
   } catch {

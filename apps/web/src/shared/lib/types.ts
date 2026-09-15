@@ -258,7 +258,7 @@ export type PlaybookBullet = {
 export type DbConnectionRow = {
   id: string
   name: string
-  engine: 'postgresql' | 'mysql' | 'sqlserver'
+  engine: 'postgresql' | 'mysql' | 'sqlserver' | 'sybase'
   status: 'connected' | 'error'
   error: string | null
   host: string

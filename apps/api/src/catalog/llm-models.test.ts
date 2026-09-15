@@ -8,11 +8,39 @@ describe('shared gateway catalog', () => {
     expect(MODELS.map((model) => model.model)).toEqual([
       'qwen3.8-27b',
       'qwen3.8-flash',
+      'qwen3-4b-uncensored',
       'ds4-flash',
-      'glm-5.3-flash',
       'vrs_smart',
       'gemini-3.1-flash-image',
     ])
+  })
+
+  test('offers the directly served uncensored model as an agent model', () => {
+    const previousModel = process.env.CUSTOM_MODEL
+    delete process.env.CUSTOM_MODEL
+
+    try {
+      const model = getModel('local-qwen3-4b-uncensored')
+      expect(model).toMatchObject({
+        label: 'qwen3-4b-uncensored',
+        model: 'qwen3-4b-uncensored',
+        baseUrl: 'http://10.0.151.8:8002/v1',
+        contextWindow: 8_192,
+      })
+      expect(resolveRun({ modelId: 'local-qwen3-4b-uncensored' }).ok).toBe(true)
+
+      const dropdown = getMeta().models
+      expect(dropdown.find((entry) => entry.id === 'local-qwen3-4b-uncensored')).toMatchObject({
+        label: 'qwen3-4b-uncensored',
+        mode: 'agent',
+        ready: true,
+        contextWindow: 8_192,
+      })
+      expect(dropdown.map((entry) => entry.id)).not.toContain('gw-glm-5.3-flash')
+    } finally {
+      if (previousModel === undefined) delete process.env.CUSTOM_MODEL
+      else process.env.CUSTOM_MODEL = previousModel
+    }
   })
 
   test('keeps non-chat router endpoints out of the model picker', () => {

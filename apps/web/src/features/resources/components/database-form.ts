@@ -20,7 +20,7 @@ export function emptyFormFor(engine: DatabaseConnectionInput['engine']): Databas
     engine,
     name: '',
     host: '',
-    port: engine === 'mysql' ? '3306' : engine === 'sqlserver' ? '1433' : '5432',
+    port: engine === 'mysql' ? '3306' : engine === 'sqlserver' ? '1433' : engine === 'sybase' ? '5000' : '5432',
     database: '',
     username: '',
     password: '',
@@ -64,14 +64,20 @@ export function connectionInput(
 }
 
 export function engineLabel(engine: DatabaseConnectionInput['engine']): string {
-  return engine === 'mysql' ? 'MySQL / MariaDB' : engine === 'sqlserver' ? 'SQL Server' : 'PostgreSQL'
+  return engine === 'mysql'
+    ? 'MySQL / MariaDB'
+    : engine === 'sqlserver'
+      ? 'SQL Server'
+      : engine === 'sybase' ? 'SAP Sybase ASE' : 'PostgreSQL'
 }
 
 export function formatServerVersion(
-  result: { serverVersion?: string; serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB' | 'SQL Server' },
+  result: { serverVersion?: string; serverProduct?: 'PostgreSQL' | 'MySQL' | 'MariaDB' | 'SQL Server' | 'SAP ASE' },
   engine: DatabaseConnectionInput['engine'],
 ): string {
   if (!result.serverVersion) return ''
-  const product = result.serverProduct ?? (engine === 'mysql' ? 'MySQL' : engine === 'sqlserver' ? 'SQL Server' : 'PostgreSQL')
+  const product = result.serverProduct ?? (
+    engine === 'mysql' ? 'MySQL' : engine === 'sqlserver' ? 'SQL Server' : engine === 'sybase' ? 'SAP ASE' : 'PostgreSQL'
+  )
   return ` · ${product} ${result.serverVersion}`
 }

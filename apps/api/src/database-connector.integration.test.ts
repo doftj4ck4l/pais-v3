@@ -13,12 +13,12 @@ const headers = (user: string) => ({
 
 const input = (
   password = "never-return-this",
-  engine: "postgresql" | "mysql" | "sqlserver" = "postgresql",
+  engine: "postgresql" | "mysql" | "sqlserver" | "sybase" = "postgresql",
 ) => ({
   name: "warehouse",
   engine,
   host: "10.35.180.238",
-  port: engine === "mysql" ? 3306 : engine === "sqlserver" ? 1433 : 5432,
+  port: engine === "mysql" ? 3306 : engine === "sqlserver" ? 1433 : engine === "sybase" ? 5000 : 5432,
   database: "takaful",
   username: "salur_reader",
   password,
@@ -123,6 +123,22 @@ describe("database connector HTTP surface", () => {
     expect(text).not.toContain("sqlserver-never-return-this");
     expect(text).not.toContain("sqlserver://");
     expect(text).not.toContain("mssql://");
+  });
+
+  it("creates and returns a SAP ASE connection without exposing credentials", async () => {
+    mockSuccessfulDatabase();
+    const res = await createApp().request("/api/databases", {
+      method: "POST",
+      headers: headers("db-create-sybase-user"),
+      body: JSON.stringify(input("sybase-never-return-this", "sybase")),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(201);
+    expect(JSON.parse(text).connection).toMatchObject({ engine: "sybase", port: 5000 });
+    expect(text).not.toContain("sybase-never-return-this");
+    expect(text).not.toContain("sybase://");
+    expect(text).not.toContain("ase://");
+    expect(text).not.toContain("Driver=");
   });
 
   it("updates settings without requiring the password to be returned and resubmitted", async () => {
