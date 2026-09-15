@@ -46,6 +46,7 @@ type ConnectionBody = {
   username?: unknown;
   password?: unknown;
   ssl?: { mode?: unknown; ca?: unknown; serverName?: unknown };
+  sybase?: { tdsVersion?: unknown; clientCharset?: unknown };
 };
 
 async function readBody(c: Context): Promise<{ ok: true; body: ConnectionBody } | { ok: false; error: DatabaseError }> {
@@ -89,7 +90,15 @@ function parseConfig(
   const mode = String(body.ssl?.mode ?? existing?.ssl.mode ?? "disable") as DatabaseSslMode;
 
   if (adapter && !adapter.capabilities.sslModes.includes(mode)) {
-    return { ok: false, error: requestError("SSL mode must be disable, require, or verify-full", "ssl.mode") };
+    return {
+      ok: false,
+      error: requestError(
+        adapter.engine === "sybase"
+          ? "SAP ASE TLS is not implemented; SSL mode must be disable"
+          : "SSL mode must be disable, require, or verify-full",
+        "ssl.mode",
+      ),
+    };
   }
   const ca = body.ssl?.ca === undefined
     ? existing?.ssl.ca ?? null
@@ -101,6 +110,16 @@ function parseConfig(
     : body.ssl.serverName === null || body.ssl.serverName === ""
       ? null
       : String(body.ssl.serverName).trim();
+  const tdsVersion = body.sybase?.tdsVersion === undefined
+    ? existing?.sybase?.tdsVersion ?? null
+    : body.sybase.tdsVersion === null || body.sybase.tdsVersion === ""
+      ? null
+      : String(body.sybase.tdsVersion).trim();
+  const clientCharset = body.sybase?.clientCharset === undefined
+    ? existing?.sybase?.clientCharset ?? null
+    : body.sybase.clientCharset === null || body.sybase.clientCharset === ""
+      ? null
+      : String(body.sybase.clientCharset).trim();
 
   const config: DatabaseConnectionConfig = {
     engine: adapter.engine,
@@ -110,6 +129,7 @@ function parseConfig(
     username,
     password,
     ssl: { mode, ca, serverName },
+    ...(adapter.engine === "sybase" ? { sybase: { tdsVersion, clientCharset } } : {}),
   };
   const invalid = databaseConnector.validate(config);
   return invalid ? { ok: false, error: invalid } : { ok: true, name, config };
@@ -213,7 +233,9 @@ function sameConnectionConfig(a: DatabaseConnectionConfig, b: DatabaseConnection
     a.password === b.password &&
     a.ssl.mode === b.ssl.mode &&
     (a.ssl.ca ?? null) === (b.ssl.ca ?? null) &&
-    (a.ssl.serverName ?? null) === (b.ssl.serverName ?? null)
+    (a.ssl.serverName ?? null) === (b.ssl.serverName ?? null) &&
+    (a.sybase?.tdsVersion ?? null) === (b.sybase?.tdsVersion ?? null) &&
+    (a.sybase?.clientCharset ?? null) === (b.sybase?.clientCharset ?? null)
   );
 }
 

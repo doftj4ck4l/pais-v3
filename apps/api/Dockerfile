@@ -36,6 +36,11 @@ ARG DOCKER_CLI_VERSION=29.3.1
 # ---------------------------------------------------------------------------
 FROM oven/bun:${BUN_VERSION} AS deps
 WORKDIR /app
+# odbc is an N-API addon. Keep its compiler, Python, and unixODBC headers in
+# this build-only stage; none of them belong in the API runtime image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential python3 unixodbc-dev \
+ && rm -rf /var/lib/apt/lists/*
 # Manifests only, so a source edit does not invalidate the install layer.
 # apps/web's manifest is copied but not installed — `--frozen-lockfile` verifies
 # the lockfile against every workspace member, so omitting it fails the install.
@@ -43,6 +48,7 @@ COPY package.json bun.lock ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 RUN --mount=type=cache,target=/root/.bun/install/cache \
+    npm_config_build_from_source=true \
     bun install --frozen-lockfile --production --filter '!./apps/web'
 
 # Aliases, because only `FROM` expands a build ARG — `COPY --from=img:${VAR}`
@@ -65,8 +71,13 @@ ARG UV_VERSION
 # The Bun image ships no CA bundle, so without this every outbound HTTPS call —
 # model providers, HTTP MCP servers — fails certificate verification. FFmpeg
 # strips video and segments large recordings below model-gateway upload limits.
+# Debian's default FreeTDS 1.3.x preserves doubled closing braces in ODBC
+# passwords instead of decoding them. Pin the Debian backport that fixes the
+# parser so an ASE password with `;`, `}`, or `=` authenticates correctly.
+COPY apps/api/docker/trixie-backports.sources /etc/apt/sources.list.d/trixie-backports.sources
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
+ && apt-get install -y --no-install-recommends ca-certificates ffmpeg unixodbc \
+    tdsodbc=1.5.5+ds-1~bpo13+1 freetds-common=1.5.5+ds-1~bpo13+1 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker

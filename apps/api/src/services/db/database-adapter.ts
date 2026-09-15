@@ -6,7 +6,9 @@
  * on an engine name.
  */
 
-export type DatabaseEngine = "postgresql" | "mysql" | "sqlserver";
+export type DatabaseEngine = "postgresql" | "mysql" | "sqlserver" | "sybase";
+
+export type DatabaseServerProduct = "PostgreSQL" | "MySQL" | "MariaDB" | "SQL Server" | "SAP ASE";
 
 export type DatabaseSslMode = "disable" | "require" | "verify-full";
 
@@ -26,6 +28,11 @@ export type DatabaseConnectionConfig = {
   username: string;
   password: string;
   ssl: DatabaseSslOptions;
+  /** FreeTDS settings used only by the SAP ASE adapter. */
+  sybase?: {
+    tdsVersion?: string | null;
+    clientCharset?: string | null;
+  };
 };
 
 export type ApprovedDatabaseTarget = {
@@ -118,7 +125,7 @@ export interface DatabaseAdapter {
     target: ApprovedDatabaseTarget,
   ): Promise<DatabaseResult<{
     serverVersion?: string;
-    serverProduct?: "PostgreSQL" | "MySQL" | "MariaDB" | "SQL Server";
+    serverProduct?: DatabaseServerProduct;
   }>>;
   fetchCatalog(
     config: DatabaseConnectionConfig,
@@ -139,7 +146,11 @@ export function scrubDatabaseMessage(
   config: Pick<DatabaseConnectionConfig, "password">,
   urlReplacement = "database://***",
 ): string {
-  let scrubbed = message.replace(/(?:postgres(?:ql)?|mysql|mssql|sqlserver):\/\/[^\s"']+/gi, urlReplacement);
+  let scrubbed = message.replace(/(?:postgres(?:ql)?|mysql|mssql|sqlserver|sybase|ase):\/\/[^\s"']+/gi, urlReplacement);
+  // Driver-manager errors sometimes echo the complete DSN-less string. Drop
+  // it as one unit so a newly added ODBC attribute cannot become public text.
+  scrubbed = scrubbed.replace(/\b(?:Driver|DSN)\s*=[^\r\n"']+/gi, "odbc://***");
+  scrubbed = scrubbed.replace(/\b(?:PWD|Password)\s*=\s*(?:\{(?:[^}]|}})*\}|[^;\s]*)/gi, "PWD=***");
   if (config.password) {
     scrubbed = scrubbed.split(config.password).join("***");
     const encoded = encodeURIComponent(config.password);

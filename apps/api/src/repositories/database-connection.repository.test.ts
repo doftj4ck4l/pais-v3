@@ -97,6 +97,20 @@ describe("SqliteDatabaseConnectionStore", () => {
     expect(JSON.stringify((await store.list("ws1"))[0])).not.toContain("sqlserver-test-secret");
   });
 
+  it("preserves SAP ASE settings through encrypted storage", async () => {
+    const sybaseConfig = {
+      ...baseConfig,
+      engine: "sybase" as const,
+      port: 4001,
+      password: "sybase-test-secret",
+      sybase: { tdsVersion: "5.0", clientCharset: "ISO-8859-1" },
+    };
+    await store.create(conn({ config: sybaseConfig }));
+    expect((await store.list("ws1"))[0]).toMatchObject({ engine: "sybase", port: 4001 });
+    expect(await store.resolveConfig("ws1", "c1")).toEqual(sybaseConfig);
+    expect(JSON.stringify((await store.list("ws1"))[0])).not.toContain("sybase-test-secret");
+  });
+
   it("resolves public fields and private config together without mixing ownership", async () => {
     await store.create(conn());
     const resolved = await store.resolveConnection("ws1", "c1");

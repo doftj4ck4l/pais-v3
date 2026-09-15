@@ -8,6 +8,7 @@ import type {
   DatabaseConnectionConfig,
   DatabaseError,
   DatabaseResult,
+  DatabaseServerProduct,
   QueryOutcome,
   RawCatalog,
 } from "./database-adapter";
@@ -15,11 +16,13 @@ import { DatabaseNetworkPolicy } from "./network-policy";
 import { mysqlAdapter } from "./mysql.driver";
 import { postgresqlAdapter } from "./postgres.driver";
 import { sqlserverAdapter } from "./sqlserver.driver";
+import { sybaseAdapter } from "./sybase.driver";
 
 export const databaseAdapterRegistry = new DatabaseAdapterRegistry()
   .register(postgresqlAdapter)
   .register(mysqlAdapter)
-  .register(sqlserverAdapter);
+  .register(sqlserverAdapter)
+  .register(sybaseAdapter);
 
 type ReadyAdapter = { adapter: DatabaseAdapter; target: ApprovedDatabaseTarget };
 
@@ -48,7 +51,7 @@ export class DatabaseConnectorService {
   ): Promise<DatabaseResult<{
     latencyMs: number;
     serverVersion?: string;
-    serverProduct?: "PostgreSQL" | "MySQL" | "MariaDB" | "SQL Server";
+    serverProduct?: DatabaseServerProduct;
   }>> {
     const ready = await this.ready(config);
     if (!ready.ok) return ready;

@@ -29,8 +29,9 @@ describe("DatabaseAdapterRegistry", () => {
 
     registry.register(fakeAdapter("mysql"));
     registry.register(fakeAdapter("sqlserver"));
+    registry.register(fakeAdapter("sybase"));
 
-    expect(registry.engines()).toEqual(["postgresql", "mysql", "sqlserver"]);
+    expect(registry.engines()).toEqual(["postgresql", "mysql", "sqlserver", "sybase"]);
     expect(registry.get("mysql")?.defaultPort).toBe(1234);
     expect(agentToolNames).toEqual(["search_schema", "describe_table", "run_query"]);
   });
