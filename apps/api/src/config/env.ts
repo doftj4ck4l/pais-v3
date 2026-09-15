@@ -36,6 +36,15 @@ export function parseAgentInvocationTimeoutMs(raw: string | undefined): number {
   return milliseconds;
 }
 
+export function parseDocumentUploadMaxBytes(raw: string | undefined): number {
+  const mib = 1024 * 1024;
+  const bytes = raw === undefined || raw.trim() === "" ? 25 * mib : Number(raw);
+  if (!Number.isInteger(bytes) || bytes < mib || bytes > 512 * mib) {
+    throw new Error("DOCUMENT_UPLOAD_MAX_BYTES must be an integer from 1048576 to 536870912.");
+  }
+  return bytes;
+}
+
 export function parseUserPromptTimeoutMs(raw: string | undefined): number {
   // 10 minutes: long enough for a user to think, bounded enough that one who
   // walked away does not wedge the run (an approval was measured waiting ~24
@@ -89,6 +98,11 @@ export const env = {
   /** Maximum time a public prompt-agent request may occupy a provider connection. */
   agentInvocationTimeoutMs: parseAgentInvocationTimeoutMs(
     process.env.AGENT_INVOCATION_TIMEOUT_MS,
+  ),
+
+  /** Per-file limit for document uploads. Audio uploads have a separate cap. */
+  documentUploadMaxBytes: parseDocumentUploadMaxBytes(
+    process.env.DOCUMENT_UPLOAD_MAX_BYTES,
   ),
 
   /** Auto-cancel an unanswered ask_user / approval prompt after this long. */

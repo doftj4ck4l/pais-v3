@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   parseAgentInvocationTimeoutMs,
   parseAuthMode,
+  parseDocumentUploadMaxBytes,
   parseLocalSessionTtlMs,
   parseOrganizationInviteTtlMs,
   parsePublicUrl,
@@ -28,6 +29,14 @@ describe("organization environment configuration", () => {
     expect(() => parseAgentInvocationTimeoutMs("999")).toThrow();
     expect(() => parseAgentInvocationTimeoutMs("300001")).toThrow();
     expect(() => parseAgentInvocationTimeoutMs("1.5")).toThrow();
+  });
+
+  it("defaults and bounds the document upload limit", () => {
+    expect(parseDocumentUploadMaxBytes(undefined)).toBe(25 * 1024 * 1024);
+    expect(parseDocumentUploadMaxBytes(String(200 * 1024 * 1024))).toBe(200 * 1024 * 1024);
+    expect(() => parseDocumentUploadMaxBytes("1048575")).toThrow();
+    expect(() => parseDocumentUploadMaxBytes(String(513 * 1024 * 1024))).toThrow();
+    expect(() => parseDocumentUploadMaxBytes("1.5")).toThrow();
   });
 
   it("accepts the three explicit authentication modes", () => {
