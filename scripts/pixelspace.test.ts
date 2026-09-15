@@ -1181,6 +1181,10 @@ describe("Pixelspace on-prem operator", () => {
     expect(statSync(path.join(fx.home, "pixelspace-backups")).mode & 0o777).toBe(0o700);
     expect(statSync(archive).mode & 0o777).toBe(0o600);
     expect(statSync(`${archive}.sha256`).mode & 0o777).toBe(0o600);
+    const backupLog = readFileSync(fx.dockerLog, "utf8");
+    expect(backupLog).toContain("--network none --user 0:0");
+    expect(backupLog).toContain(`${dataRoot}:/source:ro`);
+    expect(backupLog).toContain(`${workspaceRoot}:/source:ro`);
     writeFileSync(path.join(dataRoot, "app.db"), "database-after");
     writeFileSync(path.join(workspaceRoot, "note.txt"), "workspace-after");
     writeFileSync(path.join(rustfsVolume, "object.bin"), "object-after");

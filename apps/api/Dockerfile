@@ -41,6 +41,10 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential python3 unixodbc-dev \
  && rm -rf /var/lib/apt/lists/*
+# Debian's node-gyp uses the distribution Node headers and builds an addon
+# that calls libuv functions Bun 1.3.14 does not implement. Bun-run node-gyp
+# builds the N-API binding Bun can actually load; keep it build-only and pinned.
+RUN bun add --global node-gyp@11.1.0
 # Manifests only, so a source edit does not invalidate the install layer.
 # apps/web's manifest is copied but not installed — `--frozen-lockfile` verifies
 # the lockfile against every workspace member, so omitting it fails the install.

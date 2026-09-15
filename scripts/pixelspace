@@ -1579,6 +1579,16 @@ backup_volume() {
     tar -C /source -cf "/backup/$output" .
 }
 
+backup_directory() {
+  local source="$1" output="$2" stage="$3" helper_image="$4"
+  # Sandbox tools can leave root-owned files in the workspace. The host operator
+  # cannot read them, but the trusted, offline backup helper can archive the
+  # stopped workspace through a read-only bind mount without changing ownership.
+  run docker run --rm --network none --user 0:0 \
+    -v "$source:/source:ro" -v "$stage:/backup" "$helper_image" \
+    tar -C /source -cf "/backup/$output" .
+}
+
 BACKUP_STAGE=""
 BACKUP_API_WAS_RUNNING=0
 BACKUP_RUSTFS_WAS_RUNNING=0
@@ -1620,7 +1630,7 @@ backup_cleanup() {
 }
 
 backup_stack() {
-  local backup_root stamp archive archive_parent helper_image app_env volume_stage state sandbox_list sandbox_id
+  local backup_root stamp archive archive_parent helper_image app_env directory_stage volume_stage state sandbox_list sandbox_id
   backup_root="$(env_value PIXELSPACE_BACKUP_ROOT)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   archive="${1:-$backup_root/pixelspace-$stamp.tar.gz}"
@@ -1636,8 +1646,9 @@ backup_stack() {
   BACKUP_NEEDS_RESTART=0
   BACKUP_SANDBOX_CONTAINERS=()
   BACKUP_STAGE="$(mktemp -d)"
+  directory_stage="$BACKUP_STAGE/directories"
   volume_stage="$BACKUP_STAGE/volumes"
-  mkdir -p "$volume_stage"
+  mkdir -p "$directory_stage" "$volume_stage"
   trap backup_cleanup EXIT
   if running_service api; then BACKUP_API_WAS_RUNNING=1; else state=$?; [[ "$state" -eq 1 ]] || return "$state"; fi
   if running_service rustfs; then BACKUP_RUSTFS_WAS_RUNNING=1; else state=$?; [[ "$state" -eq 1 ]] || return "$state"; fi
@@ -1673,8 +1684,11 @@ backup_stack() {
   data_root="$(env_value PIXELSPACE_DATA_ROOT)"
   sandbox_root="$(env_value SANDBOX_ROOT)"
   mkdir -p "$data_root" "$sandbox_root"
-  tar -C "$data_root" -cf "$BACKUP_STAGE/data.tar" .
-  tar -C "$sandbox_root" -cf "$BACKUP_STAGE/workspaces.tar" .
+  backup_directory "$data_root" data.tar "$directory_stage" "$helper_image"
+  backup_directory "$sandbox_root" workspaces.tar "$directory_stage" "$helper_image"
+  mv -- "$directory_stage/data.tar" "$BACKUP_STAGE/data.tar"
+  mv -- "$directory_stage/workspaces.tar" "$BACKUP_STAGE/workspaces.tar"
+  rmdir -- "$directory_stage"
   backup_volume "$(compose_volume_name rustfs-data)" rustfs-data.tar "$volume_stage" "$helper_image"
   backup_volume "$(compose_volume_name mcp-cache)" mcp-cache.tar "$volume_stage" "$helper_image"
   [[ ! -f "$volume_stage/rustfs-data.tar" ]] || printf '%s\n' volumes/rustfs-data.tar >> "$BACKUP_STAGE/payloads"
