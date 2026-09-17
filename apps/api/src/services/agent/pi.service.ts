@@ -58,6 +58,7 @@ import { usableWindow } from "../context/context-window.service";
 import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
+import { createWebSearchRunner } from "./web-search-runtime";
 
 type Emit = (event: AgentEvent) => void;
 
@@ -471,6 +472,7 @@ export async function runPiAgent(opts: {
   const skillCatalog = chatOnly ? null : await getSkills();
   const skills = skillCatalog?.skills ?? [];
   if (!chatOnly) {
+    const searchWeb = createWebSearchRunner((query) => invokeSkill("web-search", query, execEnv));
     agentTools.push({
       name: "call_skill",
       description:
@@ -537,7 +539,7 @@ export async function runPiAgent(opts: {
         parameters: Type.Object({ query: Type.String() }),
         label: "web_search",
         execute: async (_id: string, params: any) => {
-          const out = await invokeSkill("web-search", String(params?.query ?? ""), execEnv);
+          const out = await searchWeb(String(params?.query ?? ""));
           return { content: [{ type: "text" as const, text: out }], details: { output: out } };
         },
       });
