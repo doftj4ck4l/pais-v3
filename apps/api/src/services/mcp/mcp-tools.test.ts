@@ -663,7 +663,7 @@ describe("createMcpTools", () => {
 
   it("preserves MCP titles and safety annotations in the capability cache", async () => {
     await seed(["nextcloud"]);
-    const runtime = await createMcpTools("ws1", store, connector);
+    const runtime = await createMcpTools("ws1", store, connector, { allowNextcloud: true });
 
     const caps = await store.capabilities("ws1", "s0", "tool");
     const read = caps.find((cap) => cap.name === "nc_webdav_read_file");
@@ -818,6 +818,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls)),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return true;
@@ -867,6 +868,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls)),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return true;
@@ -897,7 +899,7 @@ describe("Nextcloud write approval", () => {
       "ws1",
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls)),
-      { requestApproval: async () => false },
+      { allowNextcloud: true, requestApproval: async () => false },
     );
 
     const write: any = byName(runtime.tools, "nextcloud__nc_webdav_write_file");
@@ -916,6 +918,7 @@ describe("Nextcloud write approval", () => {
       "ws1",
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls)),
+      { allowNextcloud: true },
     );
 
     const write: any = byName(runtime.tools, "nextcloud__nc_webdav_write_file");
@@ -952,10 +955,15 @@ describe("Nextcloud write approval", () => {
       },
     ]);
     const attempts: string[] = [];
-    const runtime = await createMcpTools("ws1", store, async (spec) => {
-      attempts.push(spec.name);
-      throw new Error("offline");
-    });
+    const runtime = await createMcpTools(
+      "ws1",
+      store,
+      async (spec) => {
+        attempts.push(spec.name);
+        throw new Error("offline");
+      },
+      { allowNextcloud: true },
+    );
 
     expect(attempts).toEqual([]);
     expect(runtime.tools.map((tool) => tool.name)).toContain("nextcloud__nc_webdav_read_file");
@@ -979,6 +987,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls, { failToolsList: true })),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return true;
@@ -1023,6 +1032,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls, { tools: [changedTool] })),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return false;
@@ -1071,6 +1081,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer(calls, { tools: [archiveTool] })),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return false;
@@ -1101,6 +1112,7 @@ describe("Nextcloud write approval", () => {
       store,
       (spec) => linkedConnection(spec, nextcloudServer([], { tools: [deceptiveTool] })),
       {
+        allowNextcloud: true,
         requestApproval: async (request) => {
           approvals.push(request);
           return false;
@@ -1148,6 +1160,85 @@ describe("createMcpTools catalog and deferred loading", () => {
     await warm.dispose();
   });
 
+  it("does not contact a cold Nextcloud server unless this turn opted in", async () => {
+    await seed(["nextcloud"]);
+    const lazy = countingConnector();
+
+    const runtime = await createMcpTools("ws1", store, lazy);
+
+    expect(lazy.calls).toEqual([]);
+    expect(runtime.activeToolNames).toEqual([]);
+    expect(runtime.systemPromptBlock).toBe("");
+    expect(runtime.nextcloudAllowed).toBe(false);
+    expect(runtime.nextcloudSuppressed).toBe(0);
+    await runtime.dispose();
+  });
+
+  it("does not let usage history or a direct call re-enable Nextcloud", async () => {
+    await seed(["nextcloud"]);
+    await store.saveCapabilities("ws1", "s0", [
+      {
+        kind: "tool",
+        name: "nc_webdav_read_file",
+        title: "Read File",
+        description: "Read a file from Nextcloud",
+        schemaJson: JSON.stringify({ type: "object", properties: {} }),
+        annotationsJson: JSON.stringify({ readOnlyHint: true }),
+      },
+    ]);
+    const lazy = countingConnector();
+    const runtime = await createMcpTools("ws1", store, lazy, {
+      usage: async () => [{ name: "nextcloud__nc_webdav_read_file", calls: 99 }],
+    });
+
+    expect(runtime.activeToolNames).not.toContain("nextcloud__nc_webdav_read_file");
+    expect(runtime.activeToolNames).not.toContain("search_tools");
+    expect(runtime.systemPromptBlock).not.toContain("nextcloud");
+    expect(runtime.nextcloudSuppressed).toBe(1);
+
+    const read: any = byName(runtime.tools, "nextcloud__nc_webdav_read_file");
+    const result = await read.execute("blocked", { path: "/report.txt" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not requested");
+    expect(lazy.calls).toEqual([]);
+    await runtime.dispose();
+  });
+
+  it("keeps Nextcloud out of tool search while unrelated MCP servers remain available", async () => {
+    await seed(["nextcloud", "github"]);
+    await store.saveCapabilities("ws1", "s0", [
+      {
+        kind: "tool",
+        name: "nc_webdav_read_file",
+        description: "Read a file from NAS storage",
+        schemaJson: JSON.stringify({ type: "object", properties: {} }),
+        annotationsJson: JSON.stringify({ readOnlyHint: true }),
+      },
+    ]);
+    const runtime = await createMcpTools("ws1", store, connector, { usage: async () => [] });
+
+    const search: any = byName(runtime.tools, "search_tools");
+    const result = await search.execute("search", { query: "read a file from NAS" });
+    expect(result.content[0].text).not.toContain("nextcloud__");
+    expect(runtime.systemPromptBlock).not.toContain("nextcloud");
+    expect(runtime.nextcloudSuppressed).toBe(1);
+    await runtime.dispose();
+  });
+
+  it("exposes Nextcloud normally when the current turn explicitly opted in", async () => {
+    await seed(["nextcloud"]);
+    const runtime = await createMcpTools("ws1", store, connector, {
+      allowNextcloud: true,
+      usage: async () => [{ name: "nextcloud__nc_webdav_read_file", calls: 9 }],
+    });
+
+    expect(runtime.activeToolNames).toContain("nextcloud__nc_webdav_read_file");
+    expect(runtime.systemPromptBlock).toContain("nextcloud");
+    expect(runtime.nextcloudAllowed).toBe(true);
+    expect(runtime.nextcloudSuppressed).toBe(0);
+    await runtime.dispose();
+  });
+
   it("single-flights live safety refresh across parallel runs", async () => {
     await seed(["nextcloud"]);
     // This is the catalog shape immediately after the migration: existing
@@ -1167,8 +1258,14 @@ describe("createMcpTools catalog and deferred loading", () => {
       return linkedConnection(spec, nextcloudServer([]));
     };
     const [first, second] = await Promise.all([
-      createMcpTools("ws1", store, refresh, { requestApproval: async () => false }),
-      createMcpTools("ws1", store, refresh, { requestApproval: async () => false }),
+      createMcpTools("ws1", store, refresh, {
+        allowNextcloud: true,
+        requestApproval: async () => false,
+      }),
+      createMcpTools("ws1", store, refresh, {
+        allowNextcloud: true,
+        requestApproval: async () => false,
+      }),
     ]);
 
     expect(calls).toEqual([]);

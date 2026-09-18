@@ -59,6 +59,11 @@ import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
 import { createWebSearchRunner } from "./web-search-runtime";
+import {
+  currentUserRequest,
+  explicitlyRequestsNextcloud,
+  referencesNextcloud,
+} from "./nextcloud-intent";
 
 type Emit = (event: AgentEvent) => void;
 
@@ -99,6 +104,7 @@ export async function runPiAgent(opts: {
   const key = effectiveApiKey(model);
   if (!key) throw new Error(`No API key for ${model.id} (${model.apiKeyEnv})`);
   const chatOnly = isChatOnlyModel(model);
+  const allowNextcloud = explicitlyRequestsNextcloud(currentUserRequest(history));
 
   // The same denominator the pre-run estimate uses, so the meter does not jump
   // when it switches from estimate to provider-reported.
@@ -346,9 +352,8 @@ export async function runPiAgent(opts: {
   }
 
   // --- MCP: whatever servers this workspace has enabled ---
-  // A workspace only has an MCP server because someone added it, so the opt-in
-  // has already happened; a second gate would mean adding a server and seeing
-  // nothing change.
+  // Nextcloud/NAS is a stricter exception: configuration makes it available,
+  // but only an explicit request in this user turn makes it visible or callable.
   //
   // This connects, so it can be slow and it can fail. `createMcpTools` swallows
   // per-server failures itself; the try/catch is for the store being
@@ -362,6 +367,7 @@ export async function runPiAgent(opts: {
     try {
       mcp = await createMcpTools(workspaceId, undefined, undefined, {
         activator: mcpActivator,
+        allowNextcloud,
         // The agent's own working directory, so a spilled result's path is one
         // the `read` and `bash` tools resolve — under Docker the workspace is
         // mounted at an identical host and container path, and under the node
@@ -426,6 +432,8 @@ export async function runPiAgent(opts: {
           advertised: mcp.tools.length,
           active: mcp.activeToolNames.length,
           probed: mcp.servers.filter((sv) => !sv.cached).length,
+          nextcloudAllowed: mcp.nextcloudAllowed,
+          nextcloudSuppressed: mcp.nextcloudSuppressed,
         },
       });
       // One span per server as well, so a failure names which one.
@@ -595,7 +603,12 @@ export async function runPiAgent(opts: {
   let playbookPrompt = "";
   if (!chatOnly) {
     try {
-      playbookPrompt = renderPlaybook(await playbookStore.list(workspaceId));
+      const learned = await playbookStore.list(workspaceId);
+      playbookPrompt = renderPlaybook(
+        allowNextcloud
+          ? learned
+          : learned.filter((bullet) => !referencesNextcloud(bullet.content)),
+      );
     } catch (e: any) {
       logger.warn("playbook.load_failed", { workspaceId, message: e?.message ?? String(e) });
     }
