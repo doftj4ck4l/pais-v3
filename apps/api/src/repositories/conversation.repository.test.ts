@@ -75,3 +75,27 @@ describe("conversationRepository.stopInterrupted", () => {
     ).toEqual({ status: "done", updated_at: 1 });
   });
 });
+
+describe("conversationRepository.setPinned", () => {
+  it("persists the pin without changing the run timestamp", async () => {
+    const sqlite = seeded();
+    const db = drizzle(sqlite) as any;
+
+    const row = await conversationRepository.setPinned("c1", "ws1", true, db);
+
+    expect(row?.pinned).toBe(true);
+    expect(
+      sqlite.query("SELECT pinned, updated_at FROM conversations WHERE id = 'c1'").get(),
+    ).toEqual({ pinned: 1, updated_at: 1 });
+  });
+
+  it("does not pin a conversation held by another workspace", async () => {
+    const sqlite = seeded();
+    const db = drizzle(sqlite) as any;
+
+    expect(await conversationRepository.setPinned("c1", "ws2", true, db)).toBeUndefined();
+    expect(sqlite.query("SELECT pinned FROM conversations WHERE id = 'c1'").get()).toEqual({
+      pinned: 0,
+    });
+  });
+});

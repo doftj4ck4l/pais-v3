@@ -238,6 +238,7 @@ export const conversations = sqliteTable(
     modelId: text("model_id").notNull(),
     harnessId: text("harness_id").notNull(),
     status: text("status").$type<ConversationStatus>().notNull().default("running"),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(sql`0`),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -253,6 +254,7 @@ export type ConversationRow = {
   modelId: string;
   harnessId: string;
   status: ConversationStatus;
+  pinned: boolean;
   createdAt: number;
   updatedAt: number;
 };

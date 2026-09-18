@@ -87,6 +87,7 @@ export type ConversationRow = {
   modelId: string
   harnessId: string
   status: ConversationStatus
+  pinned: boolean
   createdAt: number
   updatedAt: number
 }

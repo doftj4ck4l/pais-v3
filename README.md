@@ -172,6 +172,7 @@ Flow in `services/agent.service.ts`:
 | POST   | `/api/chat`              | Run one agent turn, streamed over SSE      |
 | GET    | `/api/conversations`     | List a workspace's stored conversations    |
 | GET    | `/api/conversations/:id` | One conversation + its messages and traces |
+| PATCH  | `/api/conversations/:id` | Pin or unpin a stored conversation          |
 | DELETE | `/api/conversations/:id` | Delete a conversation (cascades)           |
 | POST   | `/api/documents/transcribe` | Queue an audio file for transcription    |
 | POST/PUT | `/api/documents/transcription-uploads/*` | Upload large audio in proxy-safe chunks     |

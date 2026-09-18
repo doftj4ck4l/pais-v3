@@ -92,6 +92,23 @@ export const conversationRepository = {
       .where(eq(conversations.id, conversationId));
   },
 
+  /** Pin or unpin only when the conversation belongs to the resolved workspace. */
+  async setPinned(
+    conversationId: string,
+    workspaceId: string,
+    pinned: boolean,
+    dbImpl: typeof db = db,
+  ): Promise<ConversationRow | undefined> {
+    const rows = await dbImpl
+      .update(conversations)
+      .set({ pinned })
+      .where(
+        and(eq(conversations.id, conversationId), eq(conversations.workspaceId, workspaceId)),
+      )
+      .returning();
+    return rows[0];
+  },
+
   /** Mirror startup recovery on conversation rows orphaned by a dead process. */
   async stopInterrupted(at = Date.now(), dbImpl: typeof db = db): Promise<number> {
     const found = await dbImpl
