@@ -84,6 +84,9 @@ export type McpRuntime = {
   servers: McpServerOutcome[];
   /** Text naming the connected servers and their tools; empty when there are none. */
   systemPromptBlock: string;
+  /** Per-turn policy visibility for traces and regression diagnosis. */
+  nextcloudAllowed: boolean;
+  nextcloudSuppressed: number;
   dispose(): Promise<void>;
 };
 
@@ -93,6 +96,8 @@ const EMPTY_RUNTIME: Omit<McpRuntime, "dispose"> = {
   promptTemplates: [],
   servers: [],
   systemPromptBlock: "",
+  nextcloudAllowed: false,
+  nextcloudSuppressed: 0,
 };
 
 /**
@@ -480,6 +485,8 @@ export type McpToolsOptions = {
   workspacePath?: string;
   /** Human gate for Nextcloud tools that are not provably read-only. */
   requestApproval?: (request: McpApprovalRequest, signal?: AbortSignal) => Promise<boolean>;
+  /** True only when the current user turn explicitly asks for Nextcloud/NAS. */
+  allowNextcloud?: boolean;
 };
 
 /** Where spilled results live inside a workspace. */
@@ -534,10 +541,13 @@ export async function createMcpTools(
     onConnect,
     workspacePath,
     requestApproval,
+    allowNextcloud = false,
   } = options;
 
   const rows = await store.listEnabled(workspaceId);
-  if (!rows.length) return { ...EMPTY_RUNTIME, dispose: async () => {} };
+  if (!rows.length) {
+    return { ...EMPTY_RUNTIME, nextcloudAllowed: allowNextcloud, dispose: async () => {} };
+  }
 
   // --- connections, opened on first call rather than up front ---
   const opened = new Map<string, Promise<McpConnection>>();
@@ -621,7 +631,9 @@ export async function createMcpTools(
   // connection here — this is the first run after it was added by a path that
   // never probed, or after a probe failed. Warm servers skip it entirely, which
   // is the whole point.
-  const cold = rows.filter((r) => !(capsByServer.get(r.id)?.length));
+  const cold = rows.filter(
+    (r) => !(capsByServer.get(r.id)?.length) && (allowNextcloud || !nextcloudServerIds.has(r.id)),
+  );
   await Promise.all(
     cold.map(async (row) => {
       const startedAt = Date.now();
@@ -679,10 +691,9 @@ export async function createMcpTools(
   }
 
   if (!live.length) {
-    return { ...EMPTY_RUNTIME, servers: outcomes, dispose };
+    return { ...EMPTY_RUNTIME, servers: outcomes, nextcloudAllowed: allowNextcloud, dispose };
   }
 
-  const byName = new Map(live.map((l) => [l.name, l]));
   const tools: any[] = [];
   // One allowance for this run, shared by every tool below. Per call *and* per
   // run: six parallel reads, each individually within the per-call cap, are
@@ -722,6 +733,15 @@ export async function createMcpTools(
       });
     }
   }
+
+  // Nextcloud is not merely discouraged on unrelated turns: remove it from
+  // every model-visible discovery surface. The wrappers stay registered so pi
+  // can keep one stable catalog shape, but none is active or discoverable.
+  const availableLive = allowNextcloud ? live : live.filter((server) => !server.isNextcloud);
+  const availableCatalog = allowNextcloud
+    ? catalog
+    : catalog.filter((entry) => !entry.isNextcloud);
+  const availableByName = new Map(availableLive.map((server) => [server.name, server]));
 
   // Safety metadata is checked against the live Nextcloud catalog once per run
   // and only when a Nextcloud tool is actually used. This keeps an offline
@@ -783,6 +803,14 @@ export async function createMcpTools(
       ),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const args = (params ?? {}) as Record<string, unknown>;
+        if (entry.isNextcloud && !allowNextcloud) {
+          return toolResult(
+            budget,
+            "Nextcloud/NAS access was not requested in the user's current message, so it was not called.",
+            true,
+            entry.name,
+          );
+        }
         // Gate every MCP tool that is not provably read-only, on any server.
         // Nextcloud additionally gets a live annotation refresh because its
         // cached hints are not trusted for write approval.
@@ -833,6 +861,7 @@ export async function createMcpTools(
 
   // --- which of those start loaded, and the tool that loads the rest ---
   const catalogNames = new Set(catalog.map((c) => c.name));
+  const availableCatalogNames = new Set(availableCatalog.map((c) => c.name));
   let history: ToolUsage[] = [];
   try {
     history = coreLimit > 0 ? await usage(workspaceId) : [];
@@ -841,10 +870,10 @@ export async function createMcpTools(
     // a failed run.
     logger.warn("mcp.usage_failed", { workspaceId, message: e?.message ?? String(e) });
   }
-  const core = coreToolNames(history, catalogNames, coreLimit);
+  const core = coreToolNames(history, availableCatalogNames, coreLimit);
 
   const index = buildIndex(
-    catalog.map(
+    availableCatalog.map(
       (c): ToolDoc => ({
         name: c.name,
         description: c.description,
@@ -853,13 +882,13 @@ export async function createMcpTools(
     ),
   );
 
-  if (catalog.length > core.length) {
+  if (availableCatalog.length > core.length) {
     tools.push({
       name: "search_tools",
       label: "search_tools",
       description:
-        `Find MCP tools that are not currently loaded. ${catalog.length} tools are available ` +
-        `across ${live.length} server(s), but only the most-used ones are loaded to save ` +
+        `Find MCP tools that are not currently loaded. ${availableCatalog.length} tools are available ` +
+        `across ${availableLive.length} server(s), but only the most-used ones are loaded to save ` +
         `context. Search by what you want to do ("upload a file", "list calendar events") and ` +
         `the matches become callable on your NEXT step. Use this before concluding something ` +
         `cannot be done.`,
@@ -898,7 +927,7 @@ export async function createMcpTools(
 
   // --- resources: two flat tools, however many resources exist ---
   // One tool per resource would put an unbounded list into every system prompt.
-  const resourceServers = live.filter((l) => l.caps.some((c) => c.kind === "resource"));
+  const resourceServers = availableLive.filter((l) => l.caps.some((c) => c.kind === "resource"));
   if (resourceServers.length) {
     tools.push({
       name: "mcp_list_resources",
@@ -941,10 +970,10 @@ export async function createMcpTools(
         required: ["server", "uri"],
       }),
       execute: async (_id: string, params: any) => {
-        const server = byName.get(String(params?.server ?? ""));
+        const server = availableByName.get(String(params?.server ?? ""));
         if (!server) {
           return toolResult(budget,
-            `unknown server "${params?.server}" — available: ${live.map((l) => l.name).join(", ")}`,
+            `unknown server "${params?.server}" — available: ${availableLive.map((l) => l.name).join(", ")}`,
             true,
           );
         }
@@ -967,7 +996,7 @@ export async function createMcpTools(
 
   // --- prompts: pi templates, plus a tool for the ones that take arguments ---
   const promptTemplates: PromptTemplate[] = [];
-  const promptServers = live.filter((l) => l.caps.some((c) => c.kind === "prompt"));
+  const promptServers = availableLive.filter((l) => l.caps.some((c) => c.kind === "prompt"));
 
   if (promptServers.length) {
     tools.push({
@@ -986,7 +1015,7 @@ export async function createMcpTools(
         required: ["server", "name"],
       }),
       execute: async (_id: string, params: any) => {
-        const server = byName.get(String(params?.server ?? ""));
+        const server = availableByName.get(String(params?.server ?? ""));
         if (!server) {
           return toolResult(budget, `unknown server "${params?.server}"`, true);
         }
@@ -1046,6 +1075,8 @@ export async function createMcpTools(
     active: activeToolNames.length,
     core: core.length,
     probed: cold.length,
+    nextcloudAllowed: allowNextcloud,
+    nextcloudSuppressed: catalog.length - availableCatalog.length,
   });
 
   return {
@@ -1053,7 +1084,9 @@ export async function createMcpTools(
     activeToolNames,
     promptTemplates,
     servers: outcomes,
-    systemPromptBlock: buildSystemPromptBlock(live, catalog, core),
+    systemPromptBlock: buildSystemPromptBlock(availableLive, availableCatalog, core),
+    nextcloudAllowed: allowNextcloud,
+    nextcloudSuppressed: catalog.length - availableCatalog.length,
     dispose,
   };
 }

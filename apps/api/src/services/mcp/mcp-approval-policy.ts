@@ -89,10 +89,19 @@ export function isReadOnlyMcpTool(
 }
 
 export function isNextcloudServer(
-  row: { argsJson: string | null },
+  row: {
+    argsJson: string | null;
+    name?: string | null;
+    command?: string | null;
+    url?: string | null;
+  },
   caps: McpCapabilityRow[],
   envKeys: string[] = [],
 ): boolean {
+  const configuredIdentity = [row.name, row.command, row.url].filter(Boolean).join(" ");
+  if (/(?:^|[^a-z0-9])(?:nextcloud|nas)(?:$|[^a-z0-9])/i.test(configuredIdentity)) {
+    return true;
+  }
   try {
     const args = row.argsJson ? (JSON.parse(row.argsJson) as unknown) : [];
     if (

@@ -101,6 +101,16 @@ MCP tools are also deferred: only previously-used ones start active, and
 `search_tools` widens the set mid-run. That is why the advertised count and the
 count the model was shown differ in the slots panel, and why both are emitted.
 
+**Nextcloud/NAS is opt-in on every user turn.** `pi.service` derives permission
+only from the newest user message. Without an explicit storage action naming
+Nextcloud or NAS, `mcp-tools` does not probe a cold connector, advertise its
+server, activate tools from usage history, include it in `search_tools`, expose
+its resources/prompts, or execute even a directly-reached wrapper. This is a
+code boundary, not merely prompt guidance. Negations, retrospective questions,
+and questions *about* Nextcloud do not grant access; English and Malay access
+requests do. Learned playbook bullets naming Nextcloud, WebDAV, or `nc_*` tools
+are withheld on turns that did not opt in so memory cannot bypass the boundary.
+
 ## The three execution contexts
 
 The single most misread thing here. A tool call in the transcript could be
