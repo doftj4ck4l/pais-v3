@@ -5,6 +5,7 @@ import {
   fetchConversation,
   fetchMeta,
   listConversations,
+  setConversationPinned,
   stopRun,
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
@@ -35,6 +36,7 @@ export type AgentRun = {
   modelId: string
   task: string
   status: AgentStatus
+  pinned: boolean
   items: Item[]
   trace: TraceLine[]
   slots: Slots | null
@@ -315,6 +317,25 @@ export function useAgentBoard(scope: Scope) {
     })
   }, [])
 
+  const setPinned = useCallback(
+    async (id: string, pinned: boolean) => {
+      const agent = agentsRef.current.find((candidate) => candidate.id === id)
+      const conversationId = conversationIdsRef.current.get(id) ?? agent?.conversationId
+      if (!agent || !conversationId) return
+
+      patchAgent(id, { pinned, notice: null })
+      try {
+        await setConversationPinned(scope, conversationId, pinned)
+      } catch {
+        patchAgent(id, {
+          pinned: !pinned,
+          notice: 'Could not update this chat. Please try again.',
+        })
+      }
+    },
+    [patchAgent, scope],
+  )
+
   const clearAll = useCallback(() => {
     for (const [, controller] of controllersRef.current) controller.abort()
     for (const agent of agentsRef.current) {
@@ -344,6 +365,7 @@ export function useAgentBoard(scope: Scope) {
       modelId,
       task,
       status: 'running',
+      pinned: false,
       items: [{ kind: 'user', text: task, images: images.map((i) => i.url), files: dataFiles }],
       trace: [],
       slots: null,
@@ -691,6 +713,7 @@ export function useAgentBoard(scope: Scope) {
     removeQueuedFollowUp,
     stop,
     answer,
+    setPinned,
     remove,
     dismissNotice,
     clearAll,
@@ -710,6 +733,7 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     modelId: row.modelId,
     task: row.title,
     status,
+    pinned: row.pinned,
     items: [{ kind: 'user', text: row.title }],
     trace: [],
     slots: null,

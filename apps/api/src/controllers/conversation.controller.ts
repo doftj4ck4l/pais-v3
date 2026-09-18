@@ -35,6 +35,26 @@ export async function show(c: Context) {
   return c.json({ conversation, messages, traces });
 }
 
+/** PATCH /api/conversations/:id — pin or unpin a conversation in its workspace. */
+export async function update(c: Context) {
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing conversation id" }, 400);
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.pinned !== "boolean") {
+    return c.json({ error: "pinned must be a boolean" }, 400);
+  }
+
+  const conversation = await conversationRepository.setPinned(
+    id,
+    await workspaceIdOf(c),
+    body.pinned,
+  );
+  if (!conversation) return c.json({ error: "Conversation not found" }, 404);
+
+  return c.json({ conversation });
+}
+
 /** DELETE /api/conversations/:id — removes its messages and traces too. */
 export async function destroy(c: Context) {
   const id = c.req.param("id");

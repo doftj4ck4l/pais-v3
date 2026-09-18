@@ -326,6 +326,21 @@ export async function fetchConversation(id: string): Promise<ConversationDetail>
   return json<ConversationDetail>(await fetch(`/api/conversations/${encodeURIComponent(id)}`))
 }
 
+export async function setConversationPinned(
+  scope: Scope,
+  id: string,
+  pinned: boolean,
+): Promise<ConversationRow> {
+  const { conversation } = await json<{ conversation: ConversationRow }>(
+    await fetch(`/api/conversations/${encodeURIComponent(id)}?${scoped(scope)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pinned }),
+    }),
+  )
+  return conversation
+}
+
 /**
  * Stop a run in flight.
  *

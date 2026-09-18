@@ -144,6 +144,7 @@ describe("organization administration HTTP API", () => {
         modelId: "gw-test",
         harnessId: "pi",
         status: "done",
+        pinned: false,
         createdAt: startedAt - 800,
         updatedAt: startedAt + 500,
       },

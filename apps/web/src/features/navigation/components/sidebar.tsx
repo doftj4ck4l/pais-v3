@@ -102,6 +102,7 @@ export function Sidebar({
             agents={board.agents}
             selectedId={board.selectedId}
             onSelect={openAgent}
+            onPin={board.setPinned}
             onRemove={board.remove}
           />
         </section>
