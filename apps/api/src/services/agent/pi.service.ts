@@ -60,6 +60,7 @@ import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
 import { createWebSearchRunner } from "./web-search-runtime";
 import { searchTinyfish } from "./tinyfish-search";
+import { sourceRoutingPrompt } from "./source-routing-prompt";
 import {
   currentUserRequest,
   explicitlyRequestsNextcloud,
@@ -646,6 +647,7 @@ export async function runPiAgent(opts: {
     if (chatOnly) return systemPrompt;
     let out = systemPrompt;
     if (activeTools) out += `\n\nAvailable tools: ${activeTools}.`;
+    out += sourceRoutingPrompt(activeNames);
     // Before the MCP block, deliberately. The agent's own machine is the
     // default place; the remote services are the exception, and the prompt
     // should introduce them in that order.
