@@ -72,6 +72,9 @@ describe("GET /api/documents/:id", () => {
 });
 
 describe("GET /api/documents/transcriptions/:id", () => {
+  // The CI gate runs all 93 API test files concurrently on a small runner. This
+  // otherwise-fast SQLite integration test can spend more than Bun's 5-second
+  // default waiting for CPU and the shared module loader under that load.
   it("returns readable timestamped output only through its owning workspace", async () => {
     const owner = `transcript-owner-${Date.now()}`;
     const stranger = `transcript-stranger-${Date.now()}`;
@@ -118,7 +121,7 @@ describe("GET /api/documents/transcriptions/:id", () => {
       { headers: { "x-authentik-uid": stranger } },
     );
     expect(hidden.status).toBe(404);
-  });
+  }, 15_000);
 
   it("streams a private byte range and reindexes corrected passages", async () => {
     const owner = `audio-owner-${Date.now()}`;
