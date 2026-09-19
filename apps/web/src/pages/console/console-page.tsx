@@ -117,7 +117,6 @@ export function Console() {
                   <Transcript
                     items={selected.items}
                     running={selected.status === 'running'}
-                    elapsedMs={selected.elapsed}
                     waitingForUser={Boolean(selected.pendingQuestion)}
                     showToolTrace={showToolTrace}
                     queuedFollowUps={selected.queuedFollowUps}

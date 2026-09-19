@@ -18,7 +18,7 @@ import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Item } from '@/shared/lib/types'
 import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
 import type { QueuedFollowUp } from '@/features/agents/lib/follow-up-queue'
-import type { LiveRunStatusKey } from '@/features/agents/lib/live-run-status'
+import type { LiveStatus } from '@/features/agents/lib/live-run-status'
 
 /**
  * The transcript reads as a conversation: what the user asked, what the agent
@@ -30,7 +30,6 @@ import type { LiveRunStatusKey } from '@/features/agents/lib/live-run-status'
 export function Transcript({
   items,
   running,
-  elapsedMs,
   waitingForUser = false,
   showToolTrace = false,
   queuedFollowUps = [],
@@ -38,13 +37,12 @@ export function Transcript({
 }: {
   items: Item[]
   running: boolean
-  elapsedMs?: number
   waitingForUser?: boolean
   showToolTrace?: boolean
   queuedFollowUps?: QueuedFollowUp[]
   onRemoveQueuedFollowUp?: (id: string) => void
 }) {
-  const statusKey = liveRunStatus(items, waitingForUser)
+  const status = liveRunStatus(items, waitingForUser)
   // Scrolling is owned by the scroll container itself (see `useStickToBottom`),
   // not by this component. Following from in here would mean scrolling an
   // ancestor it does not own, and would override the reader unconditionally.
@@ -55,22 +53,19 @@ export function Transcript({
       <TranscriptBody items={items} running={running} showToolTrace={showToolTrace} />
 
       {running ? (
+        // Left-aligned with the prose, not centred: this is the head of the
+        // answer the model is about to write, so it belongs at the same margin
+        // the answer will start from. Centred, it read as a separate thing
+        // floating in the middle of the column. No elapsed timer beside it — the
+        // sentence is the status, and a stopwatch next to a sentence that already
+        // says what is happening is noise. Run stats still carry the duration.
         <div
-          className="mt-4 mb-1 flex min-h-10 items-center justify-center gap-2.5 text-muted-foreground"
+          className="mt-4 mb-1 flex min-h-10 items-center text-muted-foreground"
           role="status"
           aria-live="polite"
           aria-atomic="true"
         >
-          <Spinner className="size-4" aria-hidden="true" />
-          <LiveStatusLabel statusKey={statusKey} />
-          {elapsedMs !== undefined ? (
-            <span
-              className="readout border-l border-border pl-2.5 text-[0.6875rem] tabular-nums text-muted-foreground/70"
-              aria-hidden="true"
-            >
-              {(elapsedMs / 1000).toFixed(1)}s
-            </span>
-          ) : null}
+          <LiveStatusLabel status={status} />
         </div>
       ) : null}
 
@@ -86,18 +81,21 @@ export function Transcript({
   )
 }
 
-function LiveStatusLabel({ statusKey }: { statusKey: LiveRunStatusKey }) {
+function LiveStatusLabel({ status }: { status: LiveStatus }) {
   const { t } = usePreferences()
-  const [labels, setLabels] = useState<{ current: LiveRunStatusKey; previous: LiveRunStatusKey | null }>({
-    current: statusKey,
+  // Keyed on the rendered text, not the status key: reading one file and then
+  // another keeps the same key but is a different sentence, and it should cross-fade
+  // like any other change. Elapsed-time ticks live outside this, so they never
+  // restart it.
+  const label = t(status.key, status.values)
+  const [labels, setLabels] = useState<{ current: string; previous: string | null }>({
+    current: label,
     previous: null,
   })
 
   useEffect(() => {
     setLabels((value) =>
-      value.current === statusKey
-        ? value
-        : { current: statusKey, previous: value.current },
+      value.current === label ? value : { current: label, previous: value.current },
     )
 
     const timeout = window.setTimeout(() => {
@@ -105,17 +103,17 @@ function LiveStatusLabel({ statusKey }: { statusKey: LiveRunStatusKey }) {
     }, 280)
 
     return () => window.clearTimeout(timeout)
-  }, [statusKey])
+  }, [label])
 
   return (
     <span className="live-status-label text-[0.8125rem] font-medium">
       {labels.previous ? (
         <span key={`previous-${labels.previous}`} className="live-status-exit" aria-hidden="true">
-          <span className="shimmer">{t(labels.previous)}</span>
+          <span className="shimmer">{labels.previous}</span>
         </span>
       ) : null}
       <span key={labels.current} className="live-status-enter">
-        <span className="shimmer">{t(labels.current)}</span>
+        <span className="shimmer">{labels.current}</span>
       </span>
     </span>
   )

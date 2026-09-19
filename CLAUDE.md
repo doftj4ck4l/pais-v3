@@ -525,6 +525,13 @@ Nothing to do now. When it publishes, `pi.service.ts` needs a migration.
 
 ## Reading a transcript
 
+While an agent is running, the transcript shows one left-aligned shimmering
+status line where the answer will begin. It names the active tool's subject when
+the streamed arguments expose one (for example, the file, search query, host, or
+connector), cross-fades when the rendered sentence changes, and intentionally
+has no separate spinner or elapsed timer. Keep this behavior and its English and
+Malay translations in sync when adding tools.
+
 Audio transcription has a separate job lifecycle: `queued` → `transcribing` →
 `indexing` → `done` (or `failed`). Whisper produces the text during
 `transcribing`; `indexing` means the text is being split and written to the
