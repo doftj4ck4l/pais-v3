@@ -108,7 +108,7 @@ describe("agent service", () => {
     expect((await store.getOwned("ws-1", agent.id))?.lastUsedAt).not.toBeNull();
   });
 
-  it("runs a persisted retired model id through the active Qwen replacement", async () => {
+  it("runs a persisted retired model id through the active Pixel Pro replacement", async () => {
     let invokedModelId: string | undefined;
     const service = new AgentService(store, async (model) => {
       invokedModelId = model.id;
@@ -124,7 +124,7 @@ describe("agent service", () => {
       modelId: "gw-qwen3.6-35b",
       reply: "Hello from the agent",
     });
-    expect(invokedModelId).toBe("gw-qwen3.8-27b");
+    expect(invokedModelId).toBe("pixel-pro-1");
   });
 
   it("distinguishes invalid public keys from unavailable managed agents", async () => {

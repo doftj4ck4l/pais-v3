@@ -6,16 +6,16 @@
  * ignored — measured), alongside a top-level `reasoning_effort`. pi-ai's
  * completions adapter emits one or the other but never both, so this preset is
  * injected into the request body wholesale via a `before_provider_payload`
- * hook. `sampling` carries the rest of the vendor's thinking recipe (top_p,
- * top_k, penalties) that the adapter otherwise drops.
+ * hook. `request` carries the rest of the vendor's thinking recipe (template
+ * flags, top_p, top_k, penalties) that the adapter otherwise drops.
  */
 export type ThinkingConfig = {
-  /** Effort levels the user can pick, ordered low → high. */
+  /** Supported effort levels, ordered low → high. One level means fixed effort. */
   levels: string[];
   /** The effort a fresh chat starts at. */
   default: string;
-  /** Extra body params merged into every request for this model. */
-  sampling: Record<string, unknown>;
+  /** Model-family body params merged into every thinking request. */
+  request: Record<string, unknown>;
 };
 
 export type ModelConfig = {
@@ -29,11 +29,13 @@ export type ModelConfig = {
    */
   mode?: "agent" | "chat-only";
   /**
-   * Present when the model always reasons and exposes an adjustable effort. Its
-   * mere presence is what tells the UI to show the effort control and the run to
-   * inject the thinking body — a model without it is a plain chat model.
+   * Present when the model reasons. The run uses it to inject the thinking
+   * body; the API exposes an effort control only when it has multiple levels.
+   * A model without it is a plain chat model.
    */
   thinking?: ThinkingConfig;
+  /** Fixed provider effort for a non-thinking tier, such as `none`. */
+  reasoningEffort?: string;
   /** env var that holds the API key (fallback when `apiKey` is not supplied per-request) */
   apiKeyEnv: string;
   /** OpenAI-compatible base URL */
@@ -54,6 +56,22 @@ export type ModelConfig = {
    */
   contextWindow: number;
 };
+
+/** Provider body additions for this model's fixed or selected reasoning mode. */
+export function reasoningPayloadForModel(
+  model: ModelConfig,
+  requestedEffort?: string,
+): Record<string, unknown> | null {
+  if (model.thinking) {
+    const effort = model.thinking.levels.includes(requestedEffort ?? "")
+      ? (requestedEffort as string)
+      : model.thinking.default;
+    return { ...model.thinking.request, reasoning_effort: effort };
+  }
+  return model.reasoningEffort
+    ? { reasoning_effort: model.reasoningEffort }
+    : null;
+}
 
 /** Fallback when a model entry predates the `contextWindow` field. */
 export const DEFAULT_CONTEXT_WINDOW = 131_072;
@@ -116,25 +134,60 @@ function gw(id: string, hint: string, contextWindow = DEFAULT_CONTEXT_WINDOW): M
 const qwenThinking = (levels: string[], defaultLevel: string): ThinkingConfig => ({
   levels,
   default: defaultLevel,
-  sampling: {
+  request: {
     temperature: 1,
     top_p: 0.95,
     top_k: 20,
     min_p: 0,
     presence_penalty: 0,
     repetition_penalty: 1,
+    chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
   },
 });
 
-// The shared gateway can advertise a model after all of its deployments have
-// gone unhealthy. Keep this list to models verified with a real completion,
-// not merely names returned by `GET /v1/models`; otherwise the picker offers a
-// run that can only return "no healthy deployments". The uncensored test model
-// is the one exception: it is a directly reached LAN vLLM service, checked from
-// the deployment host rather than routed through the shared gateway.
+const deepseekThinking = (effort: string): ThinkingConfig => ({
+  levels: [effort],
+  default: effort,
+  request: {},
+});
+
+const pixelModel = (
+  id: "pixel-simple-1" | "pixel-pro-1",
+  upstream: string,
+  hint: string,
+  thinking?: ThinkingConfig,
+): ModelConfig => ({
+  ...gw(upstream, hint),
+  id,
+  label: id,
+  brand: "pixelspace",
+  ...(thinking ? { thinking } : {}),
+});
+
+/**
+ * The two product-level choices advertised to users.
+ *
+ * Upstream names stay behind this boundary so the picker describes workload
+ * shape instead of gateway inventory. Simple deliberately has thinking off;
+ * Pro always sends high thinking and therefore has no redundant effort picker.
+ */
 export const MODELS: ModelConfig[] = [
-  // Thinking-only: no instruct variant is listed, deliberately — this model is
-  // always in thinking mode and the user only adjusts how hard it thinks.
+  {
+    ...pixelModel("pixel-simple-1", "ds4-flash", "Fast · straightforward tasks"),
+    reasoningEffort: "none",
+  },
+  pixelModel(
+    "pixel-pro-1",
+    "ds4-flash",
+    "High reasoning · complex tasks",
+    deepseekThinking("high"),
+  ),
+];
+
+// Stored conversations and managed agents keep the model id they started with.
+// Keep the previously advertised configs resolvable without putting vendor
+// names back into the picker.
+const HIDDEN_LEGACY_MODELS: ModelConfig[] = [
   {
     ...gw("qwen3.8-27b", "Qwen · 27B (thinking)"),
     thinking: qwenThinking(["medium", "high", "xhigh"], "high"),
@@ -184,11 +237,13 @@ const RETIRED_MODEL_IDS = new Set([
 export function getModel(id: string): ModelConfig | undefined {
   const known = MODELS.find((m) => m.id === id);
   if (known) return known;
+  const hiddenLegacy = HIDDEN_LEGACY_MODELS.find((m) => m.id === id);
+  if (hiddenLegacy) return hiddenLegacy;
   const configured = process.env.CUSTOM_MODEL?.trim();
   if (RETIRED_MODEL_IDS.has(id)) {
     const replacement = configured
       ? MODELS.find((m) => m.model === configured) ?? syntheticGatewayModel(configured)
-      : MODELS.find((m) => m.id === "gw-qwen3.8-27b");
+      : MODELS.find((m) => m.id === "pixel-pro-1");
     if (!replacement) return undefined;
     return id === LEGACY_CHAT_ONLY_MODEL_ID
       ? { ...replacement, id, mode: "chat-only" }

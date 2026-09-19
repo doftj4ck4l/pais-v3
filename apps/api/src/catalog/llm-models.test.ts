@@ -1,42 +1,101 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getModel, MODELS } from './llm-models'
+import { getModel, MODELS, reasoningPayloadForModel } from './llm-models'
 import { getMeta, resolveRun } from '../services/agent/model.service'
 import { __setServedModelsForTest } from '../services/agent/gateway-models'
 
 describe('shared gateway catalog', () => {
-  test('lists only deployments verified healthy on the gateway', () => {
-    expect(MODELS.map((model) => model.model)).toEqual([
-      'qwen3.8-27b',
-      'qwen3.8-flash',
-      'qwen3-4b-uncensored',
-      'ds4-flash',
-      'vrs_smart',
-      'gemini-3.1-flash-image',
-    ])
+  test('advertises only the two Pixel model tiers', () => {
+    const previousKey = process.env.CUSTOM_API_KEY
+    const previousModel = process.env.CUSTOM_MODEL
+    process.env.CUSTOM_API_KEY = 'test-key'
+    delete process.env.CUSTOM_MODEL
+
+    try {
+      expect(MODELS.map((model) => ({
+        id: model.id,
+        label: model.label,
+        upstream: model.model,
+        brand: model.brand,
+      }))).toEqual([
+        {
+          id: 'pixel-simple-1',
+          label: 'pixel-simple-1',
+          upstream: 'ds4-flash',
+          brand: 'pixelspace',
+        },
+        {
+          id: 'pixel-pro-1',
+          label: 'pixel-pro-1',
+          upstream: 'ds4-flash',
+          brand: 'pixelspace',
+        },
+      ])
+      expect(getMeta().models.map((model) => model.id)).toEqual([
+        'pixel-simple-1',
+        'pixel-pro-1',
+      ])
+    } finally {
+      if (previousKey === undefined) delete process.env.CUSTOM_API_KEY
+      else process.env.CUSTOM_API_KEY = previousKey
+      if (previousModel === undefined) delete process.env.CUSTOM_MODEL
+      else process.env.CUSTOM_MODEL = previousModel
+    }
   })
 
-  test('offers the directly served uncensored model as an agent model', () => {
+  test('keeps Simple non-thinking and fixes Pro at high without an effort picker', () => {
     const previousModel = process.env.CUSTOM_MODEL
     delete process.env.CUSTOM_MODEL
 
     try {
-      const model = getModel('local-qwen3-4b-uncensored')
-      expect(model).toMatchObject({
+      expect(getModel('pixel-simple-1')).toMatchObject({
+        model: 'ds4-flash',
+        reasoningEffort: 'none',
+      })
+      expect(getModel('pixel-simple-1')?.thinking).toBeUndefined()
+      expect(getModel('pixel-pro-1')?.thinking).toMatchObject({
+        levels: ['high'],
+        default: 'high',
+        request: {},
+      })
+      expect(getModel('pixel-pro-1')?.model).toBe('ds4-flash')
+      expect(reasoningPayloadForModel(getModel('pixel-simple-1')!)).toEqual({
+        reasoning_effort: 'none',
+      })
+      expect(reasoningPayloadForModel(getModel('pixel-pro-1')!, 'low')).toEqual({
+        reasoning_effort: 'high',
+      })
+      expect(getMeta().models.find((model) => model.id === 'pixel-simple-1')?.thinking).toBeUndefined()
+      expect(getMeta().models.find((model) => model.id === 'pixel-pro-1')?.thinking).toBeUndefined()
+    } finally {
+      if (previousModel === undefined) delete process.env.CUSTOM_MODEL
+      else process.env.CUSTOM_MODEL = previousModel
+    }
+  })
+
+  test('keeps previously advertised vendor ids resolvable but out of the picker', () => {
+    const hiddenIds = [
+      'gw-qwen3.8-27b',
+      'gw-qwen3.8-flash',
+      'local-qwen3-4b-uncensored',
+      'gw-ds4-flash',
+      'gw-vrs_smart',
+      'gw-gemini-3.1-flash-image',
+    ]
+    const previousModel = process.env.CUSTOM_MODEL
+    delete process.env.CUSTOM_MODEL
+
+    try {
+      expect(MODELS.map((model) => model.id)).toEqual(['pixel-simple-1', 'pixel-pro-1'])
+      for (const id of hiddenIds) expect(getModel(id)).toBeDefined()
+      expect(getModel('local-qwen3-4b-uncensored')).toMatchObject({
         label: 'qwen3-4b-uncensored',
         model: 'qwen3-4b-uncensored',
         baseUrl: 'http://10.0.151.8:8002/v1',
         contextWindow: 8_192,
       })
-      expect(resolveRun({ modelId: 'local-qwen3-4b-uncensored' }).ok).toBe(true)
-
-      const dropdown = getMeta().models
-      expect(dropdown.find((entry) => entry.id === 'local-qwen3-4b-uncensored')).toMatchObject({
-        label: 'qwen3-4b-uncensored',
-        mode: 'agent',
-        ready: true,
-        contextWindow: 8_192,
+      expect(getModel('gw-gemini-3.1-flash-image')).toMatchObject({
+        mode: 'chat-only',
       })
-      expect(dropdown.map((entry) => entry.id)).not.toContain('gw-glm-5.3-flash')
     } finally {
       if (previousModel === undefined) delete process.env.CUSTOM_MODEL
       else process.env.CUSTOM_MODEL = previousModel
@@ -52,14 +111,7 @@ describe('shared gateway catalog', () => {
     expect(advertised).not.toContain('z-image-turbo')
   })
 
-  test('marks the Gemini image model chat-only because it does not support tools', () => {
-    expect(MODELS.find((model) => model.model === 'gemini-3.1-flash-image')).toMatchObject({
-      id: 'gw-gemini-3.1-flash-image',
-      mode: 'chat-only',
-    })
-  })
-
-  test('routes persisted retired ids to Qwen without listing them', () => {
+  test('routes older retired ids to Pixel Pro without listing them', () => {
     const previousKey = process.env.CUSTOM_API_KEY
     const previousModel = process.env.CUSTOM_MODEL
     const retiredIds = [
@@ -77,9 +129,10 @@ describe('shared gateway catalog', () => {
     try {
       for (const retiredId of retiredIds) {
         expect(MODELS.map((model) => model.id)).not.toContain(retiredId)
-        expect(getModel(retiredId)?.model).toBe('qwen3.8-27b')
+        expect(getModel(retiredId)?.model).toBe('ds4-flash')
         expect(resolveRun({ modelId: retiredId }).ok).toBe(true)
       }
+      expect(getModel('gw-qwen3.6-35b')?.id).toBe('pixel-pro-1')
       expect(getModel('local-qwen3.8-27b-uncensored')).toMatchObject({
         id: 'local-qwen3.8-27b-uncensored',
         mode: 'chat-only',

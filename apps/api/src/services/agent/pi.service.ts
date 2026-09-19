@@ -25,7 +25,7 @@ import path from "node:path";
 import fs from "node:fs";
 import type { AgentEvent } from "../../types/agent";
 import type { ModelConfig } from "../../catalog/llm-models";
-import { effectiveApiKey } from "../../catalog/llm-models";
+import { effectiveApiKey, reasoningPayloadForModel } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
 import { TOOLS, runTool } from "../../catalog/tools";
 import { getSkills, skillsBlock, invokeSkill } from "../skills/skill.service";
@@ -744,25 +744,18 @@ export async function runPiAgent(opts: {
     return undefined;
   });
 
-  // A thinking model's request body is patched here, on the raw payload, because
-  // pi-ai's completions adapter cannot produce the shape this gateway needs:
-  // Qwen thinking turns on through `chat_template_kwargs.enable_thinking` (a bare
-  // top-level `enable_thinking` is ignored — measured), and the effort rides
-  // alongside as a top-level `reasoning_effort`, but the adapter emits one or
-  // the other, never both. So the whole thinking recipe is merged in here,
-  // wholesale, from the model's own `thinking` config plus the run's chosen
-  // effort — this is also the only path that carries the sampling params
-  // (top_p/top_k/penalties) the adapter otherwise drops.
-  if (model.thinking) {
-    const effort = model.thinking.levels.includes(reasoningEffort ?? "")
-      ? (reasoningEffort as string)
-      : model.thinking.default;
+  // Provider effort is patched onto the raw payload because this custom
+  // provider disables the adapter's reasoning-effort support. Simple sends an
+  // explicit `none` (omitting it lets ds4-flash reason by default), while a
+  // thinking tier uses its validated/default effort and any family-specific
+  // request fields. Qwen's chat-template flags live in its model config;
+  // DeepSeek receives only reasoning_effort.
+  const reasoningPayload = reasoningPayloadForModel(model, reasoningEffort);
+  if (reasoningPayload) {
     harness.on("before_provider_payload", ({ payload }) => ({
       payload: {
         ...(payload as Record<string, unknown>),
-        ...model.thinking!.sampling,
-        reasoning_effort: effort,
-        chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
+        ...reasoningPayload,
       },
     }));
   }
