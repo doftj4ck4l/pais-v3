@@ -59,6 +59,7 @@ import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
 import { createWebSearchRunner } from "./web-search-runtime";
+import { searchTinyfish } from "./tinyfish-search";
 import {
   currentUserRequest,
   explicitlyRequestsNextcloud,
@@ -480,7 +481,6 @@ export async function runPiAgent(opts: {
   const skillCatalog = chatOnly ? null : await getSkills();
   const skills = skillCatalog?.skills ?? [];
   if (!chatOnly) {
-    const searchWeb = createWebSearchRunner((query) => invokeSkill("web-search", query, execEnv));
     agentTools.push({
       name: "call_skill",
       description:
@@ -534,17 +534,17 @@ export async function runPiAgent(opts: {
       });
     }
 
-    // web_search is a skill, but the model reaches for it as a bare tool and
-    // burns a turn discovering it isn't one ("Tool web-search not found",
-    // measured in the DGX traces). Surface it as a first-class tool that runs
-    // the exact same skill, so the capability is findable where it's looked for.
-    if (skills.some((s) => s.name === "web-search")) {
+    // TinyFish search stays in the API process: putting its credential into a
+    // sandbox environment would also hand it to bash and every third-party
+    // skill. The endpoint is fixed, and only this narrow wrapper sees the key.
+    if (appEnv.tinyfishApiKey) {
+      const searchWeb = createWebSearchRunner((query) => searchTinyfish(query));
       agentTools.push({
         name: "web_search",
         description:
-          "Search the web and return result titles, snippets, and URLs. Use this for " +
+          "Search the web with TinyFish and return result titles, snippets, and URLs. Use this for " +
           "current or external information, then read a promising result with fetch_url.",
-        parameters: Type.Object({ query: Type.String() }),
+        parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 1_000 }) }),
         label: "web_search",
         execute: async (_id: string, params: any) => {
           const out = await searchWeb(String(params?.query ?? ""));

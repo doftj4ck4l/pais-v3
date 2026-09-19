@@ -47,7 +47,7 @@ describe("web-search runtime", () => {
     expect(calls).toBe(1);
   });
 
-  test("does not cache a transient skill failure", async () => {
+  test("does not cache a transient provider failure", async () => {
     let calls = 0;
     const runner = createWebSearchRunner(async () => {
       calls++;

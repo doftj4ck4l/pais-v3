@@ -218,6 +218,12 @@ export const env = {
   ),
 
   /**
+   * TinyFish Search API credential. Search runs in this API process so the key
+   * never enters the workspace sandbox or the model-visible skill catalog.
+   */
+  tinyfishApiKey: process.env.TINYFISH_API_KEY ?? "",
+
+  /**
    * OpenAI-compatible whisper endpoint for audio transcription.
    *
    * `transcribeBaseUrl`/`transcribeApiKey` default to the chat gateway's own

@@ -1174,7 +1174,11 @@ describe("Pixelspace on-prem operator", () => {
     const appEnv = initialEnv.match(/^PIXELSPACE_APP_ENV_FILE="([^"]+)"$/m)?.[1];
     expect(originalSecret).toBeDefined();
     expect(appEnv).toBeDefined();
-    writeFileSync(appEnv!, 'AUTH_MODE="dev"\nCUSTOM_MODEL="source-model"\n', { mode: 0o600 });
+    writeFileSync(
+      appEnv!,
+      'AUTH_MODE="dev"\nCUSTOM_MODEL="source-model"\nTINYFISH_API_KEY="source-search-key"\n',
+      { mode: 0o600 },
+    );
     const archive = path.join(fx.home, "round-trip.tar.gz");
 
     expect(run(["backup", archive], fx.env).exitCode).toBe(0);
@@ -1191,7 +1195,11 @@ describe("Pixelspace on-prem operator", () => {
     writeFileSync(path.join(mcpVolume, "package.bin"), "package-after");
     setEnvValue(fx.envFile, "CONNECTION_SECRET", "destination-secret");
     setEnvValue(fx.envFile, "WEB_PORT", "9090");
-    writeFileSync(appEnv!, 'AUTH_MODE="proxy"\nCUSTOM_MODEL="destination-model"\n', { mode: 0o600 });
+    writeFileSync(
+      appEnv!,
+      'AUTH_MODE="proxy"\nCUSTOM_MODEL="destination-model"\nTINYFISH_API_KEY="destination-search-key"\n',
+      { mode: 0o600 },
+    );
     const restore = run(["restore", archive, "--yes"], fx.env);
     expect(restore.stderr.toString()).toBe("");
     expect(restore.exitCode).toBe(0);
@@ -1205,6 +1213,7 @@ describe("Pixelspace on-prem operator", () => {
     expect(restoredEnv).toContain('WEB_PORT="9090"');
     expect(readFileSync(appEnv!, "utf8")).toContain('CUSTOM_MODEL="source-model"');
     expect(readFileSync(appEnv!, "utf8")).toContain('AUTH_MODE="proxy"');
+    expect(readFileSync(appEnv!, "utf8")).toContain('TINYFISH_API_KEY="source-search-key"');
   });
 
   test("rejects an incomplete backup before restore cutover", () => {
