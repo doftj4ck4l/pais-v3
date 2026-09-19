@@ -107,7 +107,7 @@ export type ContextUsage = {
  */
 export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
-  const [modelIdForNew, setModelIdForNew] = useState('gw-ds4-flash')
+  const [modelIdForNew, setModelIdForNew] = useState('pixel-simple-1')
   // Chosen reasoning effort for a thinking model. Null when the selected model
   // has no adjustable effort; the server falls back to the model's default.
   const [effort, setEffort] = useState<string | null>(null)
@@ -134,8 +134,8 @@ export function useAgentBoard(scope: Scope) {
 
   // Keep the effort in step with the model: a thinking model defaults to its own
   // default level, a plain model clears it. Runs when the model or the catalog
-  // changes, so switching to qwen shows its control pre-set and switching away
-  // hides it.
+  // changes, so switching to an adjustable model shows its control pre-set and
+  // switching away hides it.
   useEffect(() => {
     const model = meta?.models.find((m) => m.id === modelIdForNew)
     setEffort(model?.thinking ? model.thinking.default : null)

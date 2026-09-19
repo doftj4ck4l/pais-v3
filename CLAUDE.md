@@ -303,6 +303,15 @@ Compaction only helps when *history* is what is large. When tool schemas are the
 occupancy, `planCompaction` correctly returns null; summarising two messages
 would cost a model call and reclaim nothing.
 
+## Public model tiers
+
+The shared deployment advertises only `pixel-simple-1` and `pixel-pro-1`.
+Those are stable product ids, not gateway model names: Simple routes to
+`ds4-flash` with thinking off, while Pro routes to `qwen3.8-27b` with thinking
+fixed at high. Do not expose provider inventory in the picker or add a one-item
+reasoning control. Previously advertised ids remain hidden but resolvable so
+stored conversations and managed agents continue to run.
+
 ## What a stdio MCP child inherits
 
 `connectStdio` gives the child an explicit **environment** and an explicit

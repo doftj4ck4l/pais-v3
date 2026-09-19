@@ -80,6 +80,11 @@ CUSTOM_API_KEY=sk-...                          # required; models show as
                                                # unavailable without it
 ```
 
+The shared deployment presents two stable product tiers instead of upstream
+provider names: `pixel-simple-1` for fast, straightforward work and
+`pixel-pro-1` for complex work with high reasoning. The API owns the upstream
+routing, so changing a gateway model does not rename the choice users see.
+
 A model with no key resolves to an `error` event on the SSE stream, which the
 console renders inline — the run is never silently swapped for another model.
 
@@ -509,8 +514,9 @@ automatic backup. Do not publish `WEB_PORT` beyond a trusted network.
 
 ### Adding a model
 
-Add an entry to `MODELS` in `apps/api/src/catalog/llm-models.ts` (OpenAI-compatible
-base URL + env var for the key). The model picker and ready state update
+Add a product-level entry to `MODELS` in `apps/api/src/catalog/llm-models.ts`
+(OpenAI-compatible base URL + env var for the key). Keep upstream/provider names
+behind that catalog boundary. The model picker and ready state update
 automatically.
 
 ### Adding a tool

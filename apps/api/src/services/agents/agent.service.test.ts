@@ -124,7 +124,7 @@ describe("agent service", () => {
       modelId: "gw-qwen3.6-35b",
       reply: "Hello from the agent",
     });
-    expect(invokedModelId).toBe("gw-qwen3.8-27b");
+    expect(invokedModelId).toBe("pixel-pro-1");
   });
 
   it("distinguishes invalid public keys from unavailable managed agents", async () => {

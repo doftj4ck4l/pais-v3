@@ -7,7 +7,7 @@ import {
   systemPromptForModel,
 } from "./model-runtime-policy";
 
-const agent = getModel("gw-qwen3.8-27b")!;
+const agent = getModel("pixel-pro-1")!;
 const chatOnly: ModelConfig = { ...agent, id: "chat-only-test", mode: "chat-only" };
 
 describe("model runtime policy", () => {
