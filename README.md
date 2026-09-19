@@ -89,6 +89,11 @@ changing a gateway model does not rename the choice users see.
 A model with no key resolves to an `error` event on the SSE stream, which the
 console renders inline — the run is never silently swapped for another model.
 
+Live web search uses TinyFish from the API process. Set `TINYFISH_API_KEY` in
+the API environment to register `web_search`; the credential is never passed to
+the model or a workspace sandbox. `fetch_url` remains sandboxed and reads a
+specific result page after search.
+
 ## What it demonstrates
 
 - **Parallel agents** – every question spawns its own agent on its own SSE
@@ -115,6 +120,7 @@ console renders inline — the run is never silently swapped for another model.
 | `get_current_time` | Current UTC time (ISO 8601)                     |
 | `get_weather`    | Deterministic mock forecast for a city             |
 | `random_number`  | Random integer in a range                          |
+| `web_search`     | Search the live web through TinyFish               |
 | `fetch_url`      | Fetch a URL and return its readable page text      |
 | `echo`           | Echo text back                                     |
 | `search_schema`  | Find tables/columns by keyword across connected databases |

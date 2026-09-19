@@ -1740,7 +1740,7 @@ merge_restored_config() {
   local restored="$1" destination="${2:-$ENV_FILE}" key value
   for key in CONNECTION_SECRET S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY OPENAI_API_KEY \
     DEEPSEEK_API_KEY CUSTOM_BASE_URL CUSTOM_MODEL CUSTOM_API_KEY OPENROUTER_API_KEY \
-    HF_TOKEN PIXELSPACE_MODEL_PACK \
+    TINYFISH_API_KEY HF_TOKEN PIXELSPACE_MODEL_PACK \
     PIXELSPACE_MODEL_STARTUP_TIMEOUT_SECONDS SUPER_ADMIN_EMAILS ORGANIZATION_INVITE_TTL_HOURS; do
     value="$(env_value_from "$restored" "$key" || true)"
     [[ -z "$value" ]] || set_env_in "$destination" "$key" "$value"

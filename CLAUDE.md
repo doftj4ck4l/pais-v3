@@ -118,7 +118,7 @@ running in any of these:
 
 | Where | What runs there |
 | --- | --- |
-| **API process** | MCP tools (stdio child or HTTP fetch), `calculator`, `remember`, `search_docs` |
+| **API process** | MCP tools (stdio child or HTTP fetch), `calculator`, `remember`, `search_docs`, `web_search` |
 | **Sandbox container** (`pixelspace-<workspaceId>`) | `bash`, `read`, `write`, `edit`, `call_skill`, `fetch_url`, via `docker exec` |
 | **Model provider** | the turn itself |
 
@@ -133,6 +133,13 @@ API process's filesystem and network identity. The script extracts useful HTML
 before applying its output cap; returning the first bytes of raw markup caused
 17 of 25 recent staging conversations to retry with the skill or rebuild the
 same reader with `curl` and BeautifulSoup.
+
+`web_search` is different: it calls TinyFish's fixed Search API endpoint from
+the API process and is registered only when `TINYFISH_API_KEY` is set. Never
+pass that key into the sandbox environment; doing so would expose it to `bash`
+and every loaded third-party skill. Search results are bounded and cached only
+inside one run, while calls share a process-wide serialization lane because the
+provider quota belongs to the one API key rather than to a workspace.
 
 App-owned tools may return an `error:` string so the model can correct the
 call. `pi.service` promotes that established result contract to a thrown tool

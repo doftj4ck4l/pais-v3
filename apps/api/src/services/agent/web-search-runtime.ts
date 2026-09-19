@@ -1,7 +1,7 @@
 const CACHE_TTL_MS = 10 * 60_000;
 
-// Public keyless search backends rate-limit by egress IP, not by workspace.
-// Keep one process-wide lane so parallel agents cannot stampede the same host.
+// TinyFish applies one quota to the API key, not to a workspace. Keep one
+// process-wide lane so parallel agents cannot stampede that shared account.
 let searchLane: Promise<unknown> = Promise.resolve();
 
 function serialize<T>(operation: () => Promise<T>): Promise<T> {

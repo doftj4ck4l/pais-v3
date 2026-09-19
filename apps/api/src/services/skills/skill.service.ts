@@ -52,7 +52,7 @@ export async function getSkills() {
  *
  * pi's `Skill` type carries no custom frontmatter, so `run:` is read from the
  * file directly. Skills without it keep the original `node <name>.cjs`
- * convention, so the existing web-fetch and web-search skills are unaffected.
+ * convention, so the existing web-fetch skill is unaffected.
  */
 function runCommandFor(skill: Skill, skillsDir: string): string {
   const template = readFrontmatterField(skill.filePath, "run") ?? `node ${SKILL_DIR}/${skill.name}.cjs`;
