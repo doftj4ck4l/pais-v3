@@ -6,16 +6,16 @@
  * ignored — measured), alongside a top-level `reasoning_effort`. pi-ai's
  * completions adapter emits one or the other but never both, so this preset is
  * injected into the request body wholesale via a `before_provider_payload`
- * hook. `sampling` carries the rest of the vendor's thinking recipe (top_p,
- * top_k, penalties) that the adapter otherwise drops.
+ * hook. `request` carries the rest of the vendor's thinking recipe (template
+ * flags, top_p, top_k, penalties) that the adapter otherwise drops.
  */
 export type ThinkingConfig = {
   /** Supported effort levels, ordered low → high. One level means fixed effort. */
   levels: string[];
   /** The effort a fresh chat starts at. */
   default: string;
-  /** Extra body params merged into every request for this model. */
-  sampling: Record<string, unknown>;
+  /** Model-family body params merged into every thinking request. */
+  request: Record<string, unknown>;
 };
 
 export type ModelConfig = {
@@ -34,6 +34,8 @@ export type ModelConfig = {
    * A model without it is a plain chat model.
    */
   thinking?: ThinkingConfig;
+  /** Fixed provider effort for a non-thinking tier, such as `none`. */
+  reasoningEffort?: string;
   /** env var that holds the API key (fallback when `apiKey` is not supplied per-request) */
   apiKeyEnv: string;
   /** OpenAI-compatible base URL */
@@ -54,6 +56,22 @@ export type ModelConfig = {
    */
   contextWindow: number;
 };
+
+/** Provider body additions for this model's fixed or selected reasoning mode. */
+export function reasoningPayloadForModel(
+  model: ModelConfig,
+  requestedEffort?: string,
+): Record<string, unknown> | null {
+  if (model.thinking) {
+    const effort = model.thinking.levels.includes(requestedEffort ?? "")
+      ? (requestedEffort as string)
+      : model.thinking.default;
+    return { ...model.thinking.request, reasoning_effort: effort };
+  }
+  return model.reasoningEffort
+    ? { reasoning_effort: model.reasoningEffort }
+    : null;
+}
 
 /** Fallback when a model entry predates the `contextWindow` field. */
 export const DEFAULT_CONTEXT_WINDOW = 131_072;
@@ -116,14 +134,21 @@ function gw(id: string, hint: string, contextWindow = DEFAULT_CONTEXT_WINDOW): M
 const qwenThinking = (levels: string[], defaultLevel: string): ThinkingConfig => ({
   levels,
   default: defaultLevel,
-  sampling: {
+  request: {
     temperature: 1,
     top_p: 0.95,
     top_k: 20,
     min_p: 0,
     presence_penalty: 0,
     repetition_penalty: 1,
+    chat_template_kwargs: { enable_thinking: true, preserve_thinking: true },
   },
+});
+
+const deepseekThinking = (effort: string): ThinkingConfig => ({
+  levels: [effort],
+  default: effort,
+  request: {},
 });
 
 const pixelModel = (
@@ -147,12 +172,15 @@ const pixelModel = (
  * Pro always sends high thinking and therefore has no redundant effort picker.
  */
 export const MODELS: ModelConfig[] = [
-  pixelModel("pixel-simple-1", "ds4-flash", "Fast · straightforward tasks"),
+  {
+    ...pixelModel("pixel-simple-1", "ds4-flash", "Fast · straightforward tasks"),
+    reasoningEffort: "none",
+  },
   pixelModel(
     "pixel-pro-1",
-    "qwen3.8-27b",
+    "ds4-flash",
     "High reasoning · complex tasks",
-    qwenThinking(["high"], "high"),
+    deepseekThinking("high"),
   ),
 ];
 

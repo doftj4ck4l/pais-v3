@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getModel, MODELS } from './llm-models'
+import { getModel, MODELS, reasoningPayloadForModel } from './llm-models'
 import { getMeta, resolveRun } from '../services/agent/model.service'
 import { __setServedModelsForTest } from '../services/agent/gateway-models'
 
@@ -26,7 +26,7 @@ describe('shared gateway catalog', () => {
         {
           id: 'pixel-pro-1',
           label: 'pixel-pro-1',
-          upstream: 'qwen3.8-27b',
+          upstream: 'ds4-flash',
           brand: 'pixelspace',
         },
       ])
@@ -47,10 +47,22 @@ describe('shared gateway catalog', () => {
     delete process.env.CUSTOM_MODEL
 
     try {
+      expect(getModel('pixel-simple-1')).toMatchObject({
+        model: 'ds4-flash',
+        reasoningEffort: 'none',
+      })
       expect(getModel('pixel-simple-1')?.thinking).toBeUndefined()
       expect(getModel('pixel-pro-1')?.thinking).toMatchObject({
         levels: ['high'],
         default: 'high',
+        request: {},
+      })
+      expect(getModel('pixel-pro-1')?.model).toBe('ds4-flash')
+      expect(reasoningPayloadForModel(getModel('pixel-simple-1')!)).toEqual({
+        reasoning_effort: 'none',
+      })
+      expect(reasoningPayloadForModel(getModel('pixel-pro-1')!, 'low')).toEqual({
+        reasoning_effort: 'high',
       })
       expect(getMeta().models.find((model) => model.id === 'pixel-simple-1')?.thinking).toBeUndefined()
       expect(getMeta().models.find((model) => model.id === 'pixel-pro-1')?.thinking).toBeUndefined()
@@ -117,7 +129,7 @@ describe('shared gateway catalog', () => {
     try {
       for (const retiredId of retiredIds) {
         expect(MODELS.map((model) => model.id)).not.toContain(retiredId)
-        expect(getModel(retiredId)?.model).toBe('qwen3.8-27b')
+        expect(getModel(retiredId)?.model).toBe('ds4-flash')
         expect(resolveRun({ modelId: retiredId }).ok).toBe(true)
       }
       expect(getModel('gw-qwen3.6-35b')?.id).toBe('pixel-pro-1')

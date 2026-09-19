@@ -44,7 +44,7 @@ function toMetaModel(model: ModelConfig, ready: boolean, contextWindow?: number)
     mode: model.mode ?? "agent",
     ready,
     contextWindow: contextWindow ?? model.contextWindow,
-    // The sampling recipe stays server-side, and a fixed one-level policy is
+    // The provider request recipe stays server-side, and a fixed one-level policy is
     // not exposed as a pointless selector.
     ...(model.thinking && model.thinking.levels.length > 1
       ? { thinking: { levels: model.thinking.levels, default: model.thinking.default } }

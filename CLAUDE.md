@@ -306,11 +306,12 @@ would cost a model call and reclaim nothing.
 ## Public model tiers
 
 The shared deployment advertises only `pixel-simple-1` and `pixel-pro-1`.
-Those are stable product ids, not gateway model names: Simple routes to
-`ds4-flash` with thinking off, while Pro routes to `qwen3.8-27b` with thinking
-fixed at high. Do not expose provider inventory in the picker or add a one-item
-reasoning control. Previously advertised ids remain hidden but resolvable so
-stored conversations and managed agents continue to run.
+Those are stable product ids, not gateway model names. Both route to
+`ds4-flash`: Simple explicitly sends `reasoning_effort: none`, while Pro sends
+`reasoning_effort: high`. Do not omit Simple's value (the gateway default still
+reasons), expose provider inventory in the picker, or add a one-item reasoning
+control. Previously advertised ids remain hidden but resolvable so stored
+conversations and managed agents continue to run.
 
 ## What a stdio MCP child inherits
 

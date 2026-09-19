@@ -81,9 +81,10 @@ CUSTOM_API_KEY=sk-...                          # required; models show as
 ```
 
 The shared deployment presents two stable product tiers instead of upstream
-provider names: `pixel-simple-1` for fast, straightforward work and
-`pixel-pro-1` for complex work with high reasoning. The API owns the upstream
-routing, so changing a gateway model does not rename the choice users see.
+provider names. Both currently route to `ds4-flash`: `pixel-simple-1` explicitly
+disables reasoning for fast, straightforward work, while `pixel-pro-1` fixes
+reasoning at high for complex work. The API owns the upstream routing, so
+changing a gateway model does not rename the choice users see.
 
 A model with no key resolves to an `error` event on the SSE stream, which the
 console renders inline — the run is never silently swapped for another model.
