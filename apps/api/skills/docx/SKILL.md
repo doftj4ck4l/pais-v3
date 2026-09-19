@@ -43,5 +43,6 @@ names the offending block index.
 
 ## Limits
 
-Creation only — this does not edit an existing .docx, and cannot convert to PDF
-(the sandbox image has no LibreOffice).
+This skill creates rather than edits a `.docx`. The sandbox also provides
+LibreOffice (`soffice`) for a separate headless conversion to PDF when the user
+asks for both formats.

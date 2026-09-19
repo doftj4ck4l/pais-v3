@@ -77,13 +77,19 @@ export function describeEnvironment(env: EnvironmentDescription): string {
       ` The container already has a working toolchain: Python 3 with pillow and opencv for ` +
       `images, numpy, pandas, scipy and scikit-learn for data, matplotlib, seaborn and plotly ` +
       `for charts, openpyxl, python-docx, python-pptx, pypdf and reportlab for documents (read ` +
-      `and write, including PDFs from scratch), requests, beautifulsoup4 and lxml for fetching ` +
-      `and parsing; ImageMagick ("magick"), curl and ghostscript ("ps2pdf") on the shell; and ` +
+      `and write, including PDFs from scratch), PyMuPDF and CairoSVG for PDF/SVG inspection, ` +
+      `requests, beautifulsoup4 and lxml for fetching and parsing; ImageMagick ("magick"), ` +
+      `curl, file, unzip, Graphviz ("dot"), Poppler, LibreOffice ("soffice") and ghostscript ` +
+      `("ps2pdf") on the shell; and ` +
       `Node with exceljs, docx and pdf-lib. Assume a common library is present and just import ` +
       `it. If you are unsure, check ("pip show <name>", "which <cmd>") before installing — ` +
       `installing something that is already there wastes most of a turn. If something genuinely ` +
       `is missing, "pip install <name>" works here and lasts for this container, so install it ` +
       `and move on rather than hunting for a workaround.`;
+    out +=
+      ` Installed skill instructions are mounted read-only under /skills. When you need to ` +
+      `inspect a SKILL.md from bash or read, use the /skills path advertised in the skill list; ` +
+      `host checkout paths such as /home/.../apps/api/skills do not exist in this container.`;
   }
 
   // Only worth saying when there is something to confuse it with. A workspace
