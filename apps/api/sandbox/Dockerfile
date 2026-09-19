@@ -14,8 +14,11 @@
 # images, Bedrock 200+ packages including torch). No torch, spacy, librosa or
 # gensim: nothing has asked, and they are the packages that turn 1GB into 4GB.
 #
-# No LibreOffice on purpose — it adds 600MB-1GB and is only needed for format
-# conversion (docx->pdf). Creating documents from scratch does not need it.
+# LibreOffice is intentionally included despite its image cost. Production
+# traces showed report runs repeatedly generating DOCX/PPTX successfully and
+# then failing at the final PDF conversion because `soffice` was absent. A
+# larger image is paid once at build time; a broken client demo is paid on every
+# document run.
 #
 # trixie rather than bookworm for two things the agent actually reaches for:
 # ImageMagick 7, whose binary is `magick` (bookworm ships 6, where only
@@ -30,7 +33,24 @@ FROM node:24-trixie-slim
 #   command died code 127 (measured).
 # ghostscript: `ps2pdf` and PDF post-processing — another 127 in the traces.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash curl ghostscript python3 python3-pip imagemagick \
+ && apt-get install -y --no-install-recommends \
+      bash \
+      curl \
+      file \
+      fontconfig \
+      fonts-dejavu-core \
+      fonts-noto-core \
+      ghostscript \
+      graphviz \
+      imagemagick \
+      libreoffice-calc \
+      libreoffice-impress \
+      libreoffice-writer \
+      poppler-utils \
+      python3 \
+      python3-pip \
+      unzip \
+      zip \
  && rm -rf /var/lib/apt/lists/*
 
 # Debian marks its Python as externally managed; these are the only packages in
@@ -45,6 +65,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       python-docx==1.2.0 \
       python-pptx==1.0.2 \
       pypdf==6.16.1 \
+      PyMuPDF==1.28.2 \
       `# reportlab for generating PDFs from scratch — the model tried reportlab` \
       `# and fpdf and found neither, then thrashed for a PDF path (measured)` \
       reportlab==4.2.5 \
@@ -52,6 +73,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       `# wheel drags in an X11/libGL chain for a GUI nothing here can show` \
       pillow==12.3.0 \
       opencv-python-headless==5.0.0.93 \
+      CairoSVG==2.9.1 \
       `# data` \
       numpy==2.5.2 \
       pandas==3.0.5 \

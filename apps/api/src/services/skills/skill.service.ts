@@ -86,7 +86,15 @@ function readFrontmatterField(filePath: string, field: string): string | null {
 /** XML-formatted skill listing injected into the system prompt (agentskills.io spec). */
 export async function skillsBlock() {
   const { skills, usage } = await getSkills();
-  let block = formatSkillsForSystemPrompt(skills);
+  // pi formats each skill with the host-side SKILL.md path. Sandboxes only see
+  // the read-only /skills mount, so exposing that path made agents try to cat
+  // /home/.../apps/api/skills/docx/SKILL.md and fail. Rewrite every advertised
+  // location to the path that bash/read can actually open in the container.
+  let block = containerSkillPromptLocations(
+    formatSkillsForSystemPrompt(skills),
+    skills,
+    appEnv.skillsRoot,
+  );
   // The external formatter emits name + description + location only. Append the
   // declared arguments so the model sees a skill's required args before calling
   // it, instead of learning them from a failed first call (measured: docx
@@ -98,6 +106,23 @@ export async function skillsBlock() {
       documented.map((s) => `- ${s.name}: ${usage.get(s.name)}`).join("\n");
   }
   return block;
+}
+
+export function containerSkillPromptLocations(
+  block: string,
+  skills: Array<Pick<Skill, "filePath">>,
+  skillsDir: string,
+): string {
+  let output = block;
+  for (const skill of skills) {
+    const relative = path.relative(skillsDir, skill.filePath);
+    const containerPath = path.posix.join(
+      SKILLS_MOUNT,
+      ...relative.split(path.sep).filter(Boolean),
+    );
+    output = output.split(skill.filePath).join(containerPath);
+  }
+  return output;
 }
 
 /** Single-quote a value for `sh -lc`, so an argument can never become syntax. */

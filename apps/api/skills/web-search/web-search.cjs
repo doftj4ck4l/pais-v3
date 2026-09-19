@@ -13,6 +13,10 @@ const BROWSER_UA =
 // browser. A generic browser UA was measured receiving intermittent HTTP 429s.
 const WIKIPEDIA_UA = "Pixelspace-WebSearch/1.0 (https://pixel-space.co)";
 const RETRY_DELAYS_MS = [200, 600];
+const QUERY_STOP_WORDS = new Set([
+  "a", "an", "and", "about", "cari", "dan", "find", "for", "info", "information",
+  "mengenai", "of", "on", "search", "tentang", "the", "untuk", "what", "who",
+]);
 
 function fetchText(url, timeoutMs, maxBytes, headers = {}) {
   return new Promise((resolve) => {
@@ -134,6 +138,30 @@ function cleanQuery(query) {
   return output || query;
 }
 
+/**
+ * Bing's RSS endpoint sometimes returns a healthy 200 containing results for a
+ * completely different query. That is worse than an unavailable backend: the
+ * agent trusts the titles, fetches them, and spends the run chasing unrelated
+ * pages. Keep only results that contain enough meaningful query terms. This is
+ * deliberately applied to Bing rather than every backend because DuckDuckGo
+ * was measured returning the right Nextplus pages while Bing returned YouTube
+ * help and Chinese hospital pages for the same request.
+ */
+function relevantBingResults(query, results) {
+  const terms = [...new Set(
+    cleanQuery(query)
+      .toLocaleLowerCase("en-US")
+      .match(/[\p{L}\p{N}]+/gu)
+      ?.filter((term) => term.length >= 2 && !QUERY_STOP_WORDS.has(term)) ?? [],
+  )];
+  if (!terms.length) return results;
+  const required = terms.length >= 3 ? 2 : 1;
+  return results.filter((result) => {
+    const haystack = `${result.title} ${result.url}`.toLocaleLowerCase("en-US");
+    return terms.filter((term) => haystack.includes(term)).length >= required;
+  });
+}
+
 async function bingSearch(query, count, options) {
   const response = await fetchWithRetry(
     `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&count=${count}`,
@@ -155,14 +183,23 @@ async function bingSearch(query, count, options) {
     if (!title || !url || /^bing:/i.test(title)) continue;
     results.push({ title, url });
   }
-  return { name: "Bing", state: results.length ? "results" : "empty", results };
+  const relevant = relevantBingResults(query, results);
+  if (results.length && !relevant.length) {
+    return {
+      name: "Bing",
+      state: "unavailable",
+      detail: "Bing returned results unrelated to the query",
+      results: [],
+    };
+  }
+  return { name: "Bing", state: relevant.length ? "results" : "empty", results: relevant };
 }
 
 async function wikipediaSearch(query, count, options) {
   const response = await fetchWithRetry(
-    "https://en.wikipedia.org/w/api.php?action=opensearch&search=" +
+    "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" +
       encodeURIComponent(cleanQuery(query)) +
-      `&limit=${count}&format=json`,
+      `&srlimit=${count}&format=json`,
     5_000,
     200_000,
     { "user-agent": WIKIPEDIA_UA, accept: "application/json" },
@@ -170,9 +207,14 @@ async function wikipediaSearch(query, count, options) {
   );
   if (response.status !== 200 || response.error) return unavailable("Wikipedia", response);
   try {
-    const [, titles, , urls] = JSON.parse(response.body);
-    const results = (titles ?? [])
-      .map((title, index) => ({ title, url: urls?.[index] ?? "" }))
+    const parsed = JSON.parse(response.body);
+    const results = (parsed?.query?.search ?? [])
+      .map((match) => ({
+        title: typeof match?.title === "string" ? match.title : "",
+        url: Number.isInteger(match?.pageid)
+          ? `https://en.wikipedia.org/?curid=${match.pageid}`
+          : "",
+      }))
       .filter((result) => result.title && result.url)
       .slice(0, count);
     return { name: "Wikipedia", state: results.length ? "results" : "empty", results };
@@ -217,7 +259,11 @@ function renderResults(query, outcome) {
 
 async function searchWeb(query, count = 8, options = {}) {
   const boundedCount = Math.max(1, Math.min(Number.parseInt(count, 10) || 8, 10));
-  const backends = [bingSearch, wikipediaSearch, duckDuckGoSearch];
+  // DuckDuckGo is both the documented primary backend and the one measured
+  // returning relevant results from production. Wikipedia is a precise entity
+  // fallback. Bing RSS remains last because it can answer the wrong query with
+  // a syntactically valid feed; relevantBingResults guards that final path.
+  const backends = [duckDuckGoSearch, wikipediaSearch, bingSearch];
   const unavailableBackends = [];
   let generalSearchReturnedEmpty = false;
 
@@ -260,6 +306,7 @@ module.exports = {
   duckDuckGoSearch,
   fetchWithRetry,
   parseArgs,
+  relevantBingResults,
   searchWeb,
   shouldRetry,
   wikipediaSearch,

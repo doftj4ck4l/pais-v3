@@ -215,6 +215,25 @@ export function execInContainer(
   });
 }
 
+/**
+ * The shell that runs one command under a pid file, so an abort can kill it.
+ *
+ * `setsid` puts the command in a new session and the pid file carries its
+ * process-group id, so `abortCleanup` can `kill -KILL -- -$pid` the whole group
+ * rather than the leader alone. The command runs in the background to learn that
+ * pid, and a non-interactive bash assigns `/dev/null` to a background job's stdin
+ * *before* any explicit redirection — so the filesystem helper, which reads its
+ * request from stdin, was handed an empty one and every read and write failed
+ * with `JSONDecodeError: Expecting value`, leaving the model to fall back on
+ * `bash`. Duplicating stdin to fd 3 first and redirecting the job from it keeps
+ * the request readable. A command with no stdin has nothing to preserve, and
+ * `/dev/null` is what it should see.
+ */
+export function cancellationWrapper(pidFile: string, hasStdin: boolean): string {
+  const run = hasStdin ? 'exec 3<&0; setsid "$@" <&3 &' : 'setsid "$@" &';
+  return `pid_file="$1"; shift; ${run} pid=$!; printf "%s\\n" "$pid" > "$pid_file"; wait "$pid"; status=$?; rm -f "$pid_file"; exit "$status"`;
+}
+
 /** Execute an argv vector without involving a shell. */
 export function execArgvInContainer(
   containerId: string,
@@ -226,7 +245,7 @@ export function execArgvInContainer(
     ? [
         "bash",
         "-c",
-        'pid_file="$1"; shift; setsid "$@" & pid=$!; printf "%s\\n" "$pid" > "$pid_file"; wait "$pid"; status=$?; rm -f "$pid_file"; exit "$status"',
+        cancellationWrapper(pidFile, options.stdin !== undefined),
         "pixelspace-exec",
         pidFile,
         ...commandArgs,

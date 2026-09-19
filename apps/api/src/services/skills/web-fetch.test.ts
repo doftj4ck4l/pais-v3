@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const {
   extractReadableHtml,
   fetchReadablePage,
+  isSearchResultsUrl,
   parseRequest,
   renderPage,
 }: {
@@ -13,6 +14,7 @@ const {
     request: { url: string; maxChars: number },
     fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
   ) => Promise<string>;
+  isSearchResultsUrl: (url: URL) => boolean;
   parseRequest: (
     argv: string[],
   ) => { url: string; maxChars: number; error?: undefined } | { error: string };
@@ -38,6 +40,25 @@ describe("web-fetch", () => {
     expect(parseRequest(["file:///etc/passwd"])).toEqual({
       error: "error: fetch_url needs an absolute HTTP(S) URL",
     });
+  });
+
+  test("rejects search-result pages before making another search request", () => {
+    for (const url of [
+      "https://www.google.com/search?q=topic",
+      "https://www.google.com.my/search?q=topic",
+      "https://www.bing.com/search?q=topic",
+      "https://search.brave.com/search?q=topic",
+      "https://www.ecosia.org/search?q=topic",
+      "https://search.yahoo.com/search?p=topic",
+      "https://html.duckduckgo.com/html/?q=topic",
+    ]) {
+      expect(isSearchResultsUrl(new URL(url))).toBe(true);
+      expect(parseRequest([url])).toEqual({
+        error:
+          "error: fetch_url does not read search-result pages; use web_search and fetch a direct result URL",
+      });
+    }
+    expect(isSearchResultsUrl(new URL("https://example.com/search?q=topic"))).toBe(false);
   });
 
   test("keeps article text and removes scripts, styles, and page chrome", () => {
@@ -120,6 +141,6 @@ describe("web-fetch", () => {
     ).resolves.toContain('"answer": 42');
     await expect(
       fetchReadablePage({ url: "https://example.com/private", maxChars: 12_000 }, forbiddenFetch),
-    ).resolves.toBe("error: fetch_url returned HTTP 403");
+    ).resolves.toBe("error: fetch_url returned HTTP 403; do not retry this URL—choose another direct result");
   });
 });

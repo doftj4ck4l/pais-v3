@@ -4,7 +4,9 @@
 const DEFAULT_MAX_CHARS = 12_000;
 const MAX_MAX_CHARS = 20_000;
 const MAX_BODY_BYTES = 5_000_000;
-const REQUEST_TIMEOUT_MS = 20_000;
+// A dead search result once held a demo run for the full 20 seconds. This tool
+// reads one candidate page, so failing fast lets the agent use another result.
+const REQUEST_TIMEOUT_MS = 10_000;
 
 const BLOCK_TAGS =
   /<\/?(?:address|article|aside|blockquote|div|dl|dt|dd|figcaption|figure|footer|h[1-6]|header|main|nav|ol|p|pre|section|table|tbody|thead|tfoot|tr|ul)\b[^>]*>/gi;
@@ -159,9 +161,29 @@ function parseRequest(argv) {
   if (!["http:", "https:"].includes(parsedUrl.protocol)) {
     return { error: "error: fetch_url needs an absolute HTTP(S) URL" };
   }
+  if (isSearchResultsUrl(parsedUrl)) {
+    return {
+      error:
+        "error: fetch_url does not read search-result pages; use web_search and fetch a direct result URL",
+    };
+  }
   if (!Number.isFinite(requestedMax)) requestedMax = DEFAULT_MAX_CHARS;
   const maxChars = Math.min(MAX_MAX_CHARS, Math.max(1_000, Math.floor(requestedMax)));
   return { url: parsedUrl.href, maxChars };
+}
+
+function isSearchResultsUrl(url) {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const path = url.pathname.toLowerCase();
+  return (
+    ((host === "google.com" || host.startsWith("google.") || host.endsWith(".google.com")) &&
+      path === "/search") ||
+    (host === "bing.com" && path === "/search") ||
+    (host === "search.brave.com" && path.startsWith("/search")) ||
+    (host === "ecosia.org" && path === "/search") ||
+    (host === "search.yahoo.com" && path.startsWith("/search")) ||
+    (host === "html.duckduckgo.com" && path.startsWith("/html"))
+  );
 }
 
 async function readBounded(response, maxBytes = MAX_BODY_BYTES) {
@@ -247,7 +269,15 @@ async function fetchReadablePage(request, fetchImpl = fetch) {
     const reason = error instanceof Error ? error.message : String(error);
     return `error: fetch_url request failed (${reason})`;
   }
-  if (!response.ok) return `error: fetch_url returned HTTP ${response.status}`;
+  if (!response.ok) {
+    const guidance =
+      response.status === 429
+        ? "; this domain is rate-limiting requests, so do not retry it in this run"
+        : response.status === 403 || response.status === 404
+          ? "; do not retry this URL—choose another direct result"
+          : "";
+    return `error: fetch_url returned HTTP ${response.status}${guidance}`;
+  }
 
   let downloaded;
   try {
@@ -279,6 +309,7 @@ module.exports = {
   decodeEntities,
   extractReadableHtml,
   fetchReadablePage,
+  isSearchResultsUrl,
   markupToText,
   parseRequest,
   readBounded,
