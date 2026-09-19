@@ -141,6 +141,12 @@ and every loaded third-party skill. Search results are bounded and cached only
 inside one run, while calls share a process-wide serialization lane because the
 provider quota belongs to the one API key rather than to a workspace.
 
+Questions asking what the NextPlus system is have an explicit official-source
+route in `source-routing-prompt.ts`: search `site:nextplus.com.my` first, fetch
+the relevant official page, and answer from that context with the URL. The rule
+is added only when both `web_search` and `fetch_url` are active, so a chat-only
+or partially configured run is never instructed to call a tool it cannot see.
+
 App-owned tools may return an `error:` string so the model can correct the
 call. `pi.service` promotes that established result contract to a thrown tool
 error at the harness boundary; otherwise pi records the call as successful and
