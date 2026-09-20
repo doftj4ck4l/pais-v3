@@ -1214,6 +1214,110 @@ describe("createMcpTools catalog and deferred loading", () => {
     await runtime.dispose();
   });
 
+  it("exposes common NAS reads as consent gates and calls only after approval", async () => {
+    await seed(["nextcloud"]);
+    const gatewayTools = [
+      {
+        name: "nc_webdav_find_by_name",
+        description: "Find a file or folder by name",
+        inputSchema: { type: "object", properties: { pattern: { type: "string" } } },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "nc_webdav_list_directory",
+        description: "List a directory",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "nc_webdav_read_file",
+        description: "Read a file",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "nc_webdav_write_file",
+        description: "Write a file",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+        annotations: { readOnlyHint: false },
+      },
+    ];
+    await store.saveCapabilities(
+      "ws1",
+      "s0",
+      gatewayTools.map((tool) => ({
+        kind: "tool" as const,
+        name: tool.name,
+        description: tool.description,
+        schemaJson: JSON.stringify(tool.inputSchema),
+        annotationsJson: JSON.stringify(tool.annotations),
+      })),
+    );
+    const calls: string[] = [];
+    const accessRequests: string[] = [];
+    const runtime = await createMcpTools(
+      "ws1",
+      store,
+      (spec) => linkedConnection(spec, nextcloudServer(calls, { tools: gatewayTools })),
+      {
+        usage: async () => [],
+        requestNextcloudAccess: async () => {
+          accessRequests.push("asked");
+          return true;
+        },
+      },
+    );
+
+    expect(runtime.activeToolNames).toEqual([
+      "nextcloud__nc_webdav_find_by_name",
+      "nextcloud__nc_webdav_list_directory",
+      "nextcloud__nc_webdav_read_file",
+    ]);
+    expect(runtime.activeToolNames).not.toContain("nextcloud__nc_webdav_write_file");
+    expect(runtime.nextcloudAccessTools).toEqual(runtime.activeToolNames);
+    expect(runtime.nextcloudAllowed).toBe(false);
+    expect(runtime.nextcloudSuppressed).toBe(1);
+
+    const find: any = byName(runtime.tools, "nextcloud__nc_webdav_find_by_name");
+    const result = await find.execute("find", { pattern: "Syafiq" });
+    const list: any = byName(runtime.tools, "nextcloud__nc_webdav_list_directory");
+    const listing = await list.execute("list", { path: "/Syafiq" });
+
+    expect(result.isError).toBeUndefined();
+    expect(listing.isError).toBeUndefined();
+    expect(accessRequests).toEqual(["asked"]);
+    expect(calls).toEqual(["nc_webdav_find_by_name", "nc_webdav_list_directory"]);
+    expect(runtime.nextcloudAllowed).toBe(true);
+    expect(runtime.nextcloudSuppressed).toBe(0);
+    await runtime.dispose();
+  });
+
+  it("does not contact NAS when the user denies the consent gate", async () => {
+    await seed(["nextcloud"]);
+    await store.saveCapabilities("ws1", "s0", [
+      {
+        kind: "tool",
+        name: "nc_webdav_find_by_name",
+        description: "Find a file or folder by name",
+        schemaJson: JSON.stringify({ type: "object", properties: {} }),
+        annotationsJson: JSON.stringify({ readOnlyHint: true }),
+      },
+    ]);
+    const lazy = countingConnector();
+    const runtime = await createMcpTools("ws1", store, lazy, {
+      requestNextcloudAccess: async () => false,
+    });
+
+    const find: any = byName(runtime.tools, "nextcloud__nc_webdav_find_by_name");
+    const result = await find.execute("find", { pattern: "Syafiq" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not allowed");
+    expect(lazy.calls).toEqual([]);
+    expect(runtime.nextcloudAllowed).toBe(false);
+    await runtime.dispose();
+  });
+
   it("keeps Nextcloud out of tool search while unrelated MCP servers remain available", async () => {
     await seed(["nextcloud", "github"]);
     await store.saveCapabilities("ws1", "s0", [

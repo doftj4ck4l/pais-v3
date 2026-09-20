@@ -105,11 +105,17 @@ count the model was shown differ in the slots panel, and why both are emitted.
 only from the newest user message. Without an explicit storage action naming
 Nextcloud or NAS, `mcp-tools` does not probe a cold connector, advertise its
 server, activate tools from usage history, include it in `search_tools`, expose
-its resources/prompts, or execute even a directly-reached wrapper. This is a
-code boundary, not merely prompt guidance. Negations, retrospective questions,
-and questions *about* Nextcloud do not grant access; English and Malay access
-requests do. Learned playbook bullets naming Nextcloud, WebDAV, or `nc_*` tools
-are withheld on turns that did not opt in so memory cannot bypass the boundary.
+its resources/prompts, or execute arbitrary wrappers. Three read-only WebDAV
+entry tools (find by name, list directory, and read file) may be shown behind an
+in-run consent gate. An ambiguous request such as "find Syafiq folder" can call
+one, but the connector is not contacted until the user chooses **Use NAS once**;
+denial makes no remote call. This remains a code boundary, not merely prompt
+guidance. Negations, retrospective questions, and questions *about* Nextcloud
+do not grant access; English and Malay access requests do. Learned playbook
+bullets naming Nextcloud, WebDAV, or `nc_*` tools are withheld on turns that did
+not opt in so memory cannot bypass the boundary. The agent is also told not to
+mistake the hidden catalog for a disconnected connector or substitute cached
+tool-output files for a fresh NAS call.
 
 ## The three execution contexts
 
@@ -135,11 +141,13 @@ before applying its output cap; returning the first bytes of raw markup caused
 same reader with `curl` and BeautifulSoup.
 
 `web_search` is different: it calls TinyFish's fixed Search API endpoint from
-the API process and is registered only when `TINYFISH_API_KEY` is set. Never
-pass that key into the sandbox environment; doing so would expose it to `bash`
-and every loaded third-party skill. Search results are bounded and cached only
-inside one run, while calls share a process-wide serialization lane because the
-provider quota belongs to the one API key rather than to a workspace.
+the API process and remains registered even when `TINYFISH_API_KEY` is missing,
+so configuration drift produces an explicit safe tool error instead of silently
+leaving only `fetch_url`. Never pass that key into the sandbox environment;
+doing so would expose it to `bash` and every loaded third-party skill. Search
+results are bounded and cached only inside one run, while calls share a
+process-wide serialization lane because the provider quota belongs to the one
+API key rather than to a workspace.
 
 Questions asking what the NextPlus system is have an explicit official-source
 route in `source-routing-prompt.ts`: search `site:nextplus.com.my` first, fetch

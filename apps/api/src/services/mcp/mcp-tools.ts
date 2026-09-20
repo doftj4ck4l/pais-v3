@@ -87,6 +87,8 @@ export type McpRuntime = {
   /** Per-turn policy visibility for traces and regression diagnosis. */
   nextcloudAllowed: boolean;
   nextcloudSuppressed: number;
+  /** Read-only NAS tools exposed only as an in-run consent gate. */
+  nextcloudAccessTools: string[];
   dispose(): Promise<void>;
 };
 
@@ -98,6 +100,7 @@ const EMPTY_RUNTIME: Omit<McpRuntime, "dispose"> = {
   systemPromptBlock: "",
   nextcloudAllowed: false,
   nextcloudSuppressed: 0,
+  nextcloudAccessTools: [],
 };
 
 /**
@@ -487,6 +490,8 @@ export type McpToolsOptions = {
   requestApproval?: (request: McpApprovalRequest, signal?: AbortSignal) => Promise<boolean>;
   /** True only when the current user turn explicitly asks for Nextcloud/NAS. */
   allowNextcloud?: boolean;
+  /** Ask for one-run NAS access when an ambiguous file request uses a gated read tool. */
+  requestNextcloudAccess?: (signal?: AbortSignal) => Promise<boolean>;
 };
 
 /** Where spilled results live inside a workspace. */
@@ -506,6 +511,12 @@ type CatalogEntry = {
   annotationsJson: string | null;
   isNextcloud: boolean;
 };
+
+const NEXTCLOUD_ACCESS_TOOL_NAMES = new Set([
+  "nc_webdav_find_by_name",
+  "nc_webdav_list_directory",
+  "nc_webdav_read_file",
+]);
 
 /** Prevent parallel runs from reconnecting and replacing the same safety catalog. */
 const catalogRefreshes = new WeakMap<McpStore, Map<string, Promise<NewCapability[]>>>();
@@ -542,7 +553,11 @@ export async function createMcpTools(
     workspacePath,
     requestApproval,
     allowNextcloud = false,
+    requestNextcloudAccess,
   } = options;
+
+  const nextcloudAccess = { allowed: allowNextcloud };
+  let nextcloudAccessDecision: Promise<boolean> | undefined;
 
   const rows = await store.listEnabled(workspaceId);
   if (!rows.length) {
@@ -741,7 +756,26 @@ export async function createMcpTools(
   const availableCatalog = allowNextcloud
     ? catalog
     : catalog.filter((entry) => !entry.isNextcloud);
+  const nextcloudAccessCatalog =
+    !allowNextcloud && requestNextcloudAccess
+      ? catalog.filter(
+          (entry) => entry.isNextcloud && NEXTCLOUD_ACCESS_TOOL_NAMES.has(entry.remoteName),
+        )
+      : [];
+  const nextcloudAccessNames = new Set(nextcloudAccessCatalog.map((entry) => entry.name));
   const availableByName = new Map(availableLive.map((server) => [server.name, server]));
+
+  const ensureNextcloudAccess = async (signal?: AbortSignal): Promise<boolean> => {
+    if (nextcloudAccess.allowed) return true;
+    if (!requestNextcloudAccess) return false;
+    if (!nextcloudAccessDecision) {
+      nextcloudAccessDecision = requestNextcloudAccess(signal).then((approved) => {
+        if (approved) nextcloudAccess.allowed = true;
+        return approved;
+      });
+    }
+    return nextcloudAccessDecision;
+  };
 
   // Safety metadata is checked against the live Nextcloud catalog once per run
   // and only when a Nextcloud tool is actually used. This keeps an offline
@@ -803,13 +837,19 @@ export async function createMcpTools(
       ),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const args = (params ?? {}) as Record<string, unknown>;
-        if (entry.isNextcloud && !allowNextcloud) {
-          return toolResult(
-            budget,
-            "Nextcloud/NAS access was not requested in the user's current message, so it was not called.",
-            true,
-            entry.name,
-          );
+        if (entry.isNextcloud && !nextcloudAccess.allowed) {
+          const approved =
+            nextcloudAccessNames.has(entry.name) && (await ensureNextcloudAccess(signal));
+          if (!approved) {
+            return toolResult(
+              budget,
+              requestNextcloudAccess
+                ? "Nextcloud/NAS access was not allowed for this request, so it was not called."
+                : "Nextcloud/NAS access was not requested in the user's current message, so it was not called.",
+              true,
+              entry.name,
+            );
+          }
         }
         // Gate every MCP tool that is not provably read-only, on any server.
         // Nextcloud additionally gets a live annotation refresh because its
@@ -1068,7 +1108,7 @@ export async function createMcpTools(
   // catalog is reached at all, and the resource/prompt helpers are a flat two
   // or three regardless of how many resources exist.
   const helpers = tools.map((t) => t.name).filter((n) => !catalogNames.has(n));
-  const activeToolNames = [...core, ...helpers];
+  const activeToolNames = [...core, ...nextcloudAccessNames, ...helpers];
 
   logger.info("mcp.catalog", {
     workspaceId,
@@ -1077,8 +1117,9 @@ export async function createMcpTools(
     active: activeToolNames.length,
     core: core.length,
     probed: cold.length,
-    nextcloudAllowed: allowNextcloud,
-    nextcloudSuppressed: catalog.length - availableCatalog.length,
+    nextcloudAllowed: nextcloudAccess.allowed,
+    nextcloudSuppressed:
+      catalog.length - availableCatalog.length - nextcloudAccessCatalog.length,
   });
 
   return {
@@ -1087,8 +1128,15 @@ export async function createMcpTools(
     promptTemplates,
     servers: outcomes,
     systemPromptBlock: buildSystemPromptBlock(availableLive, availableCatalog, core),
-    nextcloudAllowed: allowNextcloud,
-    nextcloudSuppressed: catalog.length - availableCatalog.length,
+    get nextcloudAllowed() {
+      return nextcloudAccess.allowed;
+    },
+    get nextcloudSuppressed() {
+      return nextcloudAccess.allowed
+        ? 0
+        : catalog.length - availableCatalog.length - nextcloudAccessCatalog.length;
+    },
+    nextcloudAccessTools: [...nextcloudAccessNames],
     dispose,
   };
 }

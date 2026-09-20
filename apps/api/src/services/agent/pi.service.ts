@@ -65,6 +65,7 @@ import {
   explicitlyRequestsNextcloud,
   referencesNextcloud,
 } from "./nextcloud-intent";
+import { nextcloudAccessPrompt } from "./nextcloud-access-prompt";
 
 type Emit = (event: AgentEvent) => void;
 
@@ -415,6 +416,26 @@ export async function runPiAgent(opts: {
               return approved;
             }
           : undefined,
+        requestNextcloudAccess: requestUserInput
+          ? async (toolSignal) => {
+              const options = ["Use NAS once", "Don't use NAS"] as const;
+              const outcome = await requestUserInput(
+                {
+                  question: "Use the connected NAS/Nextcloud for this request?",
+                  options: [...options],
+                  kind: "approval",
+                },
+                toolSignal ?? signal,
+              );
+              const approved = outcome.status === "answered" && outcome.answer === options[0];
+              emit({
+                type: "trace",
+                step: "mcp.nextcloud_access",
+                fields: { approved, outcome: outcome.status },
+              });
+              return approved;
+            }
+          : undefined,
       });
       // Building the runtime no longer connects to anything — the catalog comes
       // from `mcp_capabilities`. This span is what proves that: it read ~4-6
@@ -649,6 +670,7 @@ export async function runPiAgent(opts: {
     if (docsPrompt) out += docsPrompt;
     if (dbPrompt) out += dbPrompt;
     if (calendarPrompt) out += calendarPrompt;
+    out += nextcloudAccessPrompt(mcp?.nextcloudAccessTools ?? []);
     // Always on when the run can be answered: prefer asking to guessing.
     if (conversationId) {
       out +=
