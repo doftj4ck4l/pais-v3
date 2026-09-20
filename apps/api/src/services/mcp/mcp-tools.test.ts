@@ -806,6 +806,16 @@ describe("createMcpTools", () => {
     expect(runtime.systemPromptBlock).toContain("not shown");
     await runtime.dispose();
   });
+
+  it("distinguishes MCP discovery from built-in web tools", async () => {
+    await seed(["github"]);
+    const runtime = await createMcpTools("ws1", store, connector);
+    const search: any = byName(runtime.tools, "search_tools");
+
+    expect(search.description).toContain("connected-service (MCP) tools");
+    expect(search.description).toContain("web_search and fetch_url are already active");
+    await runtime.dispose();
+  });
 });
 
 describe("Nextcloud write approval", () => {
