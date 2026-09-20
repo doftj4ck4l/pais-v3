@@ -58,8 +58,7 @@ import { usableWindow } from "../context/context-window.service";
 import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
-import { createWebSearchRunner } from "./web-search-runtime";
-import { searchTinyfish } from "./tinyfish-search";
+import { createWebSearchTool } from "./web-search-tool";
 import { sourceRoutingPrompt } from "./source-routing-prompt";
 import {
   currentUserRequest,
@@ -537,22 +536,10 @@ export async function runPiAgent(opts: {
 
     // TinyFish search stays in the API process: putting its credential into a
     // sandbox environment would also hand it to bash and every third-party
-    // skill. The endpoint is fixed, and only this narrow wrapper sees the key.
-    if (appEnv.tinyfishApiKey) {
-      const searchWeb = createWebSearchRunner((query) => searchTinyfish(query));
-      agentTools.push({
-        name: "web_search",
-        description:
-          "Search the web with TinyFish and return result titles, snippets, and URLs. Use this for " +
-          "current or external information, then read a promising result with fetch_url.",
-        parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 1_000 }) }),
-        label: "web_search",
-        execute: async (_id: string, params: any) => {
-          const out = await searchWeb(String(params?.query ?? ""));
-          return { content: [{ type: "text" as const, text: out }], details: { output: out } };
-        },
-      });
-    }
+    // skill. Keep the tool registered when configuration is missing so a
+    // deployment problem is reported explicitly instead of silently leaving
+    // the model with fetch_url only.
+    agentTools.push(createWebSearchTool());
   }
 
   // --- prompt templates loaded from apps/api/prompts/*.md ---

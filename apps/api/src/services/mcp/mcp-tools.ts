@@ -887,7 +887,9 @@ export async function createMcpTools(
       name: "search_tools",
       label: "search_tools",
       description:
-        `Find MCP tools that are not currently loaded. ${availableCatalog.length} tools are available ` +
+        `Find connected-service (MCP) tools that are not currently loaded. Built-in tools such as ` +
+        `web_search and fetch_url are already active and do not appear in this catalog. ` +
+        `${availableCatalog.length} MCP tools are available ` +
         `across ${availableLive.length} server(s), but only the most-used ones are loaded to save ` +
         `context. Search by what you want to do ("upload a file", "list calendar events") and ` +
         `the matches become callable on your NEXT step. Use this before concluding something ` +
