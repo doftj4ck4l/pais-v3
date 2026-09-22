@@ -15,6 +15,7 @@ import {
 } from '@/features/agents/lib/attachment-notes'
 import {
   appendQueuedFollowUp,
+  newQueuedFollowUpId,
   shiftQueuedFollowUp,
   shouldQueueFollowUp,
 } from '@/features/agents/lib/follow-up-queue'
@@ -422,7 +423,7 @@ export function useAgentBoard(scope: Scope) {
     if (!agent) return
 
     const followUp: QueuedFollowUp = {
-      id: crypto.randomUUID(),
+      id: newQueuedFollowUpId(),
       text,
       attachments,
     }
