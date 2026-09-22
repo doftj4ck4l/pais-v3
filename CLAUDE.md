@@ -73,7 +73,9 @@ locked for that conversation:
   sandbox or exposes database, memory, NAS, shell, document search, or MCP
   tools. A request to export the preceding answer is handled deterministically
   by `chat-export.service.ts`, so the PDF/DOCX contains the answer already shown
-  rather than a model rewrite.
+  rather than a model rewrite. A one-turn write-and-export request generates
+  the content once, then the same service renders that answer and returns its
+  download link without invoking the harness.
 - **Work** runs in `services/agent/pi.service.ts` (~1030 lines) and retains the
   complete v3 harness described below.
 

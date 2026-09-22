@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { exportChatAnswer, requestedChatExport } from "./chat-export.service";
+import {
+  exportChatAnswer,
+  exportsPreviousAnswer,
+  requestedChatExport,
+} from "./chat-export.service";
 
 describe("Chat answer export", () => {
   test("recognises requests to export the existing answer, not arbitrary PDF questions", () => {
     expect(requestedChatExport("Okay, make me a PDF document from this summary")).toBe("pdf");
     expect(requestedChatExport("Jadikan analisis tadi sebagai dokumen Word")).toBe("docx");
+    expect(requestedChatExport("Write something and export it to PDF")).toBe("pdf");
+    expect(requestedChatExport("Create a random PDF")).toBe("pdf");
+    expect(requestedChatExport("How do I export a PDF?")).toBeNull();
     expect(requestedChatExport("What is a PDF document?")).toBeNull();
+  });
+
+  test("distinguishes exports of an earlier answer from write-and-export requests", () => {
+    expect(exportsPreviousAnswer("Make this answer a PDF")).toBe(true);
+    expect(exportsPreviousAnswer("Write something and export it to PDF")).toBe(false);
   });
 
   test.each(["pdf", "docx"] as const)("renders a real %s file and writes it once", async (format) => {

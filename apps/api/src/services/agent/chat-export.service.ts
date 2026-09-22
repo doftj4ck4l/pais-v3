@@ -16,11 +16,22 @@ type Block = {
 export function requestedChatExport(message: string): ChatExportFormat | null {
   const normalized = message.toLowerCase().replace(/\s+/g, " ").trim();
   const action = /\b(export|save|download|make|create|convert|turn|buat|jadikan|simpan)\b/;
-  const refersBack = /\b(this|that|above|answer|response|summary|analysis|ini|tadi|atas)\b/;
-  if (!action.test(normalized) || !refersBack.test(normalized)) return null;
+  if (!action.test(normalized)) return null;
+  // Explanatory questions mention the same words but do not ask Pixelspace to
+  // create a file. Requests such as "can you make this a PDF?" are still
+  // allowed because they do not start with one of these how/what questions.
+  if (/^(?:how (?:do|does|can|could|would)|what (?:is|are)|why|when|where)\b/.test(normalized)) {
+    return null;
+  }
   if (/\b(docx|word(?: document)?)\b/.test(normalized)) return "docx";
   if (/\bpdf(?: document)?\b/.test(normalized)) return "pdf";
   return null;
+}
+
+/** True when an export request clearly points at an earlier assistant answer. */
+export function exportsPreviousAnswer(message: string): boolean {
+  const normalized = message.toLowerCase().replace(/\s+/g, " ").trim();
+  return /\b(this|that|above|answer|response|summary|analysis|ini|tadi|atas)\b/.test(normalized);
 }
 
 /** Export one existing assistant answer without asking a model to rewrite it. */
