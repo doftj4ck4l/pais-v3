@@ -101,11 +101,13 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const [regularBytes, boldBytes] = await Promise.all([
-    Bun.file(fontPath("noto-sans-latin-ext-400-normal.woff")).arrayBuffer(),
-    Bun.file(fontPath("noto-sans-latin-ext-700-normal.woff")).arrayBuffer(),
+    Bun.file(fontPath("noto-sans-latin-400-normal.woff")).arrayBuffer(),
+    Bun.file(fontPath("noto-sans-latin-700-normal.woff")).arrayBuffer(),
   ]);
   const regular = await pdf.embedFont(regularBytes, { subset: true });
   const bold = await pdf.embedFont(boldBytes, { subset: true });
+  assertPdfFontCoverage(regular);
+  assertPdfFontCoverage(bold);
   pdf.setTitle("Pixelspace Chat export");
   pdf.setCreator("Pixelspace");
   pdf.setCreationDate(createdAt);
@@ -115,7 +117,7 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
     const font = block.kind === "heading" ? bold : regular;
     const size = block.kind === "heading" ? Math.max(14, 20 - (block.level ?? 1) * 2) : 10.5;
     const prefix = block.kind === "bullet" ? "• " : "";
-    const lines = wrapText(prefix + (block.text || " "), font, size, 487);
+    const lines = wrapText(pdfSafeText(prefix + (block.text || " "), font), font, size, 487);
     const lineHeight = size * 1.48;
     const before = block.kind === "heading" ? 8 : 0;
     state.y -= before;
@@ -133,6 +135,35 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
     state.y -= block.kind === "heading" ? 5 : 3;
   }
   return pdf.save();
+}
+
+/**
+ * Fontsource publishes Noto Sans as Unicode-range shards. Accidentally using
+ * the latin-ext shard here produces a valid PDF whose ordinary Latin letters
+ * are all `.notdef` squares. Fail loudly if the bundled font ever regresses to
+ * a shard that cannot render normal chat output.
+ */
+function assertPdfFontCoverage(font: PDFFont): void {
+  const characters = new Set(font.getCharacterSet());
+  for (const character of "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 •—–‘’“”") {
+    if (!characters.has(character.codePointAt(0)!)) {
+      throw new Error("The bundled PDF font does not cover ordinary chat text");
+    }
+  }
+}
+
+/** Avoid drawing a font's `.notdef` glyph, which PDF readers show as a box. */
+function pdfSafeText(text: string, font: Pick<PDFFont, "getCharacterSet">): string {
+  const characters = new Set(font.getCharacterSet());
+  return [...text.normalize("NFC")]
+    .map((character) => {
+      if (characters.has(character.codePointAt(0)!)) return character;
+      const readable = [...character.normalize("NFKD")]
+        .filter((part) => characters.has(part.codePointAt(0)!))
+        .join("");
+      return readable || "?";
+    })
+    .join("");
 }
 
 function ensurePdfSpace(
@@ -216,4 +247,4 @@ function fontPath(file: string): string {
   return fileURLToPath(import.meta.resolve(`@fontsource/noto-sans/files/${file}`));
 }
 
-export const chatExportInternals = { markdownBlocks, inlineText, wrapText };
+export const chatExportInternals = { markdownBlocks, inlineText, pdfSafeText, wrapText };
