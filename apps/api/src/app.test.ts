@@ -238,6 +238,100 @@ describe("GET /api/me", () => {
 });
 
 describe("POST /api/chat", () => {
+  it("runs product Chat directly, persists its mode, and exposes only web search", async () => {
+    const requests: Record<string, any>[] = [];
+    const provider = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests.push((await req.json()) as Record<string, any>);
+        const chunk = {
+          id: "chatcmpl-direct",
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: "direct-chat-test",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", content: "DIRECT_CHAT_OK" },
+              finish_reason: null,
+            },
+          ],
+        };
+        const done = {
+          ...chunk,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        };
+        return new Response(
+          `data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+
+    try {
+      const res = await createApp().request("/api/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-authentik-uid": "direct-chat-user",
+        },
+        body: JSON.stringify({
+          mode: "chat",
+          modelId: "pixel-simple-1",
+          modelConfig: {
+            baseUrl: `http://127.0.0.1:${provider.port}/v1`,
+            model: "direct-chat-test",
+            apiKey: "test-key",
+          },
+          messages: [{ role: "user", content: "Reply with DIRECT_CHAT_OK" }],
+        }),
+      });
+
+      const stream = await res.text();
+      const conversationId = stream.match(/"type":"conversation","id":"([^"]+)"/)?.[1];
+      expect(stream).toContain("DIRECT_CHAT_OK");
+      expect(stream).not.toContain('"step":"sandbox.acquire"');
+      expect(stream).not.toContain('"step":"mcp.catalog"');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.tools?.map((tool: any) => tool.function.name)).toEqual(["web_search"]);
+      expect(requests[0]?.messages?.[0]?.content).toContain("Pixelspace Chat");
+      expect(conversationId).toBeTruthy();
+
+      const { conversationRepository } = await import("./repositories/conversation.repository");
+      expect((await conversationRepository.get(conversationId!))?.harnessId).toBe("chat");
+
+      const followUp = await createApp().request("/api/chat", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-authentik-uid": "direct-chat-user",
+        },
+        body: JSON.stringify({
+          conversationId,
+          // A client cannot widen an existing Chat thread into Work.
+          mode: "work",
+          modelId: "pixel-simple-1",
+          modelConfig: {
+            baseUrl: `http://127.0.0.1:${provider.port}/v1`,
+            model: "direct-chat-test",
+            apiKey: "test-key",
+          },
+          messages: [
+            { role: "user", content: "Reply with DIRECT_CHAT_OK" },
+            { role: "assistant", content: "DIRECT_CHAT_OK" },
+            { role: "user", content: "Again" },
+          ],
+        }),
+      });
+      const followUpStream = await followUp.text();
+      expect(followUpStream).not.toContain('"step":"sandbox.acquire"');
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.messages?.[0]?.content).toContain("Pixelspace Chat");
+    } finally {
+      provider.stop(true);
+    }
+  });
+
   it("rejects image attachments for a chat-only model", async () => {
     const res = await withChatOnlyModel((modelId) => createApp().request("/api/chat", {
       method: "POST",

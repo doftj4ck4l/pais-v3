@@ -56,6 +56,7 @@ describe('liveRunStatus', () => {
 describe('toolStatus', () => {
   it('keeps common tool activity short and specific', () => {
     expect(toolStatus('web_search')).toEqual({ key: 'runSearchingWeb' })
+    expect(toolStatus('export_document')).toEqual({ key: 'runCreating' })
     expect(toolStatus('generate_image')).toEqual({ key: 'runCreating' })
     expect(toolStatus('run_query')).toEqual({ key: 'runCheckingData' })
     expect(toolStatus('nextcloud__nc_calendar_list_events')).toEqual({ key: 'runCheckingCalendar' })

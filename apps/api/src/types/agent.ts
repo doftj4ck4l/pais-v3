@@ -93,7 +93,14 @@ export type AgentOptions = {
    * thinking model gets none, its default level is used.
    */
   reasoningEffort?: string;
+  /** Product mode. Chat bypasses the Work harness and its execution surface. */
+  mode?: ConversationMode;
+  /** Current-turn uploads for Chat's direct vision preflight. */
+  imageIds?: string[];
 };
+
+/** The product experience selected for a conversation. */
+export type ConversationMode = "chat" | "work";
 
 /** Body accepted by POST /api/chat. */
 export type ChatRequest = {
@@ -103,6 +110,11 @@ export type ChatRequest = {
    * failing, so a stale client id can never write into someone else's thread.
    */
   conversationId?: string;
+  /**
+   * Chat is the lightweight direct path; Work is the full agent harness.
+   * Existing conversations keep the mode they were created with.
+   */
+  mode?: ConversationMode;
   harnessId?: string;
   modelId?: string;
   messages?: import("./chat").ChatMessage[];
@@ -112,6 +124,8 @@ export type ChatRequest = {
   userId?: string;
   /** Images the user attached to this message, as ids from POST /api/images. */
   imageIds?: string[];
+  /** Indexed documents explicitly selected through an @mention in Chat. */
+  documentIds?: string[];
   /** CSV/XLSX paths uploaded into this workspace by POST /api/workspace/files. */
   filePaths?: string[];
   /** Which workspace this run belongs to. Resolved server-side when absent. */

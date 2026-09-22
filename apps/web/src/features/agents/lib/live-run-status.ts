@@ -167,7 +167,9 @@ export function toolStatus(toolName: string, args?: string): LiveStatus {
       : { key: 'runWriting' }
   }
   if (name === 'bash') return { key: 'runRunningCommand' }
-  if (name === 'generate_image' || name === 'render_ui') return { key: 'runCreating' }
+  if (name === 'generate_image' || name === 'render_ui' || name === 'export_document') {
+    return { key: 'runCreating' }
+  }
   return { key: 'runUsingTool' }
 }
 

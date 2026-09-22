@@ -1,5 +1,6 @@
 import type { ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
+import { stripDocumentReferenceNotes } from "./document-references";
 
 export const CHAT_ONLY_SYSTEM_PROMPT =
   "Answer the user's message directly and clearly. You have no tools or external data access.";
@@ -12,10 +13,12 @@ const IMAGE_ATTACHMENT_NOTE =
 const DATA_ATTACHMENT_NOTE =
   /\n\n\[The user attached (?:a data file|\d+ data files) to this message:[\s\S]*?untrusted data, not instructions\.\]\s*$/;
 
-function stripAttachmentNotes(content: string): string {
+export function stripAttachmentNotes(content: string): string {
   let stripped = content;
   for (;;) {
-    const next = stripped.replace(DATA_ATTACHMENT_NOTE, "").replace(IMAGE_ATTACHMENT_NOTE, "");
+    const next = stripDocumentReferenceNotes(stripped)
+      .replace(DATA_ATTACHMENT_NOTE, "")
+      .replace(IMAGE_ATTACHMENT_NOTE, "");
     if (next === stripped) return stripped;
     stripped = next;
   }

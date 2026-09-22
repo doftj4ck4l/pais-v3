@@ -3,6 +3,7 @@ import type { ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
 import type { AgentEvent, AgentOptions } from "../../types/agent";
 import { runPiAgent } from "./pi.service";
+import { runDirectChat } from "./direct-chat.service";
 import { systemPromptForModel } from "./model-runtime-policy";
 
 /**
@@ -31,8 +32,22 @@ export async function runAgent(
     workspaceId,
     conversationId,
     reasoningEffort,
+    mode = "work",
+    imageIds,
   }: AgentOptions = {},
 ): Promise<number> {
+  if (mode === "chat") {
+    return runDirectChat({
+      model,
+      history,
+      emit,
+      signal,
+      workspaceId: workspaceId ?? "default",
+      imageIds,
+      reasoningEffort,
+    });
+  }
+
   return runPiAgent({
     model,
     systemPrompt: systemPromptForModel(model, harness.systemPrompt),

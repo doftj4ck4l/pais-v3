@@ -28,6 +28,8 @@ export type Meta = {
   models: Model[]
 }
 
+export type ConversationMode = 'chat' | 'work'
+
 /** A reusable prompt-only agent configured inside one workspace. */
 export type AgentDefinition = {
   id: string
@@ -211,10 +213,17 @@ export type UploadedDataFile = {
   bytes: number
 }
 
+/** An indexed workspace document selected through the Chat @mention picker. */
+export type MentionedDocument = {
+  id: string
+  title: string
+}
+
 /** Everything uploaded alongside one user turn. */
 export type ChatAttachments = {
   images: UploadedImage[]
   dataFiles: UploadedDataFile[]
+  documents?: MentionedDocument[]
 }
 
 /**

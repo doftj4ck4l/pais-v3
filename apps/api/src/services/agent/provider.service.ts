@@ -2,6 +2,16 @@ import type { ModelConfig } from "../../catalog/llm-models";
 import { effectiveApiKey } from "../../catalog/llm-models";
 import type { AssistantChunk, ChatMessage, ToolSchema } from "../../types/chat";
 
+export type ChatUsage = { input: number; output: number };
+
+export type ChatOnceOptions = {
+  onTextDelta?: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
+  onUsage?: (usage: ChatUsage) => void;
+  /** Provider-specific additions such as reasoning effort. Core fields win. */
+  request?: Record<string, unknown>;
+};
+
 /**
  * A message as the provider takes it.
  *
@@ -22,6 +32,7 @@ export async function chatOnce(
   messages: ProviderMessage[],
   tools: ToolSchema[],
   signal?: AbortSignal,
+  options: ChatOnceOptions = {},
 ): Promise<AssistantChunk> {
   signal?.throwIfAborted();
   if (model.provider === "mock") return mockOnce(messages);
@@ -34,6 +45,7 @@ export async function chatOnce(
   }
 
   const body = {
+    ...options.request,
     model: model.model,
     messages,
     tools: tools.length ? tools : undefined,
@@ -55,12 +67,13 @@ export async function chatOnce(
     throw new Error(`provider error ${res.status}: ${text}`);
   }
 
-  return parseStream(res.body, signal);
+  return parseStream(res.body, signal, options);
 }
 
 async function parseStream(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  options: ChatOnceOptions = {},
 ): Promise<AssistantChunk> {
   const reader = body.getReader();
   const cancel = () => void reader.cancel(signal?.reason).catch(() => undefined);
@@ -95,9 +108,22 @@ async function parseStream(
           continue;
         }
         const delta = json?.choices?.[0]?.delta;
+        const usage = json?.usage;
+        if (usage) {
+          options.onUsage?.({
+            input: Number(usage.prompt_tokens ?? 0) || 0,
+            output: Number(usage.completion_tokens ?? 0) || 0,
+          });
+        }
         if (!delta) continue;
-        if (typeof delta.content === "string") text += delta.content;
-        if (typeof delta.reasoning_content === "string") reasoningContent += delta.reasoning_content;
+        if (typeof delta.content === "string") {
+          text += delta.content;
+          options.onTextDelta?.(delta.content);
+        }
+        if (typeof delta.reasoning_content === "string") {
+          reasoningContent += delta.reasoning_content;
+          options.onReasoningDelta?.(delta.reasoning_content);
+        }
         for (const tc of delta.tool_calls ?? []) {
           const index = tc.index ?? 0;
           toolCalls[index] ??= { id: "", name: "", args: "" };

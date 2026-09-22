@@ -9,7 +9,10 @@ import {
   stopRun,
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
-import { historyFrom } from '@/features/agents/lib/attachment-notes'
+import {
+  historyFrom,
+  withDocumentReferenceNote,
+} from '@/features/agents/lib/attachment-notes'
 import {
   appendQueuedFollowUp,
   shiftQueuedFollowUp,
@@ -24,6 +27,7 @@ import type {
   Slots,
   TraceLine,
   ChatAttachments,
+  ConversationMode,
 } from '@/shared/lib/types'
 
 export type AgentStatus = 'running' | 'done' | 'stopped' | 'error'
@@ -34,6 +38,7 @@ export type AgentRun = {
   /** The stored row backing this agent, once the server has created it. */
   conversationId: string | null
   modelId: string
+  mode: ConversationMode
   task: string
   status: AgentStatus
   pinned: boolean
@@ -108,6 +113,7 @@ export type ContextUsage = {
 export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [modelIdForNew, setModelIdForNew] = useState('pixel-simple-1')
+  const [modeForNew, setModeForNew] = useState<ConversationMode>('chat')
   // Chosen reasoning effort for a thinking model. Null when the selected model
   // has no adjustable effort; the server falls back to the model's default.
   const [effort, setEffort] = useState<string | null>(null)
@@ -356,17 +362,26 @@ export function useAgentBoard(scope: Scope) {
     task: string,
     modelId: string,
     attachments: ChatAttachments = { images: [], dataFiles: [] },
+    mode: ConversationMode = modeForNew,
   ) {
-    const { images, dataFiles } = attachments
+    const { images, dataFiles, documents = [] } = attachments
     const id = Math.random().toString(36).slice(2, 8)
     const agent: AgentRun = {
       id,
       conversationId: null,
       modelId,
+      mode,
       task,
       status: 'running',
       pinned: false,
-      items: [{ kind: 'user', text: task, images: images.map((i) => i.url), files: dataFiles }],
+      items: [
+        {
+          kind: 'user',
+          text: withDocumentReferenceNote(task, documents.map((document) => document.id)),
+          images: images.map((i) => i.url),
+          files: dataFiles,
+        },
+      ],
       trace: [],
       slots: null,
       notice: null,
@@ -425,14 +440,19 @@ export function useAgentBoard(scope: Scope) {
   }
 
   function startFollowUp(agent: AgentRun, followUp: QueuedFollowUp) {
-    const { images, dataFiles } = followUp.attachments
+    const { images, dataFiles, documents = [] } = followUp.attachments
     const { text } = followUp
 
     const items = itemsRef.current.get(agent.id)
     if (!items) return
 
     const history = [...historyFrom(items), { role: 'user' as const, content: text }]
-    items.push({ kind: 'user', text, images: images.map((i) => i.url), files: dataFiles })
+    items.push({
+      kind: 'user',
+      text: withDocumentReferenceNote(text, documents.map((document) => document.id)),
+      images: images.map((i) => i.url),
+      files: dataFiles,
+    })
     streamRefs.current.set(agent.id, freshStream())
     patchAgent(agent.id, {
       status: 'running',
@@ -478,7 +498,7 @@ export function useAgentBoard(scope: Scope) {
     history: { role: 'user' | 'assistant'; content: string; filePaths?: string[] }[],
     attachments: ChatAttachments = { images: [], dataFiles: [] },
   ) {
-    const { images, dataFiles } = attachments
+    const { images, dataFiles, documents = [] } = attachments
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
 
@@ -488,6 +508,7 @@ export function useAgentBoard(scope: Scope) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId: seed.conversationId ?? undefined,
+          mode: seed.mode,
           modelId: seed.modelId,
           workspaceId: scope.workspaceId ?? undefined,
           // Only meaningful for a thinking model; null on every other, where the
@@ -498,6 +519,7 @@ export function useAgentBoard(scope: Scope) {
           // these into a note on the user message telling the model to call
           // read_image.
           imageIds: images.length ? images.map((i) => i.id) : undefined,
+          documentIds: documents.length ? documents.map((document) => document.id) : undefined,
           filePaths: dataFiles.length ? dataFiles.map((file) => file.path) : undefined,
         }),
         signal: controller.signal,
@@ -701,6 +723,8 @@ export function useAgentBoard(scope: Scope) {
     meta,
     modelIdForNew,
     setModelIdForNew,
+    modeForNew,
+    setModeForNew,
     effort,
     setEffort,
     agents,
@@ -731,6 +755,7 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     id: row.id,
     conversationId: row.id,
     modelId: row.modelId,
+    mode: row.harnessId === 'chat' ? 'chat' : 'work',
     task: row.title,
     status,
     pinned: row.pinned,
