@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chatExportInternals,
   exportChatAnswer,
   exportsPreviousAnswer,
   requestedChatExport,
@@ -24,7 +25,7 @@ describe("Chat answer export", () => {
     let written: Uint8Array | undefined;
     const result = await exportChatAnswer({
       workspaceId: "ws-1",
-      content: "# Summary\n\n- First finding\n- Second finding\n\nMalay: keputusan",
+      content: "# Summary\n\n- First finding\n- Second finding\n\nMalay: keputusan — café",
       format,
       now: new Date("2026-09-21T12:00:00.000Z"),
       write: async (_workspaceId, _path, bytes) => {
@@ -38,5 +39,14 @@ describe("Chat answer export", () => {
     expect(written?.byteLength).toBeGreaterThan(500);
     const signature = new TextDecoder().decode(written!.slice(0, 4));
     expect(signature.startsWith(format === "pdf" ? "%PDF" : "PK")).toBe(true);
+  });
+
+  test("replaces unsupported PDF glyphs instead of drawing empty boxes", () => {
+    const supported = new Set(
+      [..."ASCII cafe?"].map((character) => character.codePointAt(0)!),
+    );
+    const font = { getCharacterSet: () => [...supported] };
+
+    expect(chatExportInternals.pdfSafeText("ASCII café 😀", font)).toBe("ASCII cafe ?");
   });
 });
