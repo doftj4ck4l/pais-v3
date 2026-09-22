@@ -176,7 +176,9 @@ for the life of the conversation:
   `@document` references, pasted-image analysis, and requested web searches. It
   does not acquire a sandbox or expose workspace, database, memory, NAS, shell,
   or MCP tools. Asking to export the previous answer writes that exact answer
-  as PDF or DOCX without asking the model to recreate it.
+  as PDF or DOCX without asking the model to recreate it. A combined request
+  such as “write a brief and export it to PDF” first generates the content,
+  then Pixelspace renders and attaches the file in the same turn.
 - **Work** is the full v3 agent. It retains the pi harness and all existing
   workspace capabilities, including data-file and database work.
 

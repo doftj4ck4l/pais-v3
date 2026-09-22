@@ -127,4 +127,44 @@ describe("direct Chat mode", () => {
       expect.objectContaining({ type: "tool_call", name: "export_document" }),
     );
   });
+
+  test("writes and exports a new PDF in one turn", async () => {
+    const events: AgentEvent[] = [];
+    let exported = "";
+    let systemPrompt = "";
+
+    const turns = await runDirectChat({
+      model,
+      workspaceId: "ws-1",
+      history: [{ role: "user", content: "Write something and export it to PDF" }],
+      emit: (event) => events.push(event),
+      chat: async (_model, messages) => {
+        systemPrompt = String(messages[0]?.content ?? "");
+        return {
+          text: "# A Small Document\n\nThis was written for the PDF.",
+          reasoningContent: "",
+          toolCalls: [],
+        };
+      },
+      exportAnswer: async ({ content, format }) => {
+        expect(format).toBe("pdf");
+        exported = content;
+        return { path: "chat-export.pdf", url: "/download/chat-export.pdf", bytes: 42 };
+      },
+    });
+
+    expect(turns).toBe(1);
+    expect(systemPrompt).toContain("Pixelspace itself can create downloadable PDF and DOCX files");
+    expect(systemPrompt).toContain("Do not ask where to save it");
+    expect(exported).toBe("# A Small Document\n\nThis was written for the PDF.");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "tool_call", name: "export_document" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "text",
+        delta: "\n\n[Download the PDF](/download/chat-export.pdf)",
+      }),
+    );
+  });
 });
