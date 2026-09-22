@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUpIcon, FileSpreadsheetIcon, PaperclipIcon, XIcon } from 'lucide-react'
+import {
+  ArrowUpIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  XIcon,
+} from 'lucide-react'
 import { Button } from '@/shared/ui/button'
 import { ModelPicker } from '@/features/agents/components/model-picker'
 import { Textarea } from '@/shared/ui/textarea'
 import { Spinner } from '@/shared/ui/spinner'
-import { uploadChatDataFile, uploadChatImage } from '@/shared/api/api'
+import { listDocuments, uploadChatDataFile, uploadChatImage } from '@/shared/api/api'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
-import type { ChatAttachments, Model, UploadedDataFile, UploadedImage } from '@/shared/lib/types'
+import { documentMentionAt } from '@/features/agents/lib/document-mentions'
+import type {
+  ChatAttachments,
+  ConversationMode,
+  DocumentRow,
+  MentionedDocument,
+  Model,
+  UploadedDataFile,
+  UploadedImage,
+} from '@/shared/lib/types'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 
 const DATA_FILE_ACCEPT =
@@ -41,6 +56,8 @@ export function Composer({
   models,
   modelId,
   onModelChange,
+  mode,
+  lockedMode = null,
   lockedModelId = null,
   effort = null,
   onEffortChange,
@@ -56,6 +73,10 @@ export function Composer({
   /** The model the next run will use — not the open one's, which never changes. */
   modelId: string
   onModelChange: (id: string) => void
+  /** Chat is direct; Work is the full agent harness. */
+  mode: ConversationMode
+  /** The open conversation's mode cannot change mid-thread. */
+  lockedMode?: ConversationMode | null
   /** The open chat's model, if one is open — it reports rather than offers. */
   lockedModelId?: string | null
   /** Chosen reasoning effort, for a thinking model; null when not applicable. */
@@ -72,6 +93,10 @@ export function Composer({
   const [value, setValue] = useState('')
   const [images, setImages] = useState<UploadedImage[]>([])
   const [files, setFiles] = useState<UploadedDataFile[]>([])
+  const [mentionedDocuments, setMentionedDocuments] = useState<MentionedDocument[]>([])
+  const [documents, setDocuments] = useState<DocumentRow[]>([])
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [uploading, setUploading] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -82,6 +107,8 @@ export function Composer({
   const workspaceIdRef = useRef(scope.workspaceId)
   const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
   const chatOnly = activeModel?.mode === 'chat-only'
+  const activeMode = lockedMode ?? mode
+  const directChat = activeMode === 'chat'
   const { t } = usePreferences()
 
   useEffect(() => {
@@ -95,8 +122,26 @@ export function Composer({
     dataFileSlots.current = 0
     setImages([])
     setFiles([])
+    setMentionedDocuments([])
+    setMentionQuery(null)
     setError(null)
   }, [scope.workspaceId])
+
+  useEffect(() => {
+    if (!scope.workspaceId || !directChat) {
+      setDocuments([])
+      return
+    }
+    let live = true
+    void listDocuments(scope)
+      .then((rows) => {
+        if (live) setDocuments(rows.filter((document) => document.status === 'indexed'))
+      })
+      .catch(() => live && setDocuments([]))
+    return () => {
+      live = false
+    }
+  }, [directChat, scope])
 
   useEffect(() => {
     if (!chatOnly || (!images.length && !files.length)) return
@@ -105,6 +150,16 @@ export function Composer({
     dataFileSlots.current = 0
     setError(t('filesRemovedChatOnly'))
   }, [chatOnly, files.length, images.length, t])
+
+  useEffect(() => {
+    if (!directChat && mentionedDocuments.length) setMentionedDocuments([])
+    if (!directChat) setMentionQuery(null)
+    if (directChat && files.length) {
+      setFiles([])
+      dataFileSlots.current = 0
+      setError(t('chooseWorkFiles'))
+    }
+  }, [directChat, files.length, mentionedDocuments.length, t])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -181,20 +236,61 @@ export function Composer({
     [scope, t, uploadBatch],
   )
 
+  const mentionMatches =
+    mentionQuery === null || mentionedDocuments.length >= 6
+      ? []
+      : documents
+          .filter(
+            (document) =>
+              !mentionedDocuments.some((selected) => selected.id === document.id) &&
+              document.title.toLowerCase().includes(mentionQuery.toLowerCase()),
+          )
+          .slice(0, 6)
+
+  const selectDocumentMention = (document: DocumentRow) => {
+    const cursor = ref.current?.selectionStart ?? value.length
+    const range = documentMentionAt(value, cursor)
+    if (!range) return
+    const before = value.slice(0, range.start)
+    const after = value.slice(range.end)
+    const inserted = `@${document.title}`
+    const next = `${before}${inserted} ${after}`
+    setValue(next)
+    setMentionedDocuments((current) => [
+      ...current,
+      { id: document.id, title: document.title },
+    ])
+    setMentionQuery(null)
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      const position = before.length + inserted.length + 1
+      ref.current?.focus()
+      ref.current?.setSelectionRange(position, position)
+    })
+  }
+
   const submit = () => {
     // An attachment with no question still has an obvious analysis intent.
     // An empty composer with nothing attached does not.
-    if (!value.trim() && !images.length && !files.length) return
+    if (!value.trim() && !images.length && !files.length && !mentionedDocuments.length) return
     if (uploading > 0) return
-    const fallback = files.length
-      ? files.length === 1
-        ? t('analyzeFile')
-        : t('analyzeFiles')
-      : t('whatsInImage')
-    onSend(value.trim() || fallback, { images, dataFiles: files })
+    const fallback = mentionedDocuments.length
+      ? t('summarizeDocuments')
+      : files.length
+        ? files.length === 1
+          ? t('analyzeFile')
+          : t('analyzeFiles')
+        : t('whatsInImage')
+    onSend(value.trim() || fallback, {
+      images,
+      dataFiles: files,
+      documents: mentionedDocuments,
+    })
     setValue('')
     setImages([])
     setFiles([])
+    setMentionedDocuments([])
+    setMentionQuery(null)
     dataFileSlots.current = 0
     setError(null)
   }
@@ -229,8 +325,16 @@ export function Composer({
           submit()
         }}
       >
-        <div className="overflow-hidden rounded-[1.75rem] border border-border/80 bg-secondary shadow-[0_2px_8px_rgba(0,0,0,0.05)] transition-shadow focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.08)] dark:border-transparent">
-          {images.length || files.length || uploading > 0 ? (
+        <div className="relative overflow-visible rounded-[1.75rem] border border-border/80 bg-secondary shadow-[0_2px_8px_rgba(0,0,0,0.05)] transition-shadow focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.08)] dark:border-transparent">
+          {mentionQuery !== null && mentionMatches.length ? (
+            <DocumentMentionMenu
+              documents={mentionMatches}
+              activeIndex={mentionIndex}
+              onPick={selectDocumentMention}
+            />
+          ) : null}
+
+          {images.length || files.length || mentionedDocuments.length || uploading > 0 ? (
             <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
               {images.map((image) => (
                 <Thumbnail
@@ -247,6 +351,17 @@ export function Composer({
                     dataFileSlots.current = Math.max(0, dataFileSlots.current - 1)
                     setFiles((prev) => prev.filter((item) => item.path !== file.path))
                   }}
+                />
+              ))}
+              {mentionedDocuments.map((document) => (
+                <DocumentChip
+                  key={document.id}
+                  document={document}
+                  onRemove={() =>
+                    setMentionedDocuments((current) =>
+                      current.filter((item) => item.id !== document.id),
+                    )
+                  }
                 />
               ))}
               {uploading > 0 ? (
@@ -273,10 +388,12 @@ export function Composer({
               type="button"
               variant="ghost"
               size="icon"
-              disabled={chatOnly || uploading > 0}
+              disabled={chatOnly || directChat || uploading > 0}
               onClick={() => fileInputRef.current?.click()}
               aria-label={t('attachData')}
-              title={chatOnly ? t('chooseAgentFiles') : t('attachData')}
+              title={
+                chatOnly ? t('chooseAgentFiles') : directChat ? t('chooseWorkFiles') : t('attachData')
+              }
               className="mb-0.5 rounded-full text-muted-foreground hover:bg-background/80"
             >
               <PaperclipIcon />
@@ -286,7 +403,14 @@ export function Composer({
               ref={ref}
               rows={1}
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value
+                setValue(next)
+                if (!directChat) return
+                const mention = documentMentionAt(next, e.target.selectionStart ?? next.length)
+                setMentionQuery(mention?.query ?? null)
+                setMentionIndex(0)
+              }}
               onPaste={(e) => {
                 // Only claim the paste when it actually carries a file. A
                 // screenshot arrives as an image item with no text; copied text
@@ -311,6 +435,27 @@ export function Composer({
                 void attachDataFiles(droppedData)
               }}
               onKeyDown={(e) => {
+                if (mentionQuery !== null && mentionMatches.length) {
+                  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    const delta = e.key === 'ArrowDown' ? 1 : -1
+                    setMentionIndex((current) =>
+                      (current + delta + mentionMatches.length) % mentionMatches.length,
+                    )
+                    return
+                  }
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const selected = mentionMatches[mentionIndex] ?? mentionMatches[0]
+                    if (selected) selectDocumentMention(selected)
+                    return
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setMentionQuery(null)
+                    return
+                  }
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   submit()
@@ -334,7 +479,10 @@ export function Composer({
               size="icon"
               aria-label={queueing ? t('queueMessageAction') : t('send')}
               title={queueing ? t('queueMessageAction') : t('send')}
-              disabled={(!value.trim() && !images.length && !files.length) || uploading > 0}
+              disabled={
+                (!value.trim() && !images.length && !files.length && !mentionedDocuments.length) ||
+                uploading > 0
+              }
               className="mb-0.5 size-8 rounded-full"
             >
               <ArrowUpIcon />
@@ -348,10 +496,9 @@ export function Composer({
           </p>
         ) : null}
 
-        {/* The model sits on the left of this row and the hint on the right, so
-            the control the user changes is the one nearest the input's own
-            edge rather than trailing a sentence about images. */}
-        <div className="mt-2 flex items-center gap-3 px-3 text-[0.6875rem] text-muted-foreground">
+        {/* Message-level controls stay with the composer. Chat/Work lives in
+            the top bar because it defines the whole conversation. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 text-[0.6875rem] text-muted-foreground">
           <ModelPicker
             models={models}
             modelId={modelId}
@@ -376,6 +523,8 @@ export function Composer({
           <p className="hidden min-w-0 items-center gap-1.5 truncate sm:flex">
             {chatOnly ? (
               <span>{t('chatOnlyHint')}</span>
+            ) : directChat ? (
+              <span>{t('chatModeHint')}</span>
             ) : (
               <>
                 <PaperclipIcon className="size-3 shrink-0" />
@@ -386,6 +535,73 @@ export function Composer({
         </div>
       </form>
     </div>
+  )
+}
+
+function DocumentMentionMenu({
+  documents,
+  activeIndex,
+  onPick,
+}: {
+  documents: DocumentRow[]
+  activeIndex: number
+  onPick: (document: DocumentRow) => void
+}) {
+  const { t } = usePreferences()
+  return (
+    <div
+      className="absolute bottom-[calc(100%+0.5rem)] left-3 z-40 w-[min(26rem,calc(100%-1.5rem))] overflow-hidden rounded-2xl border bg-popover p-1.5 text-popover-foreground shadow-xl"
+      role="listbox"
+      aria-label={t('mentionDocument')}
+    >
+      <div className="flex items-center gap-2 px-2.5 py-2 text-[0.6875rem] font-medium tracking-wide text-muted-foreground uppercase">
+        <FileTextIcon className="size-3.5" />
+        {t('mentionDocument')}
+      </div>
+      {documents.map((document, index) => (
+        <button
+          key={document.id}
+          type="button"
+          role="option"
+          aria-selected={index === activeIndex}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onPick(document)}
+          className={cn(
+            'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors',
+            index === activeIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/70',
+          )}
+        >
+          <span className="grid size-8 shrink-0 place-items-center rounded-lg border bg-background">
+            <FileTextIcon className="size-4 text-muted-foreground" />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{document.title}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function DocumentChip({
+  document,
+  onRemove,
+}: {
+  document: MentionedDocument
+  onRemove: () => void
+}) {
+  const { t } = usePreferences()
+  return (
+    <span className="group flex h-10 max-w-64 items-center gap-2 rounded-xl border bg-background px-2.5">
+      <span className="text-xs font-semibold text-primary">@</span>
+      <span className="min-w-0 flex-1 truncate text-xs font-medium">{document.title}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={t('removeFile', { name: document.title })}
+        className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <XIcon className="size-3" />
+      </button>
+    </span>
   )
 }
 

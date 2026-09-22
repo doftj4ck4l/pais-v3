@@ -131,9 +131,9 @@ specific result page after search.
 
 ```
 web (React) ── POST /api/chat (SSE) ──> api (Hono)
-                                          └─ runAgent(harness, model)
-                                             └─ chatOnce(model)      → stream
-                                             └─ runTool(name, args)  → result
+                                          └─ runAgent(mode, model)
+                                             ├─ Chat: direct model + explicit sources
+                                             └─ Work: pi harness + workspace tools
 ```
 
 The API is layered: a request enters through a **route**, a **controller**
@@ -169,7 +169,18 @@ apps/api/src
   types/                      shared DTOs (chat wire types, agent events)
 ```
 
-Flow in `services/agent.service.ts`:
+The composer starts new conversations in one of two modes and locks that mode
+for the life of the conversation:
+
+- **Chat** is the low-latency path for ordinary conversation, explicit
+  `@document` references, pasted-image analysis, and requested web searches. It
+  does not acquire a sandbox or expose workspace, database, memory, NAS, shell,
+  or MCP tools. Asking to export the previous answer writes that exact answer
+  as PDF or DOCX without asking the model to recreate it.
+- **Work** is the full v3 agent. It retains the pi harness and all existing
+  workspace capabilities, including data-file and database work.
+
+Flow in `services/agent/pi.service.ts` for Work:
 
 1. Prepend the harness **system prompt** to the conversation.
 2. Ask the model (streamed, OpenAI-compatible) for text **and/or tool calls**.

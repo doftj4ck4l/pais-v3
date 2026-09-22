@@ -19,7 +19,13 @@ import type { AgentEvent, ChatRequest } from "../types/agent";
 import type { ChatMessage } from "../types/chat";
 import type { ConversationStatus } from "../models/schema";
 import { currentUserId } from "../middleware/auth";
-import { isChatOnlyModel, prepareHistoryForModel } from "../services/agent/model-runtime-policy";
+import {
+  isChatOnlyModel,
+  prepareHistoryForModel,
+  stripAttachmentNotes,
+} from "../services/agent/model-runtime-policy";
+import { describeDocumentReferences } from "../services/agent/document-references";
+import type { ConversationMode } from "../types/agent";
 
 const newRunId = () => Math.random().toString(36).slice(2, 8);
 
@@ -70,6 +76,10 @@ export function stream(c: Context) {
       }
 
       const { harness, model } = resolved;
+      if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "work") {
+        emit({ type: "error", message: 'Mode must be "chat" or "work".' });
+        return;
+      }
       const chatOnly = isChatOnlyModel(model);
       if (chatOnly && body.imageIds?.length) {
         emit({
@@ -97,6 +107,30 @@ export function stream(c: Context) {
       // workspace id rather than the user id, so this is the single place a
       // client-supplied value is checked against ownership.
       const workspace = await workspaceRegistry.resolve(userId, body.workspaceId);
+      // Continuing a conversation also continues its mode. Switching from Chat
+      // to Work (or back) would change its security and execution surface in
+      // the middle of a transcript, so the stored row wins over request JSON.
+      const existing = body.conversationId
+        ? await conversationRepository.getOwned(body.conversationId, workspace.id)
+        : undefined;
+      const mode: ConversationMode = existing
+        ? existing.harnessId === "chat"
+          ? "chat"
+          : "work"
+        : body.mode ?? "work";
+      const runtimeId = mode === "chat" ? "chat" : harness.id;
+
+      if (mode === "chat" && body.filePaths?.length) {
+        emit({
+          type: "error",
+          message: "Data-file analysis uses Work mode. Start a Work conversation to attach this file.",
+        });
+        return;
+      }
+      if (mode === "chat" && body.template) {
+        emit({ type: "error", message: "Prompt templates use Work mode." });
+        return;
+      }
       const history = prepareHistoryForModel(model, body.messages ?? []);
 
       // Attachments become part of the last user message, before the recorder
@@ -108,26 +142,26 @@ export function stream(c: Context) {
       const imageNote = body.imageIds?.length
         ? await describeAttachments(workspace.id, body.imageIds)
         : "";
+      const documentNote =
+        mode === "chat" && body.documentIds?.length
+          ? await describeDocumentReferences(workspace.id, body.documentIds)
+          : "";
       await Promise.all(
         history.map(async (message) => {
           if (message.role !== "user") return;
           const fileNote = message.filePaths?.length
             ? await describeWorkspaceUploads(workspace.id, message.filePaths)
             : "";
-          message.content = `${message.content ?? ""}${message === last ? imageNote : ""}${fileNote}`;
+          message.content =
+            `${message.content ?? ""}` +
+            `${message === last ? imageNote + documentNote : ""}` +
+            fileNote;
           delete message.filePaths;
         }),
       );
 
       const runId = newRunId();
       const timer = startTimer();
-
-      // Continuing an existing thread, or starting one? An unknown or
-      // not-owned id starts a new conversation rather than erroring — the client
-      // may simply be holding a row that was deleted in another tab.
-      const existing = body.conversationId
-        ? await conversationRepository.getOwned(body.conversationId, workspace.id)
-        : undefined;
 
       let conversationId: string;
       let recorder: TranscriptRecorder;
@@ -141,11 +175,12 @@ export function stream(c: Context) {
         await conversationRepository.setStatus(conversationId, "running");
       } else {
         recorder = new TranscriptRecorder(history);
+        const firstUserText = history.find((message) => message.role === "user")?.content ?? "";
         conversationId = await conversationRepository.create({
           workspaceId: workspace.id,
-          title: recorder.title(),
+          title: stripAttachmentNotes(firstUserText).trim().slice(0, 200) || "Untitled run",
           modelId: model.id,
-          harnessId: harness.id,
+          harnessId: runtimeId,
         });
       }
 
@@ -161,7 +196,7 @@ export function stream(c: Context) {
         id: runId,
         conversationId,
         workspaceId: workspace.id,
-        harnessId: harness.id,
+        harnessId: runtimeId,
         modelId: model.id,
         prompt: newTurnOf(history)[0]?.content ?? "",
       });
@@ -172,7 +207,8 @@ export function stream(c: Context) {
       logger.info("run.start", {
         run: runId,
         conversation: conversationId,
-        harness: harness.id,
+        harness: runtimeId,
+        mode,
         model: model.id,
       });
 
@@ -184,7 +220,7 @@ export function stream(c: Context) {
       record({
         type: "trace",
         step: "run.start",
-        fields: { harness: harness.id, model: model.id },
+        fields: { harness: runtimeId, model: model.id, mode },
       });
 
       const signal = runAbort.signal;
@@ -218,6 +254,8 @@ export function stream(c: Context) {
           workspaceId: workspace.id,
           conversationId,
           reasoningEffort: body.reasoningEffort,
+          mode,
+          imageIds: body.imageIds,
         });
       } catch (e) {
         // The loop reports failures as events; a throw here means it broke outright.

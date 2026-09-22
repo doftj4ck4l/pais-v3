@@ -64,11 +64,31 @@ of the result: run a file on its own before trusting that it passes.
 
 ## Where a run actually happens
 
-`services/agent/pi.service.ts` (~1030 lines). Not `agent.service.ts` beside it,
-which is a 38-line adapter turning a catalog harness into `runPiAgent` arguments
-and nothing else — and not the README's four-step loop under "Flow in
-`services/agent.service.ts`", which describes a second loop that used to live
-there.
+There are now two product modes, selected when a conversation is created and
+locked for that conversation:
+
+- **Chat** runs in `services/agent/direct-chat.service.ts`. It calls the model
+  directly, can preload only explicitly `@`-referenced documents, can analyse
+  the current pasted images, and exposes only `web_search`. It never acquires a
+  sandbox or exposes database, memory, NAS, shell, document search, or MCP
+  tools. A request to export the preceding answer is handled deterministically
+  by `chat-export.service.ts`, so the PDF/DOCX contains the answer already shown
+  rather than a model rewrite.
+- **Work** runs in `services/agent/pi.service.ts` (~1030 lines) and retains the
+  complete v3 harness described below.
+
+`services/agent/agent.service.ts` is the small mode router. It must not grow a
+third agent loop. Conversation mode is persisted in the existing text
+`harness_id` column (`chat` for Chat; the catalog harness id for Work), so this
+feature requires no SQLite migration. Clients may request a mode only for a new
+conversation; the stored value wins on every follow-up.
+
+Chat document references are stored as hidden, workspace-scoped id notes in
+the user turn. Both the API and web transcript strip those notes before display,
+while the direct service reopens each document through `documentStore.read`
+against the already-resolved workspace. Keep the note wording and both parsers
+in sync. Data-file analysis and all database access intentionally remain
+Work-only.
 
 `services/` is one directory per domain. Two of those names are close enough to
 mislead: **`context/` is token accounting** — how big the window is and when to

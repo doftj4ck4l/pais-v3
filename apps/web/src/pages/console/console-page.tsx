@@ -75,7 +75,7 @@ export function Console() {
    */
   const send = (text: string, attachments: ChatAttachments) => {
     if (selected) board.sendFollowUp(selected.id, text, attachments)
-    else board.spawn(text, board.modelIdForNew, attachments)
+    else board.spawn(text, board.modelIdForNew, attachments, board.modeForNew)
   }
 
   return (
@@ -88,15 +88,15 @@ export function Console() {
       */}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
-          {selected ? (
-            <AgentHeader
-              agent={selected}
-              model={selectedModel}
-              onStop={() => board.stop(selected.id)}
-              artifactCount={artifactCount}
-              onToggleArtifacts={toggleArtifacts}
-            />
-          ) : null}
+          <AgentHeader
+            agent={selected}
+            model={selectedModel}
+            mode={selected?.mode ?? board.modeForNew}
+            onModeChange={board.setModeForNew}
+            onStop={selected ? () => board.stop(selected.id) : undefined}
+            artifactCount={artifactCount}
+            onToggleArtifacts={toggleArtifacts}
+          />
 
           {/*
             Three rows, and the animation is the middle one moving between them:
@@ -161,6 +161,8 @@ export function Console() {
               models={board.meta?.models ?? []}
               modelId={board.modelIdForNew}
               onModelChange={board.setModelIdForNew}
+              mode={board.modeForNew}
+              lockedMode={selected?.mode ?? null}
               lockedModelId={selected?.modelId ?? null}
               effort={board.effort}
               onEffortChange={board.setEffort}
@@ -170,7 +172,9 @@ export function Console() {
             <div className="min-h-0 overflow-hidden">
               {waiting ? (
                 <Suggestions
-                  onPick={(text) => board.spawn(text, board.modelIdForNew)}
+                  onPick={(text) =>
+                    board.spawn(text, board.modelIdForNew, undefined, board.modeForNew)
+                  }
                 />
               ) : null}
             </div>
