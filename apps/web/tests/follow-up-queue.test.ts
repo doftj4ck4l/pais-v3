@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   appendQueuedFollowUp,
+  newQueuedFollowUpId,
   shiftQueuedFollowUp,
   shouldQueueFollowUp,
   type QueuedFollowUp,
@@ -13,6 +14,16 @@ const followUp = (id: string): QueuedFollowUp => ({
 })
 
 describe('follow-up queue', () => {
+  it('creates an id when randomUUID is unavailable on a private HTTP origin', () => {
+    expect(newQueuedFollowUpId(null, () => 1_700_000_000_000, () => 0.25)).toBe(
+      'follow-up-loyw3v28-9',
+    )
+  })
+
+  it('uses randomUUID when the browser provides it', () => {
+    expect(newQueuedFollowUpId(() => 'uuid-from-browser')).toBe('uuid-from-browser')
+  })
+
   it('queues only while the selected conversation still has a live run', () => {
     expect(shouldQueueFollowUp(true, true)).toBe(true)
     expect(shouldQueueFollowUp(true, false)).toBe(false)
