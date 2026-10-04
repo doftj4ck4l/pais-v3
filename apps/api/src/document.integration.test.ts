@@ -92,4 +92,34 @@ describe("the transcript download", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("serves the same transcript as pdf and docx", async () => {
+    const pdf = await createApp().request(
+      `/api/documents/transcriptions/trx_demo/transcript?format=pdf&workspaceId=${workspaceId}`,
+      asUser("transcript-owner"),
+    );
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toContain("application/pdf");
+    expect(pdf.headers.get("content-disposition")).toContain("meeting.pdf");
+    const pdfBytes = new Uint8Array(await pdf.arrayBuffer());
+    expect(new TextDecoder().decode(pdfBytes.slice(0, 4))).toBe("%PDF");
+
+    const docx = await createApp().request(
+      `/api/documents/transcriptions/trx_demo/transcript?format=docx&workspaceId=${workspaceId}`,
+      asUser("transcript-owner"),
+    );
+    expect(docx.status).toBe(200);
+    expect(docx.headers.get("content-type")).toContain("wordprocessingml");
+    expect(docx.headers.get("content-disposition")).toContain("meeting.docx");
+    const docxBytes = new Uint8Array(await docx.arrayBuffer());
+    expect(new TextDecoder().decode(docxBytes.slice(0, 2))).toBe("PK");
+  });
+
+  it("rejects an unsupported transcript format", async () => {
+    const res = await createApp().request(
+      `/api/documents/transcriptions/trx_demo/transcript?format=csv&workspaceId=${workspaceId}`,
+      asUser("transcript-owner"),
+    );
+    expect(res.status).toBe(400);
+  });
 });

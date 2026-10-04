@@ -13,7 +13,7 @@ import { workspaceFileUrl } from "../media/workspace-url";
 
 export type ChatExportFormat = "pdf" | "docx";
 
-type Block = {
+export type Block = {
   text: string;
   kind: "body" | "heading" | "bullet" | "code";
   level?: number;
@@ -65,26 +65,28 @@ export async function exportChatAnswer(input: {
 }
 
 async function renderDocx(markdown: string): Promise<Uint8Array> {
-  const blocks = markdownBlocks(markdown);
-  const children = blocks.map((block) => {
-    const text = new TextRun({
-      text: block.kind === "bullet" ? `• ${block.text}` : block.text || " ",
-      font: "Noto Sans",
-      bold: block.kind === "heading",
-      size: block.kind === "heading" ? Math.max(24, 36 - (block.level ?? 1) * 2) : 22,
-    });
-    return new Paragraph({
-      children: [text],
-      heading:
-        block.kind === "heading"
-          ? ([HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3][
-              Math.min(2, Math.max(0, (block.level ?? 1) - 1))
-            ] ?? HeadingLevel.HEADING_3)
-          : undefined,
-      spacing: { after: block.kind === "heading" ? 180 : 100, line: 300 },
-      style: block.kind === "code" ? "PixelspaceCode" : undefined,
-    });
-  });
+  return renderBrandedDocx({ blocks: markdownBlocks(markdown) });
+}
+
+/**
+ * Render a branded DOCX from blocks: an optional title, then the blocks.
+ *
+ * Chat export and transcript export both go through here, so the two cannot
+ * drift apart.
+ */
+export async function renderBrandedDocx(input: {
+  blocks: Block[];
+  title?: string;
+}): Promise<Uint8Array> {
+  const children = input.blocks.map(paragraphFor);
+  if (input.title) {
+    children.unshift(
+      new Paragraph({
+        children: [new TextRun({ text: input.title, bold: true, size: 32, font: "Helvetica" })],
+        spacing: { after: 240 },
+      }),
+    );
+  }
   const document = new Document({
     styles: {
       paragraphStyles: [
@@ -103,6 +105,26 @@ async function renderDocx(markdown: string): Promise<Uint8Array> {
   return new Uint8Array(await Packer.toBuffer(document));
 }
 
+function paragraphFor(block: Block): Paragraph {
+  const text = new TextRun({
+    text: block.kind === "bullet" ? `• ${block.text}` : block.text || " ",
+    font: "Helvetica",
+    bold: block.kind === "heading",
+    size: block.kind === "heading" ? Math.max(24, 36 - (block.level ?? 1) * 2) : 22,
+  });
+  return new Paragraph({
+    children: [text],
+    heading:
+      block.kind === "heading"
+        ? ([HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3][
+            Math.min(2, Math.max(0, (block.level ?? 1) - 1))
+          ] ?? HeadingLevel.HEADING_3)
+        : undefined,
+    spacing: { after: block.kind === "heading" ? 180 : 100, line: 300 },
+    style: block.kind === "code" ? "PixelspaceCode" : undefined,
+  });
+}
+
 // A4, with a logo band at the top of every page and a page-number footer.
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
@@ -119,9 +141,31 @@ const RULE_COLOR = rgb(0.85, 0.86, 0.88);
 const CODE_BACKGROUND = rgb(0.95, 0.96, 0.97);
 
 type PdfFonts = { regular: PDFFont; bold: PDFFont; mono: PDFFont };
-type PdfState = { pdf: PDFDocument; page: PDFPage; y: number; logo: PDFImage; fonts: PdfFonts };
+type PdfState = {
+  pdf: PDFDocument;
+  page: PDFPage;
+  y: number;
+  logo: PDFImage;
+  fonts: PdfFonts;
+  title?: string;
+};
 
 async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array> {
+  return renderBrandedPdf({ blocks: markdownBlocks(markdown), createdAt });
+}
+
+/**
+ * Render a branded PDF: the Pixelspace logo on every page, an optional title
+ * under it on the first page, then the blocks as the body.
+ *
+ * Chat export and transcript export both go through here, so the two cannot
+ * drift apart.
+ */
+export async function renderBrandedPdf(input: {
+  blocks: Block[];
+  title?: string;
+  createdAt?: Date;
+}): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   // Helvetica/Helvetica-Bold are the standard-14 metrics Arial was designed to
   // match, so they read as Arial without shipping a proprietary font. They are
@@ -135,9 +179,9 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
   assertPdfFontCoverage(regular);
   assertPdfFontCoverage(bold);
   const logo = await pdf.embedPng(await Bun.file(logoPath()).arrayBuffer());
-  pdf.setTitle("Pixelspace Chat export");
+  pdf.setTitle(input.title ? `Pixelspace — ${input.title}` : "Pixelspace Chat export");
   pdf.setCreator("Pixelspace");
-  pdf.setCreationDate(createdAt);
+  pdf.setCreationDate(input.createdAt ?? new Date());
 
   const state: PdfState = {
     pdf,
@@ -145,10 +189,11 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
     y: 0,
     logo,
     fonts: { regular, bold, mono },
+    title: input.title,
   };
-  state.y = drawHeader(state);
+  state.y = drawHeader(state, true);
 
-  for (const block of markdownBlocks(markdown)) {
+  for (const block of input.blocks) {
     if (block.kind === "heading") drawHeading(state, block);
     else if (block.kind === "bullet") drawBullet(state, block);
     else if (block.kind === "code") drawCode(state, block);
@@ -159,8 +204,13 @@ async function renderPdf(markdown: string, createdAt: Date): Promise<Uint8Array>
   return pdf.save();
 }
 
-/** Draws the logo band and returns the y where the first content line sits. */
-function drawHeader(state: PdfState): number {
+/**
+ * Draws the logo band and returns the y where the first content line sits.
+ *
+ * `withTitle` is only true for the first page, so a title is not repeated on
+ * every page while the logo is.
+ */
+function drawHeader(state: PdfState, withTitle: boolean): number {
   const logoHeight = (state.logo.height / state.logo.width) * LOGO_WIDTH;
   state.page.drawImage(state.logo, {
     x: MARGIN_X,
@@ -175,7 +225,23 @@ function drawHeader(state: PdfState): number {
     thickness: 0.75,
     color: RULE_COLOR,
   });
-  return ruleY - 24;
+  let y = ruleY - 24;
+  if (withTitle && state.title) {
+    const size = 14;
+    const lines = wrapText(pdfSafeText(state.title, state.fonts.bold), state.fonts.bold, size, CONTENT_WIDTH);
+    for (const line of lines) {
+      state.page.drawText(line, {
+        x: MARGIN_X,
+        y,
+        size,
+        font: state.fonts.bold,
+        color: TEXT_COLOR,
+      });
+      y -= size * 1.4;
+    }
+    y -= 8;
+  }
+  return y;
 }
 
 function drawHeading(state: PdfState, block: Block): void {
@@ -348,7 +414,7 @@ function pdfSafeText(text: string, font: Pick<PDFFont, "getCharacterSet">): stri
 function ensurePdfSpace(state: PdfState, needed: number): void {
   if (state.y - needed >= MARGIN_BOTTOM) return;
   state.page = state.pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  state.y = drawHeader(state);
+  state.y = drawHeader(state, false);
 }
 
 function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
