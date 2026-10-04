@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  DEPLOY_HOST: 10.92.130.248
+  DEPLOY_HOST: 10.0.152.105
   DEPLOY_USER: salur
   DEPLOY_PATH: /opt/salur
 
@@ -147,7 +147,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     env:
-      DEPLOY_HOST: 10.36.45.191
+      DEPLOY_HOST: 10.0.151.9
       DEPLOY_USER: node1
       DEPLOY_PATH: /home/node1/Developer/pixelspacev3
       DEPLOY_PORT: "18080"
