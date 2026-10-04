@@ -63,9 +63,13 @@ jobs:
           bun run --cwd apps/web test
           bun run --cwd apps/web build
 
+  # The staging/salur host is not the current priority, so a failure there must
+  # not fail the whole run or obscure the node1 job's result. It is kept running
+  # and its failure stays visible on the job, but no longer reds the workflow.
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
