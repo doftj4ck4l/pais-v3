@@ -36,7 +36,14 @@ import {
   transcriptionAudioUrl,
   transcriptDownloadUrl,
   updateTranscription,
+  type TranscriptDownloadFormat,
 } from '@/shared/api/api'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu'
 import {
   groupTranscriptionsByDate,
   hasActiveJobs,
@@ -304,7 +311,7 @@ export function TranscriptionsPanel() {
             detail={detail}
             loading={detailLoading}
             copied={copied}
-            downloadUrl={selected ? transcriptDownloadUrl(scope, selected.id) : null}
+            downloadUrl={selected ? (format) => transcriptDownloadUrl(scope, selected.id, format) : null}
             audioUrl={selected?.hasAudio ? transcriptionAudioUrl(scope, selected.id) : null}
             onCopy={() => {
               if (!detail?.content) return
@@ -575,7 +582,7 @@ function TranscriptPreview({
   detail: TranscriptionDetail | null
   loading: boolean
   copied: boolean
-  downloadUrl: string | null
+  downloadUrl: ((format: TranscriptDownloadFormat) => string) | null
   audioUrl: string | null
   onCopy: () => void
   onEdit: () => void
@@ -613,11 +620,22 @@ function TranscriptPreview({
             <Button variant="ghost" size="icon-sm" onClick={onCopy} aria-label={t('copyTranscript')}>
               {copied ? <CheckIcon /> : <CopyIcon />}
             </Button>
-            <Button variant="ghost" size="icon-sm" aria-label={t('downloadTranscript')} asChild>
-              <a href={downloadUrl ?? undefined} download>
-                <DownloadIcon />
-              </a>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={t('downloadTranscript')}>
+                  <DownloadIcon />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {(['pdf', 'docx', 'txt'] as const).map((format) => (
+                  <DropdownMenuItem key={format} asChild>
+                    <a href={downloadUrl?.(format)} download>
+                      {format.toUpperCase()}
+                    </a>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ) : null}
       </header>

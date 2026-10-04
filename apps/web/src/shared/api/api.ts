@@ -517,9 +517,15 @@ export async function deleteTranscription(scope: Scope, id: string): Promise<voi
   })
 }
 
-/** The `.txt` download for a finished transcription, as a same-origin URL. */
-export function transcriptDownloadUrl(scope: Scope, id: string): string {
-  return `/api/documents/transcriptions/${encodeURIComponent(id)}/transcript?${scoped(scope)}`
+export type TranscriptDownloadFormat = 'pdf' | 'docx' | 'txt'
+
+/** A finished transcription's download, as a same-origin URL. */
+export function transcriptDownloadUrl(
+  scope: Scope,
+  id: string,
+  format: TranscriptDownloadFormat = 'txt',
+): string {
+  return `/api/documents/transcriptions/${encodeURIComponent(id)}/transcript?format=${format}&${scoped(scope)}`
 }
 
 /** Fetch the finished transcript's text to show it in a dialog. */

@@ -22,6 +22,7 @@ import {
   parseFormattedTranscript,
   type TranscriptionSegment,
 } from "../services/documents/transcribe.service";
+import { renderTranscriptExport } from "../services/documents/transcript-export.service";
 import type { TranscriptionRow } from "../models/schema";
 import { env } from "../config/env";
 
@@ -434,11 +435,14 @@ export function parseByteRange(value: string, size: number): { start: number; en
 
 /**
  * GET /api/documents/transcriptions/:id/transcript — the finished transcript
- * as a downloadable `.txt` file.
+ * as a downloadable `txt`, `pdf` or `docx` file.
  *
  * The text is the exact `[MM:SS] line` output the job was marked done with;
  * the corpus chunks say the same words but the chunker decided their
  * boundaries. Only a finished job has one, and only within its own workspace.
+ *
+ * `pdf` and `docx` re-render that same text with the Pixelspace logo and the
+ * title; `txt` stays byte-identical to what older clients downloaded.
  */
 export async function transcript(c: Context) {
   const id = c.req.param("id");
@@ -449,10 +453,32 @@ export async function transcript(c: Context) {
     return c.json({ error: "Transcript not found" }, 404);
   }
 
-  const filename = `${job.title.replace(/\.[^.]+$/, "")}.txt`;
-  return c.body(job.transcriptText, 200, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Content-Disposition": `attachment; filename="${filename.slice(0, 60)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  const title = job.title.replace(/\.[^.]+$/, "");
+  const format = (c.req.query("format") ?? "txt").toLowerCase();
+  if (format !== "txt" && format !== "pdf" && format !== "docx") {
+    return c.json({ error: "Unsupported transcript format" }, 400);
+  }
+
+  const filename = `${title.slice(0, 60)}.${format}`;
+  const headers = {
+    "Cache-Control": "private, no-store",
+    "Content-Disposition": `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(`${title}.${format}`)}`,
+  };
+
+  if (format === "txt") {
+    return c.body(job.transcriptText, 200, { ...headers, "Content-Type": "text/plain; charset=utf-8" });
+  }
+
+  const bytes = await renderTranscriptExport({ title, text: job.transcriptText, format });
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      ...headers,
+      "Content-Type":
+        format === "pdf"
+          ? "application/pdf"
+          : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    },
   });
 }
 
