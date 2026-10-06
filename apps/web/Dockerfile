@@ -17,7 +17,13 @@ WORKDIR /app/apps/web
 # so a type error fails the deploy instead of shipping.
 RUN bun run build
 
-FROM caddy:2-alpine
+# Pinned, not `caddy:2-alpine`. The floating tag silently pulled v2.11.6 on a
+# rebuild (2026-10-04), whose new default 1-minute read_body_idle/write_idle
+# timeout cut every long `/api/chat` stream at 60s — runs were recorded `stopped`
+# and the browser showed "Request failed: Load failed"/"network error". This proxy
+# serves static files and the API; it does not use forward_auth, path_regexp or
+# copy_headers, so v2.11.6's security fixes do not apply here.
+FROM caddy:2.11.4-alpine
 COPY apps/web/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/apps/web/dist /srv
 EXPOSE 8080

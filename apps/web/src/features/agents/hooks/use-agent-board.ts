@@ -10,6 +10,13 @@ import {
 } from '@/shared/api/api'
 import { formatToolArgs, itemsFromRows, traceFromRows } from '@/features/agents/lib/transcript'
 import {
+  MAX_STREAM_RETRIES,
+  STREAM_RETRY_BASE_MS,
+  StreamHttpError,
+  isRetryableStreamError,
+  waitForRetry,
+} from '@/features/agents/lib/stream-retry'
+import {
   historyFrom,
   withDocumentReferenceNote,
 } from '@/features/agents/lib/attachment-notes'
@@ -499,57 +506,37 @@ export function useAgentBoard(scope: Scope) {
     history: { role: 'user' | 'assistant'; content: string; filePaths?: string[] }[],
     attachments: ChatAttachments = { images: [], dataFiles: [] },
   ) {
-    const { images, dataFiles, documents = [] } = attachments
     const controller = new AbortController()
     controllersRef.current.set(id, controller)
 
     try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversationId: seed.conversationId ?? undefined,
-          mode: seed.mode,
-          modelId: seed.modelId,
-          workspaceId: scope.workspaceId ?? undefined,
-          // Only meaningful for a thinking model; null on every other, where the
-          // server ignores it anyway.
-          reasoningEffort: effortRef.current ?? undefined,
-          messages: history,
-          // Ids only. The bytes are already in the bucket; the server turns
-          // these into a note on the user message telling the model to call
-          // read_image.
-          imageIds: images.length ? images.map((i) => i.id) : undefined,
-          documentIds: documents.length ? documents.map((document) => document.id) : undefined,
-          filePaths: dataFiles.length ? dataFiles.map((file) => file.path) : undefined,
-        }),
-        signal: controller.signal,
-      })
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() ?? ''
-
-        for (const chunk of parts) {
-          const line = chunk.split('\n').find((l) => l.startsWith('data:'))
-          if (!line) continue
-          const data = line.slice(5).trim()
-          if (!data) continue
-          let event: Record<string, any>
-          try {
-            event = JSON.parse(data)
-          } catch {
-            continue
+      for (let attempt = 0; ; attempt++) {
+        try {
+          // The first attempt sends the request the caller built. A reconnect
+          // rebuilds it from what has already streamed, so the model continues
+          // the conversation instead of starting it over.
+          const retryHistory =
+            attempt === 0 ? history : historyFrom(itemsRef.current.get(id) ?? [])
+          await streamOnce(
+            id,
+            seed,
+            retryHistory,
+            attachments,
+            controller.signal,
+            attempt > 0,
+          )
+          break
+        } catch (e) {
+          const err = e as Error
+          if (
+            err.name === 'AbortError' ||
+            !isRetryableStreamError(err) ||
+            attempt >= MAX_STREAM_RETRIES
+          ) {
+            throw e
           }
-          handleEvent(id, event)
+          patchAgent(id, { notice: 'Connection dropped — reconnecting…' })
+          await waitForRetry(STREAM_RETRY_BASE_MS * 2 ** attempt, controller.signal)
         }
       }
     } catch (e) {
@@ -570,6 +557,74 @@ export function useAgentBoard(scope: Scope) {
       // one moment worth re-listing files — cheaper and more accurate than polling.
       setRunsCompleted((n) => n + 1)
       runNextQueuedFollowUp(id)
+    }
+  }
+
+  /** One `POST /api/chat` attempt, streamed to completion or to its first error. */
+  async function streamOnce(
+    id: string,
+    seed: AgentRun,
+    history: { role: 'user' | 'assistant'; content: string; filePaths?: string[] }[],
+    attachments: ChatAttachments,
+    signal: AbortSignal,
+    resume: boolean,
+  ) {
+    const { images, dataFiles, documents = [] } = attachments
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // A reconnect must extend the same conversation the first attempt opened.
+        conversationId:
+          conversationIdsRef.current.get(id) ?? seed.conversationId ?? undefined,
+        // The aborted attempt already persisted the user turn, so the server must
+        // record the continuation alone rather than the turn again.
+        resume: resume || undefined,
+        mode: seed.mode,
+        modelId: seed.modelId,
+        workspaceId: scope.workspaceId ?? undefined,
+        // Only meaningful for a thinking model; null on every other, where the
+        // server ignores it anyway.
+        reasoningEffort: effortRef.current ?? undefined,
+        messages: history,
+        // Ids only. The bytes are already in the bucket; the server turns
+        // these into a note on the user message telling the model to call
+        // read_image.
+        imageIds: images.length ? images.map((i) => i.id) : undefined,
+        documentIds: documents.length ? documents.map((document) => document.id) : undefined,
+        filePaths: dataFiles.length ? dataFiles.map((file) => file.path) : undefined,
+      }),
+      signal,
+    })
+    if (!res.ok || !res.body) throw new StreamHttpError(res.status)
+    // The connection is back; drop the reconnect notice the retry loop set. A
+    // notice the server sends later still lands, because it arrives after this.
+    patchAgent(id, { notice: null })
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      for (const chunk of parts) {
+        const line = chunk.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        const data = line.slice(5).trim()
+        if (!data) continue
+        let event: Record<string, any>
+        try {
+          event = JSON.parse(data)
+        } catch {
+          continue
+        }
+        handleEvent(id, event)
+      }
     }
   }
 

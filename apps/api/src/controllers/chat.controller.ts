@@ -170,8 +170,13 @@ export function stream(c: Context) {
         conversationId = existing.id;
         // Only this turn's new messages are recorded; everything earlier is
         // already stored, and re-recording it would duplicate the transcript.
+        // A resume re-sends the user turn only to rebuild the model's context,
+        // so it records the continuation alone.
         const seqOffset = await conversationRepository.nextSeq(conversationId);
-        recorder = new TranscriptRecorder(newTurnOf(history), seqOffset);
+        recorder = new TranscriptRecorder(
+          body.resume ? [] : newTurnOf(history),
+          seqOffset,
+        );
         await conversationRepository.setStatus(conversationId, "running");
       } else {
         recorder = new TranscriptRecorder(history);

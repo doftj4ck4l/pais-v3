@@ -130,6 +130,12 @@ export type ChatRequest = {
   filePaths?: string[];
   /** Which workspace this run belongs to. Resolved server-side when absent. */
   workspaceId?: string;
+  /**
+   * This request reconnects a stream the client lost, not a new turn. The
+   * history still carries the user message, but the aborted attempt already
+   * persisted it, so the recorder must not append it a second time.
+   */
+  resume?: boolean;
   /** How hard a thinking model should reason — one of its declared effort levels. */
   reasoningEffort?: string;
 };
