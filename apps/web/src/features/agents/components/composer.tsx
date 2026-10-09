@@ -128,7 +128,7 @@ export function Composer({
   }, [scope.workspaceId])
 
   useEffect(() => {
-    if (!scope.workspaceId || !directChat) {
+    if (!scope.workspaceId) {
       setDocuments([])
       return
     }
@@ -141,7 +141,7 @@ export function Composer({
     return () => {
       live = false
     }
-  }, [directChat, scope])
+  }, [scope])
 
   useEffect(() => {
     if (!chatOnly || (!images.length && !files.length)) return
@@ -152,14 +152,12 @@ export function Composer({
   }, [chatOnly, files.length, images.length, t])
 
   useEffect(() => {
-    if (!directChat && mentionedDocuments.length) setMentionedDocuments([])
-    if (!directChat) setMentionQuery(null)
     if (directChat && files.length) {
       setFiles([])
       dataFileSlots.current = 0
       setError(t('chooseWorkFiles'))
     }
-  }, [directChat, files.length, mentionedDocuments.length, t])
+  }, [directChat, files.length, t])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -406,7 +404,6 @@ export function Composer({
               onChange={(e) => {
                 const next = e.target.value
                 setValue(next)
-                if (!directChat) return
                 const mention = documentMentionAt(next, e.target.selectionStart ?? next.length)
                 setMentionQuery(mention?.query ?? null)
                 setMentionIndex(0)
