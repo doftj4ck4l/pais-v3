@@ -146,6 +146,33 @@ export function useAgentBoard(scope: Scope) {
     effortRef.current = effort
   }, [effort])
 
+  // A finished run's generated title usually lands after the SSE stream has
+  // closed, so nothing pushes it live. Once per settled run, refetch the
+  // conversation listing a beat later and adopt any changed title. Only the
+  // title is taken — the server rows never override live transcript state.
+  useEffect(() => {
+    if (!runsCompleted) return
+    const timer = setTimeout(() => {
+      void listConversations(scope)
+        .then((rows) => {
+          setAgents((prev) =>
+            prev.map((agent) => {
+              const row = agent.conversationId
+                ? rows.find((r) => r.id === agent.conversationId)
+                : undefined
+              return row && row.title && row.title !== agent.task
+                ? { ...agent, task: row.title }
+                : agent
+            }),
+          )
+        })
+        .catch(() => {
+          /* API down or nothing stored — the next load picks it up anyway */
+        })
+    }, 2_000)
+    return () => clearTimeout(timer)
+  }, [runsCompleted, scope])
+
   // Keep the effort in step with the model: a thinking model defaults to its own
   // default level, a plain model clears it. Runs when the model or the catalog
   // changes, so switching to an adjustable model shows its control pre-set and
@@ -638,6 +665,13 @@ export function useAgentBoard(scope: Scope) {
       case 'conversation':
         conversationIdsRef.current.set(id, event.id)
         patchAgent(id, { conversationId: event.id })
+        return
+
+      case 'title':
+        // The server's background title job landed while the stream was open.
+        // The sidebar renders `task`, so the generated title replaces the raw
+        // first message here directly — no refetch needed.
+        patchAgent(id, { task: event.title })
         return
 
       case 'ask_user':

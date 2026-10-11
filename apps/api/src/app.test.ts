@@ -292,13 +292,31 @@ describe("POST /api/chat", () => {
       expect(stream).toContain("DIRECT_CHAT_OK");
       expect(stream).not.toContain('"step":"sandbox.acquire"');
       expect(stream).not.toContain('"step":"mcp.catalog"');
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.tools?.map((tool: any) => tool.function.name)).toEqual(["web_search"]);
-      expect(requests[0]?.messages?.[0]?.content).toContain("Pixelspace Chat");
+      // The conversation-title job races the answer with a second request of
+      // its own; it is the one whose system prompt is not the chat prompt.
+      const runRequests = requests.filter(
+        (request) => !(request?.messages?.[0]?.content as string | undefined)?.includes("title"),
+      );
+      expect(runRequests).toHaveLength(1);
+      expect(runRequests[0]?.tools?.map((tool: any) => tool.function.name)).toEqual(["web_search"]);
+      expect(runRequests[0]?.messages?.[0]?.content).toContain("Pixelspace Chat");
       expect(conversationId).toBeTruthy();
 
       const { conversationRepository } = await import("./repositories/conversation.repository");
       expect((await conversationRepository.get(conversationId!))?.harnessId).toBe("chat");
+
+      // The title job races the answer; wait for it to land on the row. The
+      // mock provider echoes the prompt back, so the title is the normalised
+      // first user message rather than a bespoke string.
+      for (let i = 0; i < 20; i++) {
+        const row = await conversationRepository.get(conversationId!);
+        if (row && row.title !== "Reply with DIRECT_CHAT_OK") break;
+        await Bun.sleep(25);
+      }
+      const titled = await conversationRepository.get(conversationId!);
+      expect(titled?.title).toBeTruthy();
+      expect(titled?.title).not.toBe("Reply with DIRECT_CHAT_OK");
+      expect(titled?.title.length).toBeLessThanOrEqual(80);
 
       const followUp = await createApp().request("/api/chat", {
         method: "POST",
@@ -325,8 +343,10 @@ describe("POST /api/chat", () => {
       });
       const followUpStream = await followUp.text();
       expect(followUpStream).not.toContain('"step":"sandbox.acquire"');
-      expect(requests).toHaveLength(2);
-      expect(requests[1]?.messages?.[0]?.content).toContain("Pixelspace Chat");
+      // The first turn's title job may still be in flight and counted here; the
+      // follow-up itself is the last request carrying the chat system prompt.
+      const followUpRequest = requests[requests.length - 1];
+      expect(followUpRequest?.messages?.[0]?.content).toContain("Pixelspace Chat");
     } finally {
       provider.stop(true);
     }
@@ -462,9 +482,13 @@ describe("POST /api/chat", () => {
       expect(stream).toContain('"tools":[]');
       expect(stream).not.toContain('"step":"sandbox.acquire"');
       expect(stream).not.toContain('"step":"mcp.catalog"');
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.tools).toBeUndefined();
-      expect(requests[0]?.messages).toEqual([
+      // The title job races this run with its own request; filter it out.
+      const runRequests = requests.filter(
+        (request) => !(request?.messages?.[0]?.content as string | undefined)?.includes("title"),
+      );
+      expect(runRequests).toHaveLength(1);
+      expect(runRequests[0]?.tools).toBeUndefined();
+      expect(runRequests[0]?.messages).toEqual([
         { role: "system", content: CHAT_ONLY_SYSTEM_PROMPT },
         { role: "user", content: "Earlier question" },
         { role: "assistant", content: "Earlier answer" },
