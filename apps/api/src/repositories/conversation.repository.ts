@@ -109,6 +109,29 @@ export const conversationRepository = {
     return rows[0];
   },
 
+  /**
+   * Replace the conversation title.
+   *
+   * Scoped to the workspace like every other write here, so a stale generator
+   * cannot reach a conversation that was moved or deleted. Returns the updated
+   * row, or undefined when nothing matched.
+   */
+  async setTitle(
+    conversationId: string,
+    workspaceId: string,
+    title: string,
+    dbImpl: typeof db = db,
+  ): Promise<ConversationRow | undefined> {
+    const rows = await dbImpl
+      .update(conversations)
+      .set({ title, updatedAt: Date.now() })
+      .where(
+        and(eq(conversations.id, conversationId), eq(conversations.workspaceId, workspaceId)),
+      )
+      .returning();
+    return rows[0];
+  },
+
   /** Mirror startup recovery on conversation rows orphaned by a dead process. */
   async stopInterrupted(at = Date.now(), dbImpl: typeof db = db): Promise<number> {
     const found = await dbImpl

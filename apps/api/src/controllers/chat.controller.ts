@@ -25,6 +25,7 @@ import {
   stripAttachmentNotes,
 } from "../services/agent/model-runtime-policy";
 import { describeDocumentReferences } from "../services/agent/document-references";
+import { generateTitle } from "../services/conversation-title.service";
 import type { ConversationMode } from "../types/agent";
 
 const newRunId = () => Math.random().toString(36).slice(2, 8);
@@ -187,6 +188,39 @@ export function stream(c: Context) {
           modelId: model.id,
           harnessId: runtimeId,
         });
+
+        // The title job starts with the run, not after it: both read the same
+        // first user message, and racing them is what keeps the title off the
+        // answer's critical path. Fired and never awaited — see the service.
+        // A title that lands before the stream closes is pushed as an event;
+        // otherwise the sidebar picks the stored title up on its next listing.
+        const firstUser = history.find((message) => message.role === "user");
+        if (firstUser) {
+          void generateTitle(
+            {
+              workspaceId: workspace.id,
+              conversationId,
+              model,
+              history,
+              signal: runAbort.signal,
+            },
+            {
+              setTitle: async (id, wsId, title) => {
+                const row = await conversationRepository.setTitle(id, wsId, title);
+                if (row) {
+                  emit({ type: "title", title: row.title });
+                  return true;
+                }
+                return false;
+              },
+            },
+          ).catch((e) => {
+            logger.warn("conversation.title_crashed", {
+              conversation: conversationId,
+              message: (e as Error)?.message,
+            });
+          });
+        }
       }
 
       // Now the stop endpoint can find this run. Registered even if the client

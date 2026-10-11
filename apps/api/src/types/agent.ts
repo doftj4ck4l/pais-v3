@@ -62,7 +62,15 @@ export type AgentEvent =
       estimated: boolean;
       /** Set when older turns were summarised to fit. */
       compacted?: { fromTokens: number; toTokens: number; turnsSummarised: number };
-    };
+    }
+  /**
+   * The generated conversation title, pushed when the background title job
+   * lands while the stream is still open. Live-only — the recorder ignores it,
+   * since the title is conversation metadata, not transcript content. If the
+   * job finishes after the stream closed, the sidebar picks the title up from
+   * its next conversation listing instead.
+   */
+  | { type: "title"; title: string };
 
 export type AgentOptions = {
   signal?: AbortSignal;
