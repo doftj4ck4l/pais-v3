@@ -5,26 +5,22 @@ import { ContextRing } from '@/features/agents/components/context-ring'
 import type { AgentRun } from '@/features/agents/hooks/use-agent-board'
 import { STATUS_KEY, statusEmphasis } from '@/features/agents/lib/status'
 import { cn } from '@/shared/lib/utils'
-import type { ConversationMode, Model } from '@/shared/lib/types'
+import type { Model } from '@/shared/lib/types'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 
 /**
- * The console's fixed top bar. Conversation identity stays left, the page-level
- * Chat/Work choice owns the centre, and run actions stay right.
+ * The console's fixed top bar. Conversation identity stays left, run actions
+ * stay right. This deployment runs Work mode only, so there is no mode choice.
  */
 export function AgentHeader({
   agent,
   model,
-  mode,
-  onModeChange,
   onStop,
   artifactCount = 0,
   onToggleArtifacts,
 }: {
   agent: AgentRun | null
   model?: Model
-  mode: ConversationMode
-  onModeChange: (mode: ConversationMode) => void
   onStop?: () => void
   /** How many files and images this chat has produced. Zero hides the control. */
   artifactCount?: number
@@ -49,12 +45,6 @@ export function AgentHeader({
         ) : null}
       </div>
 
-      <ConversationModeControl
-        mode={mode}
-        onChange={onModeChange}
-        locked={agent !== null}
-      />
-
       <div className="flex min-w-0 items-center justify-end gap-2">
         {agent ? <ContextRing context={agent.context} /> : null}
 
@@ -75,50 +65,5 @@ export function AgentHeader({
         ) : null}
       </div>
     </header>
-  )
-}
-
-function ConversationModeControl({
-  mode,
-  onChange,
-  locked,
-}: {
-  mode: ConversationMode
-  onChange: (mode: ConversationMode) => void
-  locked: boolean
-}) {
-  const { t } = usePreferences()
-  return (
-    <div
-      className="flex items-center rounded-xl bg-muted/70 p-1 ring-1 ring-border/60"
-      aria-label={t('conversationMode')}
-    >
-      {([
-        ['chat', t('chatMode'), t('chatModeDescription')],
-        ['work', t('workMode'), t('workModeDescription')],
-      ] as const).map(([value, label, description]) => {
-        const active = mode === value
-        return (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onChange(value)}
-            disabled={locked}
-            title={locked ? t('differentMode') : description}
-            aria-pressed={active}
-            className={cn(
-              'h-7 min-w-14 rounded-lg px-2 text-xs font-medium transition-[background-color,color,box-shadow] sm:min-w-16 sm:px-3',
-              'focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
-              active
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
-              locked && !active && 'opacity-45',
-            )}
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
   )
 }

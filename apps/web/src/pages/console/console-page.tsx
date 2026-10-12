@@ -75,7 +75,7 @@ export function Console() {
    */
   const send = (text: string, attachments: ChatAttachments) => {
     if (selected) board.sendFollowUp(selected.id, text, attachments)
-    else board.spawn(text, board.modelIdForNew, attachments, board.modeForNew)
+    else board.spawn(text, board.modelIdForNew, attachments)
   }
 
   return (
@@ -91,8 +91,6 @@ export function Console() {
           <AgentHeader
             agent={selected}
             model={selectedModel}
-            mode={selected?.mode ?? board.modeForNew}
-            onModeChange={board.setModeForNew}
             onStop={selected ? () => board.stop(selected.id) : undefined}
             artifactCount={artifactCount}
             onToggleArtifacts={toggleArtifacts}
@@ -161,8 +159,6 @@ export function Console() {
               models={board.meta?.models ?? []}
               modelId={board.modelIdForNew}
               onModelChange={board.setModelIdForNew}
-              mode={board.modeForNew}
-              lockedMode={selected?.mode ?? null}
               lockedModelId={selected?.modelId ?? null}
               effort={board.effort}
               onEffortChange={board.setEffort}
@@ -172,9 +168,7 @@ export function Console() {
             <div className="min-h-0 overflow-hidden">
               {waiting ? (
                 <Suggestions
-                  onPick={(text) =>
-                    board.spawn(text, board.modelIdForNew, undefined, board.modeForNew)
-                  }
+                  onPick={(text) => board.spawn(text, board.modelIdForNew)}
                 />
               ) : null}
             </div>

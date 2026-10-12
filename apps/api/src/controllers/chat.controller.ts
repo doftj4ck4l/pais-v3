@@ -77,8 +77,14 @@ export function stream(c: Context) {
       }
 
       const { harness, model } = resolved;
-      if (body.mode !== undefined && body.mode !== "chat" && body.mode !== "work") {
-        emit({ type: "error", message: 'Mode must be "chat" or "work".' });
+      // This deployment runs Work mode only. The Chat runtime stays in the
+      // codebase (its unit tests still exercise it) but no request may enter it.
+      if (body.mode === "chat") {
+        emit({ type: "error", message: "Chat mode is disabled. Use Work mode." });
+        return;
+      }
+      if (body.mode !== undefined && body.mode !== "work") {
+        emit({ type: "error", message: 'Mode must be "work".' });
         return;
       }
       const chatOnly = isChatOnlyModel(model);
@@ -108,30 +114,15 @@ export function stream(c: Context) {
       // workspace id rather than the user id, so this is the single place a
       // client-supplied value is checked against ownership.
       const workspace = await workspaceRegistry.resolve(userId, body.workspaceId);
-      // Continuing a conversation also continues its mode. Switching from Chat
-      // to Work (or back) would change its security and execution surface in
-      // the middle of a transcript, so the stored row wins over request JSON.
+      // Continuing a conversation also continues its mode. This deployment is
+      // Work-only, so every conversation — including a legacy `chat` row from
+      // before the removal — resolves to Work; the harness must not change
+      // security surfaces in the middle of a transcript.
       const existing = body.conversationId
         ? await conversationRepository.getOwned(body.conversationId, workspace.id)
         : undefined;
-      const mode: ConversationMode = existing
-        ? existing.harnessId === "chat"
-          ? "chat"
-          : "work"
-        : body.mode ?? "work";
-      const runtimeId = mode === "chat" ? "chat" : harness.id;
-
-      if (mode === "chat" && body.filePaths?.length) {
-        emit({
-          type: "error",
-          message: "Data-file analysis uses Work mode. Start a Work conversation to attach this file.",
-        });
-        return;
-      }
-      if (mode === "chat" && body.template) {
-        emit({ type: "error", message: "Prompt templates use Work mode." });
-        return;
-      }
+      const mode: ConversationMode = "work";
+      const runtimeId = harness.id;
       const history = prepareHistoryForModel(model, body.messages ?? []);
 
       // Attachments become part of the last user message, before the recorder
@@ -144,7 +135,7 @@ export function stream(c: Context) {
         ? await describeAttachments(workspace.id, body.imageIds)
         : "";
       const documentNote =
-        mode === "chat" && body.documentIds?.length
+        body.documentIds?.length
           ? await describeDocumentReferences(workspace.id, body.documentIds)
           : "";
       await Promise.all(

@@ -3,7 +3,6 @@ import type { ModelConfig } from "../../catalog/llm-models";
 import type { ChatMessage } from "../../types/chat";
 import type { AgentEvent, AgentOptions } from "../../types/agent";
 import { runPiAgent } from "./pi.service";
-import { runDirectChat } from "./direct-chat.service";
 import { systemPromptForModel } from "./model-runtime-policy";
 
 /**
@@ -36,16 +35,10 @@ export async function runAgent(
     imageIds,
   }: AgentOptions = {},
 ): Promise<number> {
+  // This deployment runs Work only. The chat branch (runDirectChat) is gone
+  // from the router, so `mode` cannot route anywhere else.
   if (mode === "chat") {
-    return runDirectChat({
-      model,
-      history,
-      emit,
-      signal,
-      workspaceId: workspaceId ?? "default",
-      imageIds,
-      reasoningEffort,
-    });
+    throw new Error("Chat mode is disabled in this deployment.");
   }
 
   return runPiAgent({

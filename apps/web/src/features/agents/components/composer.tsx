@@ -16,7 +16,6 @@ import { cn } from '@/shared/lib/utils'
 import { documentMentionAt } from '@/features/agents/lib/document-mentions'
 import type {
   ChatAttachments,
-  ConversationMode,
   DocumentRow,
   MentionedDocument,
   Model,
@@ -56,8 +55,6 @@ export function Composer({
   models,
   modelId,
   onModelChange,
-  mode,
-  lockedMode = null,
   lockedModelId = null,
   effort = null,
   onEffortChange,
@@ -73,10 +70,6 @@ export function Composer({
   /** The model the next run will use — not the open one's, which never changes. */
   modelId: string
   onModelChange: (id: string) => void
-  /** Chat is direct; Work is the full agent harness. */
-  mode: ConversationMode
-  /** The open conversation's mode cannot change mid-thread. */
-  lockedMode?: ConversationMode | null
   /** The open chat's model, if one is open — it reports rather than offers. */
   lockedModelId?: string | null
   /** Chosen reasoning effort, for a thinking model; null when not applicable. */
@@ -107,8 +100,6 @@ export function Composer({
   const workspaceIdRef = useRef(scope.workspaceId)
   const activeModel = models.find((m) => m.id === (lockedModelId ?? modelId))
   const chatOnly = activeModel?.mode === 'chat-only'
-  const activeMode = lockedMode ?? mode
-  const directChat = activeMode === 'chat'
   const { t } = usePreferences()
 
   useEffect(() => {
@@ -150,14 +141,6 @@ export function Composer({
     dataFileSlots.current = 0
     setError(t('filesRemovedChatOnly'))
   }, [chatOnly, files.length, images.length, t])
-
-  useEffect(() => {
-    if (directChat && files.length) {
-      setFiles([])
-      dataFileSlots.current = 0
-      setError(t('chooseWorkFiles'))
-    }
-  }, [directChat, files.length, t])
 
   // Grow with the prompt, up to a ceiling.
   useEffect(() => {
@@ -386,12 +369,10 @@ export function Composer({
               type="button"
               variant="ghost"
               size="icon"
-              disabled={chatOnly || directChat || uploading > 0}
+              disabled={chatOnly || uploading > 0}
               onClick={() => fileInputRef.current?.click()}
               aria-label={t('attachData')}
-              title={
-                chatOnly ? t('chooseAgentFiles') : directChat ? t('chooseWorkFiles') : t('attachData')
-              }
+              title={chatOnly ? t('chooseAgentFiles') : t('attachData')}
               className="mb-0.5 rounded-full text-muted-foreground hover:bg-background/80"
             >
               <PaperclipIcon />
@@ -520,8 +501,6 @@ export function Composer({
           <p className="hidden min-w-0 items-center gap-1.5 truncate sm:flex">
             {chatOnly ? (
               <span>{t('chatOnlyHint')}</span>
-            ) : directChat ? (
-              <span>{t('chatModeHint')}</span>
             ) : (
               <>
                 <PaperclipIcon className="size-3 shrink-0" />

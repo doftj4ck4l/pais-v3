@@ -121,7 +121,7 @@ export type ContextUsage = {
 export function useAgentBoard(scope: Scope) {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [modelIdForNew, setModelIdForNew] = useState('pixel-simple-1')
-  const [modeForNew, setModeForNew] = useState<ConversationMode>('chat')
+  const [modeForNew, setModeForNew] = useState<ConversationMode>('work')
   // Chosen reasoning effort for a thinking model. Null when the selected model
   // has no adjustable effort; the server falls back to the model's default.
   const [effort, setEffort] = useState<string | null>(null)
@@ -397,7 +397,7 @@ export function useAgentBoard(scope: Scope) {
     task: string,
     modelId: string,
     attachments: ChatAttachments = { images: [], dataFiles: [] },
-    mode: ConversationMode = modeForNew,
+    mode: ConversationMode = 'work',
   ) {
     const { images, dataFiles, documents = [] } = attachments
     const id = Math.random().toString(36).slice(2, 8)
@@ -845,7 +845,8 @@ function toRestoredAgent(row: ConversationRow): AgentRun {
     id: row.id,
     conversationId: row.id,
     modelId: row.modelId,
-    mode: row.harnessId === 'chat' ? 'chat' : 'work',
+    // This deployment is Work-only; legacy chat rows display as Work too.
+    mode: 'work',
     task: row.title,
     status,
     pinned: row.pinned,

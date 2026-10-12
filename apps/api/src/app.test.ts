@@ -238,7 +238,30 @@ describe("GET /api/me", () => {
 });
 
 describe("POST /api/chat", () => {
-  it("runs product Chat directly, persists its mode, and exposes only web search", async () => {
+  it("rejects Chat mode — this deployment runs Work only", async () => {
+    const res = await createApp().request("/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-authentik-uid": "direct-chat-user",
+      },
+      body: JSON.stringify({
+        mode: "chat",
+        modelId: "pixel-simple-1",
+        modelConfig: {
+          baseUrl: "http://127.0.0.1:1/v1",
+          model: "direct-chat-test",
+          apiKey: "test-key",
+        },
+        messages: [{ role: "user", content: "Reply with DIRECT_CHAT_OK" }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Chat mode is disabled");
+  });
+
+  it("treats a legacy Chat conversation as Work on follow-up", async () => {
     const requests: Record<string, any>[] = [];
     const provider = Bun.serve({
       port: 0,
@@ -252,7 +275,7 @@ describe("POST /api/chat", () => {
           choices: [
             {
               index: 0,
-              delta: { role: "assistant", content: "DIRECT_CHAT_OK" },
+              delta: { role: "assistant", content: "WORK_OK" },
               finish_reason: null,
             },
           ],
@@ -269,84 +292,46 @@ describe("POST /api/chat", () => {
     });
 
     try {
+      // A conversation row left over from before Chat was removed still
+      // carries harness_id "chat"; the deployment must answer it in Work.
+      const { ensureSchema } = await import("./db/client");
+      await ensureSchema();
+      const { conversationRepository } = await import("./repositories/conversation.repository");
+      const { workspaceRegistry } = await import("./repositories/workspace-registry.repository");
+      const workspace = await workspaceRegistry.resolve("legacy-chat-user", undefined);
+      const conversationId = await conversationRepository.create({
+        workspaceId: workspace.id,
+        title: "Legacy chat thread",
+        modelId: "pixel-simple-1",
+        harnessId: "chat",
+      });
+
       const res = await createApp().request("/api/chat", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-authentik-uid": "direct-chat-user",
+          "x-authentik-uid": "legacy-chat-user",
         },
         body: JSON.stringify({
-          mode: "chat",
+          conversationId,
           modelId: "pixel-simple-1",
           modelConfig: {
             baseUrl: `http://127.0.0.1:${provider.port}/v1`,
             model: "direct-chat-test",
             apiKey: "test-key",
           },
-          messages: [{ role: "user", content: "Reply with DIRECT_CHAT_OK" }],
+          messages: [{ role: "user", content: "Reply with WORK_OK" }],
         }),
       });
 
       const stream = await res.text();
-      const conversationId = stream.match(/"type":"conversation","id":"([^"]+)"/)?.[1];
-      expect(stream).toContain("DIRECT_CHAT_OK");
-      expect(stream).not.toContain('"step":"sandbox.acquire"');
-      expect(stream).not.toContain('"step":"mcp.catalog"');
-      // The conversation-title job races the answer with a second request of
-      // its own; it is the one whose system prompt is not the chat prompt.
-      const runRequests = requests.filter(
-        (request) => !(request?.messages?.[0]?.content as string | undefined)?.includes("title"),
-      );
-      expect(runRequests).toHaveLength(1);
-      expect(runRequests[0]?.tools?.map((tool: any) => tool.function.name)).toEqual(["web_search"]);
-      expect(runRequests[0]?.messages?.[0]?.content).toContain("Pixelspace Chat");
-      expect(conversationId).toBeTruthy();
-
-      const { conversationRepository } = await import("./repositories/conversation.repository");
-      expect((await conversationRepository.get(conversationId!))?.harnessId).toBe("chat");
-
-      // The title job races the answer; wait for it to land on the row. The
-      // mock provider echoes the prompt back, so the title is the normalised
-      // first user message rather than a bespoke string.
-      for (let i = 0; i < 20; i++) {
-        const row = await conversationRepository.get(conversationId!);
-        if (row && row.title !== "Reply with DIRECT_CHAT_OK") break;
-        await Bun.sleep(25);
-      }
-      const titled = await conversationRepository.get(conversationId!);
-      expect(titled?.title).toBeTruthy();
-      expect(titled?.title).not.toBe("Reply with DIRECT_CHAT_OK");
-      expect(titled?.title.length).toBeLessThanOrEqual(80);
-
-      const followUp = await createApp().request("/api/chat", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-authentik-uid": "direct-chat-user",
-        },
-        body: JSON.stringify({
-          conversationId,
-          // A client cannot widen an existing Chat thread into Work.
-          mode: "work",
-          modelId: "pixel-simple-1",
-          modelConfig: {
-            baseUrl: `http://127.0.0.1:${provider.port}/v1`,
-            model: "direct-chat-test",
-            apiKey: "test-key",
-          },
-          messages: [
-            { role: "user", content: "Reply with DIRECT_CHAT_OK" },
-            { role: "assistant", content: "DIRECT_CHAT_OK" },
-            { role: "user", content: "Again" },
-          ],
-        }),
-      });
-      const followUpStream = await followUp.text();
-      expect(followUpStream).not.toContain('"step":"sandbox.acquire"');
-      // The first turn's title job may still be in flight and counted here; the
-      // follow-up itself is the last request carrying the chat system prompt.
-      const followUpRequest = requests[requests.length - 1];
-      expect(followUpRequest?.messages?.[0]?.content).toContain("Pixelspace Chat");
+      const reported = stream.match(/"type":"conversation","id":"([^"]+)"/)?.[1];
+      expect(reported).toBe(conversationId);
+      // Work acquires its sandbox; Chat never did. The CI suite has no Docker,
+      // so the run errors there — the assertion is that it took the Work path.
+      expect(stream).toContain('"step":"run.start"');
+      expect(stream).toContain('"mode":"work"');
+      void requests;
     } finally {
       provider.stop(true);
     }
@@ -484,10 +469,10 @@ describe("POST /api/chat", () => {
       expect(stream).not.toContain('"step":"mcp.catalog"');
       // The title job races this run with its own request; filter it out.
       const runRequests = requests.filter(
-        (request) => !(request?.messages?.[0]?.content as string | undefined)?.includes("title"),
+        (request) => !((request as any)?.messages?.[0]?.content as string | undefined)?.includes("title"),
       );
       expect(runRequests).toHaveLength(1);
-      expect(runRequests[0]?.tools).toBeUndefined();
+      expect((runRequests[0] as any)?.tools).toBeUndefined();
       expect(runRequests[0]?.messages).toEqual([
         { role: "system", content: CHAT_ONLY_SYSTEM_PROMPT },
         { role: "user", content: "Earlier question" },
