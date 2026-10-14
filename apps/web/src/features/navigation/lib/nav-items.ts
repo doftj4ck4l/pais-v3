@@ -3,7 +3,6 @@ import {
   DatabaseIcon,
   FileIcon,
   MessageSquareIcon,
-  PlugIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { TranslationKey } from '@/shared/lib/i18n'
@@ -43,7 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   // a wire format; what the reader is choosing is which of their own services
   // the agent can reach. The route, the tables and the code stay MCP — that is
   // the accurate name for the thing being spoken.
-  { to: '/connectors', label: 'connectors', hint: 'navConnectorsHint', icon: PlugIcon },
+  // { to: '/connectors', label: 'connectors', hint: 'navConnectorsHint', icon: PlugIcon },
   // The route stays `/files`: it is in links and bookmarks, and the label is
   // what anyone actually reads. "Assets" because the page holds pictures as
   // well as documents, and because the chat's own panel is the per-session view.
