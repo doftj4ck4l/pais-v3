@@ -30,7 +30,7 @@ export function AgentHeader({
   const { t } = usePreferences()
 
   return (
-    <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 bg-background/90 px-3 backdrop-blur-sm sm:px-5">
+    <header className="grid h-14 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background/90 px-3 backdrop-blur-sm sm:px-5">
       <div className="min-w-0">
         {agent ? (
           <>
