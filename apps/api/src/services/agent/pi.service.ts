@@ -13,8 +13,12 @@ import {
   createEditTool,
   createReadTool,
   createWriteTool,
+  estimateContextTokens,
+  generateSummaryWithUsage,
   loadPromptTemplates,
+  DEFAULT_COMPACTION_SETTINGS,
   type AgentHarnessEvent,
+  type AgentMessage,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { ExecutionEnv } from "@earendil-works/pi-agent-core";
@@ -55,6 +59,12 @@ import type { ToolCallRecord } from "../playbook/signals";
 import { describeEnvironment } from "./environment-prompt";
 import { GEN_UI_PROMPT } from "./gen-ui-prompt";
 import { usableWindow } from "../context/context-window.service";
+import {
+  applyMidRunCompaction,
+  estimateListTokens,
+  planMidRunCompaction,
+  type MidRunCache,
+} from "../context/midrun-compaction";
 import { jsonSchemaToTypebox } from "../../lib/typebox-schema";
 import { logger, startTimer } from "../../lib/logger";
 import { promoteSemanticToolFailures, toolResultText } from "./tool-result-status";
@@ -753,6 +763,119 @@ export async function runPiAgent(opts: {
   harness.on("before_provider_request", () => {
     providerStartedAt = Date.now();
     return undefined;
+  });
+
+  // --- mid-run compaction ---
+  //
+  // `fitToWindow` compacts once, before the run, and pi's own compact()
+  // requires an idle harness — so nothing intervenes while a run executes. A
+  // long run can grow from 23k to 128k tokens inside itself (measured: 44
+  // turns of large tool output) and its final turns come back with a single
+  // output token because the window is gone; the user sees a chat that died
+  // until the next message compacts it one run too late.
+  //
+  // The `context` hook is the one sanctioned mid-run lever: awaited before
+  // every provider request, free to rewrite the message list. It receives the
+  // session's own messages, which are never mutated from here — the stored
+  // transcript keeps everything, and the compacted list is rebuilt (or reused
+  // from cache) on every turn that needs it.
+  let midRunCache: MidRunCache | undefined;
+  harness.on("context", async (event: { messages: AgentMessage[] }) => {
+    try {
+      const plan = planMidRunCompaction(event.messages, model.contextWindow, midRunCache);
+      if (plan.action === "none") return undefined;
+
+      if (plan.action === "apply") {
+        if (plan.cache) midRunCache = plan.cache;
+        logger.info("context.midrun", {
+          run: runId,
+          fromTokens: plan.fromTokens,
+          toTokens: plan.toTokens,
+          pruned: plan.pruned,
+          cached: !plan.cache,
+        });
+        emit({
+          type: "context",
+          used: plan.toTokens,
+          window: usableTokens,
+          estimated: true,
+          compacted: { fromTokens: plan.fromTokens, toTokens: plan.toTokens, turnsSummarised: 0 },
+        });
+        emit({
+          type: "trace",
+          step: "context.compacted",
+          fields: {
+            fromTokens: plan.fromTokens,
+            toTokens: plan.toTokens,
+            turnsSummarised: 0,
+            pruned: plan.pruned,
+            phase: "mid-run",
+          },
+        });
+        return { messages: plan.history };
+      }
+
+      // A fresh summary costs a model call inside the run's critical path.
+      // That is the price of not dying: it replaces the provider 400 (or the
+      // empty final turns) this run would otherwise end with.
+      signal?.throwIfAborted();
+      const summariser = startTimer();
+      const generated = await generateSummaryWithUsage(
+        plan.summarise,
+        models,
+        m,
+        DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+        signal ?? undefined,
+      );
+      if (!generated.ok) throw new Error(generated.error.message ?? String(generated.error));
+      const text = generated.value.text?.trim();
+      if (!text) throw new Error("summariser returned nothing");
+
+      const history = applyMidRunCompaction(plan, text);
+      midRunCache = {
+        cutIndex: plan.cutIndex,
+        cutRef: plan.keep[0],
+        prefix: history.slice(0, history.length - plan.keep.length),
+      };
+      // A plain sum, deliberately: the kept tail still carries usage blocks
+      // from full-size requests, which `estimateContextTokens` would read as
+      // the size of the compacted request.
+      const toTokens = estimateListTokens(history);
+      logger.info("context.midrun_compacted", {
+        run: runId,
+        ms: summariser.elapsed(),
+        fromTokens: plan.tokensBefore,
+        toTokens,
+        summarised: plan.summarise.length,
+      });
+      emit({
+        type: "context",
+        used: toTokens,
+        window: usableTokens,
+        estimated: true,
+        compacted: { fromTokens: plan.tokensBefore, toTokens, turnsSummarised: plan.summarise.length },
+      });
+      emit({
+        type: "trace",
+        step: "context.compacted",
+        fields: {
+          fromTokens: plan.tokensBefore,
+          toTokens,
+          turnsSummarised: plan.summarise.length,
+          phase: "mid-run",
+        },
+      });
+      return { messages: history };
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+      logger.warn("context.midrun_compaction_failed", {
+        run: runId,
+        message: (e as Error)?.message,
+      });
+      // Best-effort, same contract as `fitToWindow`: proceed on the
+      // uncompacted list rather than aborting a run that may still fit.
+      return undefined;
+    }
   });
 
   // Provider effort is patched onto the raw payload because this custom
