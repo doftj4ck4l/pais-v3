@@ -13,7 +13,7 @@ const BRAND_EXT: Record<string, string> = {
 export function modelLogoUrl(model?: Model | null): string | null {
   if (!model?.brand) return null
   const ext = BRAND_EXT[model.brand] ?? 'png'
-  return `/logos/${model.brand}.${ext}`
+  return `${import.meta.env.BASE_URL}logos/${model.brand}.${ext}`
 }
 
 /**

@@ -2,7 +2,9 @@ import {
   BrainIcon,
   DatabaseIcon,
   FileIcon,
+  FileTextIcon,
   MessageSquareIcon,
+  PlugIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { TranslationKey } from '@/shared/lib/i18n'
@@ -28,21 +30,17 @@ export type NavItem = {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'chat', hint: 'navChatHint', icon: MessageSquareIcon },
-  // Agents, Docs and Transcribe Audio are deliberately absent on this
-  // deployment, not deleted — same pattern as Sources below. Delete these
-  // three lines to bring them back.
+  // Agents and Transcribe Audio are deliberately absent on this deployment,
+  // not deleted — delete these two lines to bring them back.
   // { to: '/agents', label: 'agents', hint: 'navAgentsHint', icon: BotIcon },
-  // { to: '/docs', label: 'docs', hint: 'navDocsHint', icon: FileTextIcon },
+  { to: '/docs', label: 'docs', hint: 'navDocsHint', icon: FileTextIcon },
   // { to: '/transcriptions', label: 'transcribeAudio', hint: 'navTranscriptionsHint', icon: MicIcon },
-  // Sources is deliberately absent, not deleted: connectors are unfinished, and
-  // a destination that half works is worse than one that is not offered yet.
-  // The route and its panel are still here — put the entry back to restore it.
   { to: '/data', label: 'data', hint: 'navDataHint', icon: DatabaseIcon },
   // Labelled for what it does, not for the protocol that does it. "MCP" names
   // a wire format; what the reader is choosing is which of their own services
   // the agent can reach. The route, the tables and the code stay MCP — that is
   // the accurate name for the thing being spoken.
-  // { to: '/connectors', label: 'connectors', hint: 'navConnectorsHint', icon: PlugIcon },
+  { to: '/connectors', label: 'connectors', hint: 'navConnectorsHint', icon: PlugIcon },
   // The route stays `/files`: it is in links and bookmarks, and the label is
   // what anyone actually reads. "Assets" because the page holds pictures as
   // well as documents, and because the chat's own panel is the per-session view.

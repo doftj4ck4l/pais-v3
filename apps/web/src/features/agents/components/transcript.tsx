@@ -14,6 +14,7 @@ import {
   withoutAttachmentNote,
 } from '@/features/agents/lib/attachment-notes'
 import { cn } from '@/shared/lib/utils'
+import { withAppBase } from '@/shared/lib/app-base'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 import type { Item } from '@/shared/lib/types'
 import type { TranscriptDisplayItem } from '@/features/agents/lib/transcript'
@@ -204,8 +205,11 @@ function TranscriptRow({ item, streaming }: { item: TranscriptDisplayItem; strea
     // A stored turn has no `images` — it comes back as the note the server
     // appended, so the URLs are recovered from the text. A live turn has both,
     // and the ids match, so this stays one code path rather than two.
-    const attached = item.images?.length ? item.images : attachedImageUrls(item.text)
-    const attachedFiles = item.files?.length ? item.files : attachedWorkspaceFiles(item.text)
+    const attached = (item.images?.length ? item.images : attachedImageUrls(item.text)).map(withAppBase)
+    const attachedFiles = (item.files?.length ? item.files : attachedWorkspaceFiles(item.text)).map((file) => ({
+      ...file,
+      url: withAppBase(file.url),
+    }))
     return (
       // Flushed right, and the only thing in the transcript that is. The agent's
       // side of the conversation is prose — answers, code, lists, images — and

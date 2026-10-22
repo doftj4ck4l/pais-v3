@@ -77,7 +77,7 @@ export function AdminShell() {
 function AdminBrand({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={cn('flex h-13 items-center', collapsed ? 'justify-center px-2' : 'gap-3 px-4')}>
-      <BrandMark className="h-5 shrink-0" />
+      <BrandMark className="h-6 shrink-0" />
       {!collapsed ? (
         <div className="min-w-0">
           <p className="truncate text-base font-semibold">Admin panel</p>

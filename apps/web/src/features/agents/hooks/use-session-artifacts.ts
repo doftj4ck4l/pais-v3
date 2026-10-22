@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { listImages, listWorkspaceFiles } from '@/shared/api/api'
+import { withAppBase } from '@/shared/lib/app-base'
 import { sessionArtifacts, transcriptKey } from '@/features/agents/lib/artifacts'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { AgentRun } from '@/features/agents/hooks/use-agent-board'
@@ -69,7 +70,7 @@ export function useSessionArtifacts(agent: AgentRun | null): SessionArtifactStat
         // The transcript's own paths still list, without their sizes.
       })
     void listImages(scope, conversationId)
-      .then((images) => live && setStored(images.map((i) => `/api/images/${i.id}`).reverse()))
+      .then((images) => live && setStored(images.map((i) => withAppBase(`/api/images/${i.id}`)).reverse()))
       .catch(() => {
         // Same: whatever the transcript named is already on screen.
       })

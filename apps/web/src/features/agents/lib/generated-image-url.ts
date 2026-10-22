@@ -1,6 +1,10 @@
+import { withAppBase } from '@/shared/lib/app-base'
+
 const MALFORMED_GENERATED_IMAGE_URL =
   /https?:\/\/api\.images\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?=$|[\s)"'<>?#])/gi
 
 export function normalizeGeneratedImageUrls(text: string): string {
-  return text.replace(MALFORMED_GENERATED_IMAGE_URL, '/api/images/$1')
+  return text
+    .replace(MALFORMED_GENERATED_IMAGE_URL, (_, id: string) => withAppBase(`/api/images/${id}`))
+    .replace(/(?<!\/dana)(\/api\/(?:images|workspace\/files)\/)/g, (_, path: string) => withAppBase(path))
 }

@@ -34,7 +34,7 @@ export type Connector = {
   /** One line, shown in the picker. */
   summary: string
   /** Resolved to a component by the panel — the catalog stays free of JSX. */
-  icon: 'cloud' | 'mail' | 'kanban'
+  icon: 'cloud' | 'mail' | 'kanban' | 'search'
   /**
    * The service's own colour, as an `R G B` triple for Tailwind's slash syntax.
    *
@@ -44,8 +44,17 @@ export type Connector = {
    * everything else on the card stays in the console's own greys.
    */
   tint: string
-  command: string
-  args: string[]
+  /** Defaults to stdio; HTTP connectors carry a URL and headers instead. */
+  transport?: 'stdio' | 'http'
+  /** For HTTP connectors: the endpoint default, the field that supplies it,
+   * and the field that supplies the Authorization header. */
+  url?: string
+  urlField?: string
+  authField?: string
+  /** Substring used to recognise a stored HTTP server as this connector. */
+  urlMatch?: string
+  command?: string
+  args?: string[]
   /**
    * The argument that identifies this server once it is stored.
    *
@@ -54,7 +63,7 @@ export type Connector = {
    * is what `matchConnector` recognises, so it must be the published package,
    * not a flag.
    */
-  packageName: string
+  packageName?: string
   fields: ConnectorField[]
   /** Shown above the fields once chosen. Setup that the form cannot do itself. */
   note?: string
@@ -198,6 +207,81 @@ export const CONNECTORS: Connector[] = [
       },
     ],
   },
+  {
+    id: 'lens',
+    name: 'Lens.org',
+    summary: 'Scholarly works and patents from Lens.org',
+    icon: 'search',
+    tint: '30 120 170',
+    command: 'bun',
+    args: ['/app/apps/api/mcp/lens-server.ts'],
+    packageName: '/app/apps/api/mcp/lens-server.ts',
+    note: 'Lens data requires attribution and a visible Lens logo wherever it is shown. Get a token from your Lens profile → API access.',
+    fields: [
+      {
+        key: 'LENS_API_KEY',
+        label: 'API token',
+        type: 'password',
+        help: 'Sent as Authorization: Bearer. Stored encrypted with CONNECTION_SECRET.',
+      },
+    ],
+  },
+  {
+    id: 'arkib',
+    name: 'Arkib Documents',
+    summary: 'Search and read the MOSTI document archive (OCR + semantic search)',
+    icon: 'search',
+    tint: '110 80 180',
+    command: 'bun',
+    args: ['/app/apps/api/mcp/arkib-server.ts'],
+    packageName: '/app/apps/api/mcp/arkib-server.ts',
+    note: 'Read-only. Uses the Arkib app’s existing OCR and semantic index; the account must be able to sign in to Arkib.',
+    fields: [
+      {
+        key: 'ARKIB_URL',
+        label: 'Arkib URL',
+        type: 'url',
+        default: 'http://10.21.48.62:8887',
+        required: false,
+        help: 'Must be reachable from the API container.',
+      },
+      { key: 'ARKIB_USERNAME', label: 'Username', default: 'admin' },
+      {
+        key: 'ARKIB_PASSWORD',
+        label: 'Password',
+        type: 'password',
+        help: 'Stored encrypted with CONNECTION_SECRET.',
+      },
+    ],
+  },
+  {
+    id: 'drupal',
+    name: 'Drupal MCP',
+    summary: 'Content and Drupal tools from an MCP-enabled Drupal site',
+    icon: 'search',
+    tint: '0 105 180',
+    transport: 'http',
+    url: 'https://repositori.mosti.gov.my/mcp/post',
+    urlField: 'DRUPAL_MCP_URL',
+    authField: 'DRUPAL_MCP_AUTH',
+    urlMatch: '/mcp/post',
+    note: 'Requires the Drupal mcp module (^1.0), token auth enabled at /admin/config/mcp, and the "Use MCP server" permission. The endpoint is /mcp/post.',
+    fields: [
+      {
+        key: 'DRUPAL_MCP_URL',
+        label: 'MCP endpoint',
+        type: 'url',
+        default: 'https://repositori.mosti.gov.my/mcp/post',
+        help: 'Must end in /mcp/post and be reachable from the API container.',
+      },
+      {
+        key: 'DRUPAL_MCP_AUTH',
+        label: 'Authorization header',
+        type: 'password',
+        help: 'Basic base64(token) or Basic base64(username:password). Stored encrypted.',
+      },
+    ],
+  },
 ]
 
 /**
@@ -215,11 +299,20 @@ export function matchConnector(server: {
   transport: 'http' | 'stdio'
   args?: string[]
   envKeys?: string[]
+  url?: string | null
+  headerKeys?: string[]
 }): Connector | null {
-  if (server.transport !== 'stdio') return null
+  if (server.transport === 'http') {
+    const url = server.url ?? ''
+    return CONNECTORS.find(
+      (c) => c.transport === 'http' && c.urlMatch && url.includes(c.urlMatch),
+    ) ?? null
+  }
 
   const args = server.args ?? []
-  const byPackage = CONNECTORS.find((c) => args.some((a) => a === c.packageName))
+  const byPackage = CONNECTORS.find(
+    (c) => c.packageName && args.some((a) => a === c.packageName),
+  )
   if (byPackage) return byPackage
 
   const keys = server.envKeys ?? []

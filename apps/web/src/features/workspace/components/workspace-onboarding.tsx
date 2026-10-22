@@ -45,7 +45,7 @@ export function WorkspaceOnboarding({
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-sm">
-        <Brand className="mb-5 h-7" />
+        <Brand className="mb-5 h-16" />
 
         <h1 className="text-lg font-semibold tracking-[-0.01em]">
           {greeting ? t('welcomeName', { name: greeting }) : t('welcomePixelspace')}

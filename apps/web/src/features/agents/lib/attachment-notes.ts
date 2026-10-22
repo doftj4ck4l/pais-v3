@@ -1,4 +1,5 @@
 import { decodePath } from '@/features/agents/lib/artifacts'
+import { withAppBase } from '@/shared/lib/app-base'
 import type { Item } from '@/shared/lib/types'
 
 const IMAGE_ATTACHMENT_NOTE =
@@ -12,7 +13,7 @@ const WORKSPACE_FILE_URL = /\/api\/workspace\/files\/[^\s)]+/g
 
 export function attachedImageUrls(text: string): string[] {
   const notes = text.match(IMAGE_ATTACHMENT_NOTE)?.join('\n')
-  return notes ? [...new Set(notes.match(IMAGE_URL) ?? [])] : []
+  return notes ? [...new Set((notes.match(IMAGE_URL) ?? []).map(withAppBase))] : []
 }
 
 export function attachedWorkspaceFiles(
@@ -24,7 +25,7 @@ export function attachedWorkspaceFiles(
     const encoded = url.split('/api/workspace/files/')[1]?.split('?')[0]
     if (!encoded) return []
     const path = decodePath(encoded)
-    return path ? [{ path, url, name: path.split('/').pop() ?? path }] : []
+    return path ? [{ path, url: withAppBase(url), name: path.split('/').pop() ?? path }] : []
   })
 }
 

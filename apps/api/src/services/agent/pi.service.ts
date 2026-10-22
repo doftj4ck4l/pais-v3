@@ -1011,6 +1011,7 @@ export async function runPiAgent(opts: {
                 completionTokens: Number(turnUsage?.output ?? 0),
                 reasoningTokens: Number(turnUsage?.reasoning ?? 0),
                 stopReason: String((event.message as any)?.stopReason ?? ""),
+                errorMessage: String((event.message as any)?.errorMessage ?? ""),
                 answer: preview(assistantTextOf(event.message), ANSWER_PREVIEW_CHARS),
               },
             });

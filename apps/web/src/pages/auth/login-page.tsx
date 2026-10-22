@@ -58,14 +58,9 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (profile: UserProfile) =
 
       <section className="flex min-w-0 min-h-[34rem] items-center justify-center px-6 py-14 sm:px-10 lg:px-[clamp(3rem,6vw,7rem)]">
         <div className="w-full max-w-md">
-          {/* The brand panel is desktop-only, so the wordmark rides the form on
-              small screens. It keeps its dark ground here too, where it reads. */}
-          <div
-            className="mb-10 inline-flex rounded-lg px-3 py-2 lg:hidden"
-            style={{ background: '#05080b' }}
-          >
-            <Brand className="h-5 brightness-110" />
-          </div>
+          {/* The brand panel is desktop-only, so the lockup rides the form on
+              small screens. */}
+          <Brand className="mb-10 h-16 lg:hidden" />
 
           <div className="flex size-12 items-center justify-center rounded-2xl border bg-card shadow-sm">
             <LockKeyholeIcon className="size-5" />
@@ -211,7 +206,7 @@ function MachinePanel() {
       />
 
       <div className="relative px-10 pt-12 lg:px-14">
-        <Brand className="h-6 brightness-110" />
+        <Brand className="h-24" />
       </div>
 
       <div className="relative max-w-xl px-10 pb-4 lg:px-14">

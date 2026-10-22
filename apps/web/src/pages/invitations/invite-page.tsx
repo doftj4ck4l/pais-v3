@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Building2Icon, CheckCircle2Icon, ShieldCheckIcon } from 'lucide-react'
 import { acceptInvitation, inspectInvitation } from '@/shared/api/api'
-import { Brand } from '@/shared/components/brand'
+import { BrandMark } from '@/shared/components/brand'
 import { Button } from '@/shared/ui/button'
 import { Spinner } from '@/shared/ui/spinner'
 import type { InvitationAcceptance, InvitationInspection } from '@/shared/lib/types'
@@ -74,7 +74,7 @@ export function InvitePage() {
     <main className="min-h-full bg-muted/20 p-4 sm:grid sm:place-items-center sm:p-8">
       <section className="mx-auto mt-12 w-full max-w-lg overflow-hidden rounded-2xl border bg-background shadow-sm sm:mt-0">
         <header className="flex items-center gap-3 border-b px-5 py-4">
-          <Brand className="h-4" />
+          <BrandMark className="h-8" />
           <span className="ml-auto text-xs text-muted-foreground">Organization invitation</span>
         </header>
 

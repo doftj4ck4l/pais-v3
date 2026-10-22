@@ -10,7 +10,7 @@ import { useSidebar } from '@/features/navigation/hooks/use-sidebar'
 import { useTheme } from '@/shared/hooks/use-theme'
 import { useWorkspace } from '@/features/workspace/hooks/use-workspace'
 import { cn } from '@/shared/lib/utils'
-import { Brand } from '@/shared/components/brand'
+import { BrandMark } from '@/shared/components/brand'
 import type { ReactNode } from 'react'
 import { usePreferences } from '@/shared/hooks/use-preferences'
 
@@ -87,7 +87,7 @@ export function AppShell({
             {topbar ? (
               topbar
             ) : (
-              <Brand className="h-[1.125rem] shrink-0" />
+              <BrandMark className="h-7 shrink-0" />
             )}
           </header>
 

@@ -1,43 +1,42 @@
 import { cn } from '@/shared/lib/utils'
 
 /**
- * The PixelSpace lockup.
+ * The full ministry lockup, for places with room to read it: the sign-in
+ * panel, onboarding, and the invitation header.
  *
- * One component rather than three `<img>` tags, because the three places it
- * appears differ only in height — and a wordmark that drifts out of sync
- * between the sidebar and the mobile header is the kind of thing nobody
- * reports and everybody notices.
- *
- * Height-only sizing: the asset is 2100x393, and constraining width instead
- * would let a narrow container squash it. `w-auto` keeps the ratio and lets
- * flex measure it.
- *
- * The teal gradient is legible on both grounds, but its darker half sits close
- * to the dark theme's ground, so that theme gets a small lift rather than a
- * second asset to keep in sync.
+ * The source is a white-background image, so it rides its own white card. That
+ * also keeps the black ministry name legible on the dark sign-in panel, where
+ * the old teal wordmark relied on a dark ground.
  */
 export function Brand({ className }: { className?: string }) {
   return (
-    <img
-      src="/logos/pixelspace.png"
-      alt="PixelSpace"
-      className={cn('w-auto select-none dark:brightness-115', className)}
-      draggable={false}
-    />
+    <span
+      className={cn(
+        'inline-flex items-center justify-center overflow-hidden rounded-lg bg-white p-1.5 shadow-sm',
+        className,
+      )}
+    >
+      <img
+        src={`${import.meta.env.BASE_URL}logos/pixelspace.png`}
+        alt="Kementerian Sains, Teknologi dan Inovasi"
+        className="h-full w-auto select-none object-contain"
+        draggable={false}
+      />
+    </span>
   )
 }
 
 /**
- * The mark on its own, for compact identity moments such as the empty chat and
- * sign-in prompt. Sized on height because the mark is 452x393 rather than
- * square and a `size-*` would squash it.
+ * The coat of arms on its own, for narrow identity slots: the sidebar, the
+ * mobile header, and the empty console. The transparent PNG keeps the mark
+ * clean on both themes, and its aspect ratio fits a rail.
  */
 export function BrandMark({ className }: { className?: string }) {
   return (
     <img
-      src="/logos/logoonly.png"
-      alt="PixelSpace"
-      className={cn('w-auto select-none dark:brightness-115', className)}
+      src={`${import.meta.env.BASE_URL}logos/logoonly.png`}
+      alt="Kementerian Sains, Teknologi dan Inovasi"
+      className={cn('w-auto select-none', className)}
       draggable={false}
     />
   )

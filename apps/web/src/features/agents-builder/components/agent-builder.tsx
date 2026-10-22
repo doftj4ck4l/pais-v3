@@ -20,6 +20,7 @@ import {
   updateAgentDefinition,
   type AgentDefinitionInput,
 } from '@/shared/api/api'
+import { APP_BASE } from '@/shared/lib/app-base'
 import { useScope } from '@/features/workspace/hooks/use-workspace'
 import type { AgentDefinition, Meta, Model } from '@/shared/lib/types'
 import { Button } from '@/shared/ui/button'
@@ -313,8 +314,8 @@ function AgentDialog({
   }
 
   const endpoint = agent
-    ? `${window.location.origin}${agent.endpoint}`
-    : `${window.location.origin}/api/agents/invoke`
+    ? `${window.location.origin}${APP_BASE}${agent.endpoint}`
+    : `${window.location.origin}${APP_BASE}/api/agents/invoke`
   const curl = useMemo(
     () =>
       [

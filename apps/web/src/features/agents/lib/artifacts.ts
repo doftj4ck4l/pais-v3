@@ -1,4 +1,5 @@
 import type { Item } from '@/shared/lib/types'
+import { withAppBase } from '@/shared/lib/app-base'
 
 /**
  * What one session produced, read out of its own transcript.
@@ -61,7 +62,7 @@ export function sessionArtifacts(items: Item[]): SessionArtifacts {
 
   const scan = (text: string | undefined) => {
     if (!text) return
-    for (const [, id] of text.matchAll(IMAGE_URL)) images.add(`/api/images/${id}`)
+    for (const [, id] of text.matchAll(IMAGE_URL)) images.add(withAppBase(`/api/images/${id}`))
     for (const [, encoded] of text.matchAll(FILE_URL)) {
       const path = decodePath(encoded.split('?')[0] ?? '')
       if (path) files.add(path)

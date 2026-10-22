@@ -666,7 +666,7 @@ function ConnectorPicker({
                 'focus-visible:border-foreground/40 focus-visible:bg-accent',
               )}
             >
-              <ServiceMark connector={connector} transport="stdio" size="sm" className="mb-1.5" />
+              <ServiceMark connector={connector} transport={connector.transport ?? 'stdio'} size="sm" className="mb-1.5" />
               <span className="text-sm leading-snug">{connector.name}</span>
               <span className="text-xs leading-relaxed text-muted-foreground">
                 {connector.summary}
@@ -674,7 +674,9 @@ function ConnectorPicker({
               {/* mt-auto so the command sits on the baseline of every card,
                   whatever length the summary above it runs to. */}
               <span className="readout mt-auto w-full truncate pt-2.5 text-[0.625rem] text-muted-foreground/70">
-                {[connector.command, ...connector.args].join(' ')}
+                {connector.transport === 'http'
+                  ? connector.url
+                  : [connector.command, ...(connector.args ?? [])].join(' ')}
               </span>
             </button>
           ))}
@@ -922,13 +924,24 @@ function ConnectorForm({
   const submit = async () => {
     setTouched(true)
     if (!name.trim() || missing.length) return
-    await onSubmit({
-      name: name.trim(),
-      transport: 'stdio',
-      command: connector.command,
-      args: connector.args,
-      env: connectorEnv(connector, values),
-    })
+    await onSubmit(
+      connector.transport === 'http'
+        ? {
+            name: name.trim(),
+            transport: 'http',
+            url: (values[connector.urlField ?? 'MCP_URL'] ?? '').trim(),
+            headers: {
+              Authorization: (values[connector.authField ?? 'MCP_AUTH'] ?? '').trim(),
+            },
+          }
+        : {
+            name: name.trim(),
+            transport: 'stdio',
+            command: connector.command ?? '',
+            args: connector.args ?? [],
+            env: connectorEnv(connector, values),
+          },
+    )
     // Same stance as the manual form: a credential does not stay in a live
     // input after it has been sent, whether or not the server accepted it.
     setValues((prev) =>

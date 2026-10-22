@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import {
   answerQuestion,
+  apiFetch,
   deleteConversation,
   fetchConversation,
   fetchMeta,
@@ -597,7 +598,7 @@ export function useAgentBoard(scope: Scope) {
     resume: boolean,
   ) {
     const { images, dataFiles, documents = [] } = attachments
-    const res = await fetch('/api/chat', {
+    const res = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

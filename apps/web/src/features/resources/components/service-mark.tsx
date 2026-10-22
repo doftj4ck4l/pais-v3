@@ -59,6 +59,39 @@ const MARKS: Record<string, (props: { className?: string }) => React.ReactElemen
       />
     </svg>
   ),
+  // A lens for Lens.org: the search ring and its handle.
+  lens: ({ className }) => (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <circle cx="10.5" cy="10.5" r="6.2" stroke="currentColor" strokeWidth="2.2" />
+      <path d="M15.2 15.2 21 21" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+    </svg>
+  ),
+  // A document with a search ring for the Arkib archive.
+  arkib: ({ className }) => (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path
+        d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M14 3.5V8h4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <circle cx="11" cy="13" r="2.6" stroke="currentColor" strokeWidth="1.8" />
+      <path d="m13 15 2.4 2.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  ),
+  // Drupal's droplet.
+  drupal: ({ className }) => (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <path
+        d="M12 2.8c2.6 3.2 6.2 6.6 6.2 10.6a6.2 6.2 0 1 1-12.4 0c0-4 3.6-7.4 6.2-10.6Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M9.5 14.2c0 1.7 1.1 3 2.5 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  ),
 }
 
 /** The console's own foreground, for a server no catalog entry claims. */

@@ -54,13 +54,15 @@ const publicInvitation = (row: OrganizationInvitationRow, now: number): PublicIn
 export class OrganizationInvitationService {
   private readonly now: () => number;
   private readonly publicUrl: string;
+  private readonly basePath: string;
   private readonly ttlMs: number;
 
   constructor(
     private readonly store: OrganizationStore = organizationStore,
-    options: { publicUrl?: string; ttlMs?: number; now?: () => number } = {},
+    options: { publicUrl?: string; basePath?: string; ttlMs?: number; now?: () => number } = {},
   ) {
     this.publicUrl = (options.publicUrl ?? env.publicUrl).replace(/\/+$/, "");
+    this.basePath = options.basePath ?? env.publicBasePath;
     this.ttlMs = options.ttlMs ?? env.organizationInviteTtlMs;
     this.now = options.now ?? Date.now;
   }
@@ -96,7 +98,7 @@ export class OrganizationInvitationService {
       invitation: publicInvitation(row, now),
       // The fragment is not sent to reverse proxies or request loggers. The SPA
       // clears it before posting the token in a JSON body.
-      url: `${this.publicUrl}/invite#token=${token}`,
+      url: `${this.publicUrl}${this.basePath}/invite#token=${token}`,
     };
   }
 

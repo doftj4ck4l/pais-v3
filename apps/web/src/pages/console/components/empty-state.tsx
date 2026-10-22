@@ -17,7 +17,7 @@ export function Greeting() {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 pb-6 text-center sm:px-6">
       <span className="flex size-10 items-center justify-center rounded-xl border bg-card shadow-sm">
-        <BrandMark className="h-[1.125rem]" />
+        <BrandMark className="h-6" />
       </span>
       <h1 className="mt-5 text-2xl font-medium tracking-[-0.03em] sm:text-[1.75rem]">
         {t(`greeting${pick}` as TranslationKey, { name })}

@@ -20,6 +20,22 @@ export function parsePublicUrl(raw: string | undefined): string {
   return parsed.origin;
 }
 
+/**
+ * Optional path prefix when the console is mounted under a subpath.
+ *
+ * `PUBLIC_URL` stays an origin because it doubles as the same-origin check;
+ * this is the path that gets prepended to browser-facing links such as invites
+ * and OAuth redirects.
+ */
+export function parsePublicBasePath(raw: string | undefined): string {
+  const value = (raw ?? "").trim();
+  if (!value) return "";
+  if (!value.startsWith("/") || value.endsWith("/") || value.includes("//") || /[?#\s]/.test(value)) {
+    throw new Error("PUBLIC_BASE_PATH must be empty or a path like /dana without a trailing slash.");
+  }
+  return value;
+}
+
 export function parseOrganizationInviteTtlMs(raw: string | undefined): number {
   const hours = raw === undefined || raw.trim() === "" ? 168 : Number(raw);
   if (!Number.isInteger(hours) || hours < 1 || hours > 8_760) {
@@ -201,6 +217,9 @@ export const env = {
    * because the API is reached through the web proxy's port, not its own.
    */
   publicUrl: parsePublicUrl(process.env.PUBLIC_URL),
+
+  /** Path prefix for browser-facing links when mounted under a subpath. */
+  publicBasePath: parsePublicBasePath(process.env.PUBLIC_BASE_PATH),
 
   /** Files one Drive sync will pull. Small by default; a demo, not a crawl. */
   connectorSyncLimit: Number(process.env.CONNECTOR_SYNC_LIMIT ?? 50),

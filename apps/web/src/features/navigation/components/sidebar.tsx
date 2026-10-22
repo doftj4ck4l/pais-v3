@@ -7,7 +7,7 @@ import {
   ShieldCheckIcon,
 } from 'lucide-react'
 import { AgentList } from '@/features/agents/components/agent-list'
-import { Brand } from '@/shared/components/brand'
+import { BrandMark } from '@/shared/components/brand'
 import { NAV_ITEMS } from '@/features/navigation/lib/nav-items'
 import { UserMenu } from '@/features/navigation/components/user-menu'
 import { WorkspacePicker } from '@/features/navigation/components/workspace-picker'
@@ -51,7 +51,18 @@ export function Sidebar({
     <div className="flex h-full min-w-0 flex-col bg-sidebar px-2 py-2 text-sidebar-foreground">
       <div className="flex shrink-0 flex-col">
         <div className="flex h-10 items-center gap-2 px-2">
-          <Brand className="h-8 min-w-0" />
+          <div className="flex min-w-0 items-center gap-2">
+            <BrandMark className="h-8 shrink-0" />
+            <div className="min-w-0">
+              <p className="truncate bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-[0.95rem] font-semibold leading-none tracking-[0.24em] text-transparent">
+                MASTIC
+              </p>
+              <span
+                className="mt-1.5 block h-0.5 w-8 rounded-full bg-gradient-to-r from-brand-from to-brand-to"
+                aria-hidden
+              />
+            </div>
+          </div>
           {onCollapse ? (
             <button
               type="button"

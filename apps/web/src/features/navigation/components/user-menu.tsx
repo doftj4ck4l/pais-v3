@@ -28,7 +28,7 @@ export function UserMenu({ expanded = false }: { expanded?: boolean }) {
   const label = me.name || me.username || me.id
   const secondary = me.email ?? (me.username && me.name ? me.username : null)
   const localSignOut = () => {
-    void logoutLocalSession().finally(() => window.location.assign('/'))
+    void logoutLocalSession().finally(() => window.location.assign(import.meta.env.BASE_URL))
   }
 
   return (

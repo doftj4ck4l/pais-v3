@@ -32,12 +32,14 @@ const READ_ONLY_VERBS = new Set([
   "fetch",
   "find",
   "get",
+  "info",
   "list",
   "lookup",
   "query",
   "read",
   "search",
   "stat",
+  "status",
   "whoami",
 ]);
 
@@ -192,7 +194,7 @@ export function approvalRequest(
   const server =
     entry.serverName.toLowerCase() === "nextcloud"
       ? "Nextcloud"
-      : `Nextcloud (${safeDisplay(entry.serverName, 80)})`;
+      : `MCP server (${safeDisplay(entry.serverName, 80)})`;
   const warning = destructive ? " This may permanently change or remove data." : "";
   return {
     server: entry.serverName,

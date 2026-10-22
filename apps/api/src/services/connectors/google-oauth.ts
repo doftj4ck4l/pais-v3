@@ -21,7 +21,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 /** Refresh this long before expiry, so a slow request cannot straddle it. */
 const REFRESH_MARGIN_MS = 120_000;
 
-export const redirectUri = () => `${env.publicUrl}/api/connectors/google/callback`;
+export const redirectUri = () => `${env.publicUrl}${env.publicBasePath}/api/connectors/google/callback`;
 
 export function isConfigured(): boolean {
   return Boolean(env.googleClientId && env.googleClientSecret);

@@ -36,6 +36,16 @@ import type {
   AgentReply,
   AuthConfig,
 } from '@/shared/lib/types'
+import { withAppBase } from '@/shared/lib/app-base'
+
+function withBase(input: RequestInfo | URL): RequestInfo | URL {
+  return typeof input === 'string' && input.startsWith('/api/') ? withAppBase(input) : input
+}
+
+/** `fetch`, but every `/api/...` call stays under the console's base path. */
+export function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return globalThis.fetch(withBase(input), init)
+}
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -69,13 +79,13 @@ const scoped = (scope: Scope, extra: Record<string, string> = {}) => {
 
 /** Every workspace this user owns, oldest first. The server creates one if none exist. */
 export async function listWorkspaces(): Promise<WorkspaceRow[]> {
-  const { workspaces } = await json<{ workspaces: WorkspaceRow[] }>(await fetch('/api/workspaces'))
+  const { workspaces } = await json<{ workspaces: WorkspaceRow[] }>(await apiFetch('/api/workspaces'))
   return workspaces
 }
 
 export async function createWorkspace(name: string): Promise<WorkspaceRow> {
   const { workspace } = await json<{ workspace: WorkspaceRow }>(
-    await fetch('/api/workspaces', {
+    await apiFetch('/api/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -85,7 +95,7 @@ export async function createWorkspace(name: string): Promise<WorkspaceRow> {
 }
 
 export async function renameWorkspace(id: string, name: string): Promise<void> {
-  await fetch(`/api/workspaces/${encodeURIComponent(id)}`, {
+  await apiFetch(`/api/workspaces/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -98,7 +108,7 @@ export async function renameWorkspace(id: string, name: string): Promise<void> {
  * failure.
  */
 export async function deleteWorkspace(id: string): Promise<{ error?: string }> {
-  const res = await fetch(`/api/workspaces/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  const res = await apiFetch(`/api/workspaces/${encodeURIComponent(id)}`, { method: 'DELETE' })
   if (res.ok) return {}
   const body = (await res.json().catch(() => ({}))) as { error?: string }
   return { error: body.error ?? `HTTP ${res.status}` }
@@ -106,16 +116,16 @@ export async function deleteWorkspace(id: string): Promise<{ error?: string }> {
 
 /** Who the active authentication mode says you are. */
 export async function fetchMe(): Promise<UserProfile> {
-  return json<UserProfile>(await fetch('/api/me'))
+  return json<UserProfile>(await apiFetch('/api/me'))
 }
 
 export async function fetchAuthConfig(): Promise<AuthConfig> {
-  return json<AuthConfig>(await fetch('/api/auth/config'))
+  return json<AuthConfig>(await apiFetch('/api/auth/config'))
 }
 
 export async function loginWithPassword(email: string, password: string): Promise<UserProfile> {
   const result = await json<{ user: UserProfile }>(
-    await fetch('/api/auth/login', {
+    await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -126,7 +136,7 @@ export async function loginWithPassword(email: string, password: string): Promis
 
 export async function logoutLocalSession(): Promise<void> {
   await json<{ ok: true }>(
-    await fetch('/api/auth/logout', {
+    await apiFetch('/api/auth/logout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: '{}',
@@ -137,7 +147,7 @@ export async function logoutLocalSession(): Promise<void> {
 /** Change what this console calls you. Empty clears it back to the proxy's name. */
 export async function updateMe(displayName: string): Promise<UserProfile> {
   return json<UserProfile>(
-    await fetch('/api/me', {
+    await apiFetch('/api/me', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName }),
@@ -147,14 +157,14 @@ export async function updateMe(displayName: string): Promise<UserProfile> {
 
 export async function listOrganizations(): Promise<OrganizationSummary[]> {
   const result = await json<{ organizations: OrganizationSummary[] }>(
-    await fetch('/api/admin/organizations'),
+    await apiFetch('/api/admin/organizations'),
   )
   return result.organizations
 }
 
 export async function createOrganization(name: string): Promise<OrganizationSummary> {
   const result = await json<{ organization: Organization }>(
-    await fetch('/api/admin/organizations', {
+    await apiFetch('/api/admin/organizations', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -165,7 +175,7 @@ export async function createOrganization(name: string): Promise<OrganizationSumm
 
 export async function renameOrganization(id: string, name: string): Promise<Organization> {
   const result = await json<{ organization: Organization }>(
-    await fetch(`/api/admin/organizations/${encodeURIComponent(id)}`, {
+    await apiFetch(`/api/admin/organizations/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -176,7 +186,7 @@ export async function renameOrganization(id: string, name: string): Promise<Orga
 
 export async function getOrganization(id: string): Promise<OrganizationDetail> {
   return json<OrganizationDetail>(
-    await fetch(`/api/admin/organizations/${encodeURIComponent(id)}`),
+    await apiFetch(`/api/admin/organizations/${encodeURIComponent(id)}`),
   )
 }
 
@@ -186,7 +196,7 @@ export async function createOrganizationInvitation(
   role?: OrganizationMemberRole,
 ): Promise<{ invitation: OrganizationInvitation; url: string }> {
   return json<{ invitation: OrganizationInvitation; url: string }>(
-    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations`, {
+    await apiFetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(role ? { email, role } : { email }),
@@ -199,7 +209,7 @@ export async function revokeOrganizationInvitation(
   invitationId: string,
 ): Promise<void> {
   await json<{ ok: true }>(
-    await fetch(
+    await apiFetch(
       `/api/admin/organizations/${encodeURIComponent(organizationId)}/invitations/${encodeURIComponent(invitationId)}/revoke`,
       { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
     ),
@@ -211,7 +221,7 @@ export async function removeOrganizationMember(
   membershipId: string,
 ): Promise<void> {
   await json<{ ok: true }>(
-    await fetch(
+    await apiFetch(
       `/api/admin/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
       { method: 'DELETE' },
     ),
@@ -224,7 +234,7 @@ export async function setOrganizationMemberRole(
   role: OrganizationMemberRole,
 ): Promise<void> {
   await json<{ ok: true }>(
-    await fetch(
+    await apiFetch(
       `/api/admin/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}/role`,
       {
         method: 'PATCH',
@@ -239,7 +249,7 @@ export async function getOrganizationGrants(
   organizationId: string,
 ): Promise<OrganizationGrants> {
   return json<OrganizationGrants>(
-    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`),
+    await apiFetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`),
   )
 }
 
@@ -248,7 +258,7 @@ export async function setOrganizationGrants(
   connectionIds: string[],
 ): Promise<OrganizationGrants> {
   return json<OrganizationGrants>(
-    await fetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`, {
+    await apiFetch(`/api/admin/organizations/${encodeURIComponent(organizationId)}/grants`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ connectionIds }),
@@ -258,7 +268,7 @@ export async function setOrganizationGrants(
 
 export async function inspectInvitation(token: string): Promise<InvitationInspection> {
   return json<InvitationInspection>(
-    await fetch('/api/invitations/inspect', {
+    await apiFetch('/api/invitations/inspect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token }),
@@ -268,7 +278,7 @@ export async function inspectInvitation(token: string): Promise<InvitationInspec
 
 export async function acceptInvitation(token: string): Promise<InvitationAcceptance> {
   return json<InvitationAcceptance>(
-    await fetch('/api/invitations/accept', {
+    await apiFetch('/api/invitations/accept', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token }),
@@ -277,7 +287,7 @@ export async function acceptInvitation(token: string): Promise<InvitationAccepta
 }
 
 export async function fetchMeta(): Promise<Meta> {
-  return json<Meta>(await fetch('/api/meta'))
+  return json<Meta>(await apiFetch('/api/meta'))
 }
 
 export type AgentDefinitionInput = {
@@ -288,7 +298,7 @@ export type AgentDefinitionInput = {
 
 export async function listAgentDefinitions(scope: Scope): Promise<AgentDefinition[]> {
   const result = await json<{ agents: AgentDefinition[] }>(
-    await fetch(`/api/agents?${scoped(scope)}`),
+    await apiFetch(`/api/agents?${scoped(scope)}`),
   )
   return result.agents
 }
@@ -298,7 +308,7 @@ export async function createAgentDefinition(
   input: AgentDefinitionInput,
 ): Promise<{ agent: AgentDefinition; token: string }> {
   return json<{ agent: AgentDefinition; token: string }>(
-    await fetch(`/api/agents?${scoped(scope)}`, {
+    await apiFetch(`/api/agents?${scoped(scope)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
@@ -312,7 +322,7 @@ export async function updateAgentDefinition(
   input: AgentDefinitionInput,
 ): Promise<AgentDefinition> {
   const result = await json<{ agent: AgentDefinition }>(
-    await fetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    await apiFetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
@@ -326,7 +336,7 @@ export async function rotateAgentToken(
   id: string,
 ): Promise<{ agent: AgentDefinition; token: string }> {
   return json<{ agent: AgentDefinition; token: string }>(
-    await fetch(`/api/agents/${encodeURIComponent(id)}/token?${scoped(scope)}`, {
+    await apiFetch(`/api/agents/${encodeURIComponent(id)}/token?${scoped(scope)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: '{}',
@@ -340,7 +350,7 @@ export async function previewAgent(
   message: string,
 ): Promise<AgentReply> {
   return json<AgentReply>(
-    await fetch(`/api/agents/${encodeURIComponent(id)}/preview?${scoped(scope)}`, {
+    await apiFetch(`/api/agents/${encodeURIComponent(id)}/preview?${scoped(scope)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ message }),
@@ -349,7 +359,7 @@ export async function previewAgent(
 }
 
 export async function deleteAgentDefinition(scope: Scope, id: string): Promise<void> {
-  const response = await fetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
+  const response = await apiFetch(`/api/agents/${encodeURIComponent(id)}?${scoped(scope)}`, {
     method: 'DELETE',
   })
   if (!response.ok) await json(response)
@@ -358,13 +368,13 @@ export async function deleteAgentDefinition(scope: Scope, id: string): Promise<v
 /** Stored runs for this browser, oldest first so new agents append at the end. */
 export async function listConversations(scope: Scope): Promise<ConversationRow[]> {
   const { conversations } = await json<{ conversations: ConversationRow[] }>(
-    await fetch(`/api/conversations?${scoped(scope)}`),
+    await apiFetch(`/api/conversations?${scoped(scope)}`),
   )
   return [...conversations].reverse()
 }
 
 export async function fetchConversation(id: string): Promise<ConversationDetail> {
-  return json<ConversationDetail>(await fetch(`/api/conversations/${encodeURIComponent(id)}`))
+  return json<ConversationDetail>(await apiFetch(`/api/conversations/${encodeURIComponent(id)}`))
 }
 
 export async function setConversationPinned(
@@ -373,7 +383,7 @@ export async function setConversationPinned(
   pinned: boolean,
 ): Promise<ConversationRow> {
   const { conversation } = await json<{ conversation: ConversationRow }>(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    await apiFetch(`/api/conversations/${encodeURIComponent(id)}?${scoped(scope)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pinned }),
@@ -390,7 +400,7 @@ export async function setConversationPinned(
  * already finished returns `stopped: false`, which is not an error here.
  */
 export async function stopRun(scope: Scope, conversationId: string): Promise<void> {
-  await fetch(`/api/chat/${encodeURIComponent(conversationId)}/stop?${scoped(scope)}`, {
+  await apiFetch(`/api/chat/${encodeURIComponent(conversationId)}/stop?${scoped(scope)}`, {
     method: 'POST',
   }).catch(() => {
     // The optimistic UI has already flipped to stopped; a failed stop request
@@ -409,7 +419,7 @@ export async function answerQuestion(
   answer: string,
 ): Promise<boolean> {
   const result = await json<{ delivered: boolean }>(
-    await fetch(`/api/chat/${encodeURIComponent(conversationId)}/answer?${scoped(scope)}`, {
+    await apiFetch(`/api/chat/${encodeURIComponent(conversationId)}/answer?${scoped(scope)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ questionId, answer }),
@@ -421,7 +431,7 @@ export async function answerQuestion(
 /** Best-effort delete — a stored run that outlives the UI is not worth a crash. */
 export async function deleteConversation(id: string): Promise<void> {
   try {
-    await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    await apiFetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' })
   } catch {
     // offline or already gone
   }
@@ -430,7 +440,7 @@ export async function deleteConversation(id: string): Promise<void> {
 /** Documents this browser has uploaded, newest first. */
 export async function listDocuments(scope: Scope): Promise<DocumentRow[]> {
   const { documents } = await json<{ documents: DocumentRow[] }>(
-    await fetch(`/api/documents?${scoped(scope)}`),
+    await apiFetch(`/api/documents?${scoped(scope)}`),
   )
   return documents
 }
@@ -443,19 +453,19 @@ export async function uploadDocuments(scope: Scope, files: File[]): Promise<Inge
   const body = new FormData()
   for (const file of files) body.append('files', file)
   const { results } = await json<{ results: IngestResult[] }>(
-    await fetch(`/api/documents?${scoped(scope)}`, { method: 'POST', body }),
+    await apiFetch(`/api/documents?${scoped(scope)}`, { method: 'POST', body }),
   )
   return results
 }
 
 export async function deleteDocument(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  await apiFetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
 /** Read the safe plain-text representation stored in the searchable corpus. */
 export async function getDocument(scope: Scope, id: string): Promise<DocumentDetail> {
   return json<DocumentDetail>(
-    await fetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`),
+    await apiFetch(`/api/documents/${encodeURIComponent(id)}?${scoped(scope)}`),
   )
 }
 
@@ -470,7 +480,7 @@ export async function enqueueTranscription(
   onProgress?: (percent: number) => void,
 ): Promise<{ transcriptionId: string; status: TranscriptionStatus }> {
   const session = await json<{ uploadId: string; chunkBytes: number; partCount: number }>(
-    await fetch(`/api/documents/transcription-uploads?${scoped(scope)}`, {
+    await apiFetch(`/api/documents/transcription-uploads?${scoped(scope)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: file.name, contentType: file.type, size: file.size }),
@@ -486,7 +496,7 @@ export async function enqueueTranscription(
       let lastError: unknown
       for (let attempt = 0; attempt < 3 && !sent; attempt += 1) {
         try {
-          await json<{ receivedBytes: number }>(await fetch(url, {
+          await json<{ receivedBytes: number }>(await apiFetch(url, {
             method: 'PUT',
             headers: { 'content-type': 'application/octet-stream' },
             body: file.slice(start, end),
@@ -502,13 +512,13 @@ export async function enqueueTranscription(
     }
 
     return await json<{ transcriptionId: string; status: TranscriptionStatus }>(
-      await fetch(
+      await apiFetch(
         `/api/documents/transcription-uploads/${encodeURIComponent(session.uploadId)}/complete?${scoped(scope)}`,
         { method: 'POST' },
       ),
     )
   } catch (error) {
-    await fetch(
+    await apiFetch(
       `/api/documents/transcription-uploads/${encodeURIComponent(session.uploadId)}?${scoped(scope)}`,
       { method: 'DELETE' },
     ).catch(() => undefined)
@@ -519,7 +529,7 @@ export async function enqueueTranscription(
 /** Audio uploads this workspace has queued or transcribed, newest first. */
 export async function listTranscriptions(scope: Scope): Promise<TranscriptionRow[]> {
   const { transcriptions } = await json<{ transcriptions: TranscriptionRow[] }>(
-    await fetch(`/api/documents/transcriptions?${scoped(scope)}`),
+    await apiFetch(`/api/documents/transcriptions?${scoped(scope)}`),
   )
   return transcriptions
 }
@@ -527,7 +537,7 @@ export async function listTranscriptions(scope: Scope): Promise<TranscriptionRow
 /** Read one completed transcript. In-flight and failed jobs return null content. */
 export async function getTranscription(scope: Scope, id: string): Promise<TranscriptionDetail> {
   return json<TranscriptionDetail>(
-    await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`),
+    await apiFetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`),
   )
 }
 
@@ -538,7 +548,7 @@ export async function updateTranscription(
   segments: TranscriptionSegment[],
 ): Promise<TranscriptionDetail> {
   return json<TranscriptionDetail>(
-    await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
+    await apiFetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ segments }),
@@ -548,12 +558,12 @@ export async function updateTranscription(
 
 /** Same-origin source audio URL. The endpoint supports byte ranges for seeking. */
 export function transcriptionAudioUrl(scope: Scope, id: string): string {
-  return `/api/documents/transcriptions/${encodeURIComponent(id)}/audio?${scoped(scope)}`
+  return withAppBase(`/api/documents/transcriptions/${encodeURIComponent(id)}/audio?${scoped(scope)}`)
 }
 
 /** Remove a job and the transcript it produced. */
 export async function deleteTranscription(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
+  await apiFetch(`/api/documents/transcriptions/${encodeURIComponent(id)}?${scoped(scope)}`, {
     method: 'DELETE',
   })
 }
@@ -566,12 +576,12 @@ export function transcriptDownloadUrl(
   id: string,
   format: TranscriptDownloadFormat = 'txt',
 ): string {
-  return `/api/documents/transcriptions/${encodeURIComponent(id)}/transcript?format=${format}&${scoped(scope)}`
+  return withAppBase(`/api/documents/transcriptions/${encodeURIComponent(id)}/transcript?format=${format}&${scoped(scope)}`)
 }
 
 /** Fetch the finished transcript's text to show it in a dialog. */
 export async function fetchTranscript(scope: Scope, id: string): Promise<string> {
-  const res = await fetch(transcriptDownloadUrl(scope, id))
+  const res = await apiFetch(transcriptDownloadUrl(scope, id))
   if (!res.ok) throw new Error(`Transcript not ready (${res.status})`)
   return res.text()
 }
@@ -595,7 +605,7 @@ export async function uploadChatImage(
   // the next paste, which is a smaller loss than blocking the send on a row.
   if (conversationId) form.append('conversationId', conversationId)
   return json<UploadedImage>(
-    await fetch(`/api/images?${scoped(scope)}`, { method: 'POST', body: form }),
+    await apiFetch(`/api/images?${scoped(scope)}`, { method: 'POST', body: form }),
   )
 }
 
@@ -603,7 +613,7 @@ export async function uploadChatDataFile(scope: Scope, file: File): Promise<Uplo
   const form = new FormData()
   form.append('file', file)
   const { file: uploaded } = await json<{ file: Omit<UploadedDataFile, 'url'> }>(
-    await fetch(`/api/workspace/files?${scoped(scope)}`, { method: 'POST', body: form }),
+    await apiFetch(`/api/workspace/files?${scoped(scope)}`, { method: 'POST', body: form }),
   )
   return { ...uploaded, url: workspaceFileUrl(scope, uploaded.path) }
 }
@@ -616,7 +626,7 @@ export async function uploadChatDataFile(scope: Scope, file: File): Promise<Uplo
  */
 export async function listImages(scope: Scope, conversationId: string): Promise<SessionImage[]> {
   const { images } = await json<{ images: SessionImage[] }>(
-    await fetch(`/api/images?${scoped(scope, { conversationId })}`),
+    await apiFetch(`/api/images?${scoped(scope, { conversationId })}`),
   )
   return images
 }
@@ -624,19 +634,19 @@ export async function listImages(scope: Scope, conversationId: string): Promise<
 /** What this workspace has learned. Read and delete only — nothing writes from here. */
 export async function listPlaybook(scope: Scope): Promise<PlaybookBullet[]> {
   const { bullets } = await json<{ bullets: PlaybookBullet[] }>(
-    await fetch(`/api/playbook?${scoped(scope)}`),
+    await apiFetch(`/api/playbook?${scoped(scope)}`),
   )
   return bullets
 }
 
 export async function deletePlaybookBullet(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/playbook/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  await apiFetch(`/api/playbook/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
 /** Files the agent has produced in this workspace's sandbox directory. */
 export async function listWorkspaceFiles(scope: Scope): Promise<WorkspaceFile[]> {
   const { files } = await json<{ files: WorkspaceFile[] }>(
-    await fetch(`/api/workspace/files?${scoped(scope)}`),
+    await apiFetch(`/api/workspace/files?${scoped(scope)}`),
   )
   return files
 }
@@ -644,7 +654,7 @@ export async function listWorkspaceFiles(scope: Scope): Promise<WorkspaceFile[]>
 /** Download URL for one workspace file. Served as an attachment by the API. */
 export function workspaceFileUrl(scope: Scope, filePath: string): string {
   const encoded = filePath.split('/').map(encodePathSegment).join('/')
-  return `/api/workspace/files/${encoded}?${scoped(scope)}`
+  return withAppBase(`/api/workspace/files/${encoded}?${scoped(scope)}`)
 }
 
 function encodePathSegment(segment: string): string {
@@ -656,7 +666,7 @@ function encodePathSegment(segment: string): string {
 /** Read-only database connections this browser has added. */
 export async function listConnections(scope: Scope): Promise<DbConnectionRow[]> {
   const { connections } = await json<{ connections: DbConnectionRow[] }>(
-    await fetch(`/api/databases?${scoped(scope)}`),
+    await apiFetch(`/api/databases?${scoped(scope)}`),
   )
   return connections
 }
@@ -711,7 +721,7 @@ export async function addConnection(
   scope: Scope,
   input: DatabaseConnectionInput,
 ): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
-  const res = await fetch(`/api/databases?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -742,7 +752,7 @@ export async function addConnectionStreaming(
   input: DatabaseConnectionInput,
   onPhase: (p: AttachPhase) => void,
 ): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
-  const res = await fetch(`/api/databases/stream?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases/stream?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -794,7 +804,7 @@ export async function testConnection(
   scope: Scope,
   input: DatabaseConnectionInput,
 ): Promise<DatabaseResult<DatabaseTestResult>> {
-  const res = await fetch(`/api/databases/test?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases/test?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -807,7 +817,7 @@ export async function testStoredConnection(
   scope: Scope,
   id: string,
 ): Promise<DatabaseResult<DatabaseTestResult>> {
-  const res = await fetch(`/api/databases/${encodeURIComponent(id)}/test?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases/${encodeURIComponent(id)}/test?${scoped(scope)}`, {
     method: 'POST',
   })
   if (!res.ok) return { ok: false, error: await databaseError(res) }
@@ -819,7 +829,7 @@ export async function updateConnection(
   id: string,
   input: DatabaseConnectionInput,
 ): Promise<{ connection?: DbConnectionRow; error?: DatabaseApiError }> {
-  const res = await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -829,7 +839,7 @@ export async function updateConnection(
 }
 
 export async function refreshConnection(scope: Scope, id: string): Promise<DbConnectionRow> {
-  const res = await fetch(`/api/databases/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/databases/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, {
     method: 'POST',
   })
   const { connection } = await json<{ connection: DbConnectionRow }>(res)
@@ -837,13 +847,13 @@ export async function refreshConnection(scope: Scope, id: string): Promise<DbCon
 }
 
 export async function deleteConnection(scope: Scope, id: string): Promise<void> {
-  const res = await fetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  const res = await apiFetch(`/api/databases/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 export async function listMcpServers(scope: Scope): Promise<McpServerRow[]> {
   const { servers } = await json<{ servers: McpServerRow[] }>(
-    await fetch(`/api/mcp?${scoped(scope)}`),
+    await apiFetch(`/api/mcp?${scoped(scope)}`),
   )
   return servers
 }
@@ -871,7 +881,7 @@ export async function addMcpServer(
   scope: Scope,
   input: NewMcpServerInput,
 ): Promise<{ server?: McpServerRow; error?: string }> {
-  const res = await fetch(`/api/mcp?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/mcp?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -896,7 +906,7 @@ export async function updateMcpServer(
   id: string,
   input: NewMcpServerInput,
 ): Promise<{ server?: McpServerRow; error?: string }> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -907,7 +917,7 @@ export async function updateMcpServer(
 }
 
 export async function refreshMcpServer(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/mcp/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, { method: 'POST' })
+  await apiFetch(`/api/mcp/${encodeURIComponent(id)}/refresh?${scoped(scope)}`, { method: 'POST' })
 }
 
 export async function setMcpServerEnabled(
@@ -915,7 +925,7 @@ export async function setMcpServerEnabled(
   id: string,
   enabled: boolean,
 ): Promise<void> {
-  await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
+  await apiFetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -923,7 +933,7 @@ export async function setMcpServerEnabled(
 }
 
 export async function deleteMcpServer(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  await apiFetch(`/api/mcp/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
 
 /** One server in another workspace, described well enough to decide about it. */
@@ -964,7 +974,7 @@ export type ImportCatalog = {
 
 /** Everything configured in this user's *other* workspaces, grouped by workspace. */
 export async function listImportableMcpServers(scope: Scope): Promise<ImportCatalog> {
-  return await json<ImportCatalog>(await fetch(`/api/mcp/importable?${scoped(scope)}`))
+  return await json<ImportCatalog>(await apiFetch(`/api/mcp/importable?${scoped(scope)}`))
 }
 
 /**
@@ -979,7 +989,7 @@ export async function importMcpServer(
   sourceWorkspaceId: string,
   serverId: string,
 ): Promise<{ server?: McpServerRow; error?: string }> {
-  const res = await fetch(`/api/mcp/import?${scoped(scope)}`, {
+  const res = await apiFetch(`/api/mcp/import?${scoped(scope)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sourceWorkspaceId, serverId }),
@@ -999,7 +1009,7 @@ export type AdminRunFilters = {
 }
 
 export async function getAdminAnalytics(days = 30, signal?: AbortSignal): Promise<AdminAnalytics> {
-  return json<AdminAnalytics>(await fetch(`/api/admin/analytics?days=${days}`, { signal }))
+  return json<AdminAnalytics>(await apiFetch(`/api/admin/analytics?days=${days}`, { signal }))
 }
 
 export async function listAdminUsers(input: { limit?: number; offset?: number; query?: string; signal?: AbortSignal } = {}): Promise<{ users: AdminUser[]; total: number }> {
@@ -1007,7 +1017,7 @@ export async function listAdminUsers(input: { limit?: number; offset?: number; q
   query.set('limit', String(input.limit ?? 50))
   query.set('offset', String(input.offset ?? 0))
   if (input.query) query.set('q', input.query)
-  return json<{ users: AdminUser[]; total: number }>(await fetch(`/api/admin/users?${query}`, { signal: input.signal }))
+  return json<{ users: AdminUser[]; total: number }>(await apiFetch(`/api/admin/users?${query}`, { signal: input.signal }))
 }
 
 /** Recent runs across every user and workspace. */
@@ -1019,19 +1029,19 @@ export async function listRuns(filters: AdminRunFilters = {}, signal?: AbortSign
   if (filters.userId) query.set('userId', filters.userId)
   if (filters.organizationId) query.set('organizationId', filters.organizationId)
   if (filters.status) query.set('status', filters.status)
-  return json<{ runs: RunRow[]; total: number }>(await fetch(`/api/admin/runs?${query}`, { signal }))
+  return json<{ runs: RunRow[]; total: number }>(await apiFetch(`/api/admin/runs?${query}`, { signal }))
 }
 
 /** One run and its spans, already positioned relative to the run's start. */
 export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
   return json<RunDetail>(
-    await fetch(`/api/admin/runs/${encodeURIComponent(id)}`, { signal }),
+    await apiFetch(`/api/admin/runs/${encodeURIComponent(id)}`, { signal }),
   )
 }
 
 export async function getRunSession(id: string, signal?: AbortSignal): Promise<RunSessionDetail> {
   return json<RunSessionDetail>(
-    await fetch(`/api/admin/runs/${encodeURIComponent(id)}/session`, { signal }),
+    await apiFetch(`/api/admin/runs/${encodeURIComponent(id)}/session`, { signal }),
   )
 }
 
@@ -1062,7 +1072,7 @@ export type SyncOutcome = {
 export async function listConnectors(
   scope: Scope,
 ): Promise<{ connectors: ConnectorRow[]; available: { kind: string; reason: string }[] }> {
-  return json(await fetch(`/api/connectors?${scoped(scope)}`))
+  return json(await apiFetch(`/api/connectors?${scoped(scope)}`))
 }
 
 /**
@@ -1074,19 +1084,19 @@ export async function listConnectors(
  */
 export async function googleAuthUrl(scope: Scope, kind: ConnectorKind = 'gdrive'): Promise<string> {
   const { url } = await json<{ url: string }>(
-    await fetch(`/api/connectors/google/auth?${scoped(scope)}&kind=${kind}`),
+    await apiFetch(`/api/connectors/google/auth?${scoped(scope)}&kind=${kind}`),
   )
   return url
 }
 
 export async function syncConnector(scope: Scope, id: string): Promise<SyncOutcome> {
   return json(
-    await fetch(`/api/connectors/${encodeURIComponent(id)}/sync?${scoped(scope)}`, {
+    await apiFetch(`/api/connectors/${encodeURIComponent(id)}/sync?${scoped(scope)}`, {
       method: 'POST',
     }),
   )
 }
 
 export async function deleteConnector(scope: Scope, id: string): Promise<void> {
-  await fetch(`/api/connectors/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
+  await apiFetch(`/api/connectors/${encodeURIComponent(id)}?${scoped(scope)}`, { method: 'DELETE' })
 }
