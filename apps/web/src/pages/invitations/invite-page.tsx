@@ -131,7 +131,7 @@ export function InvitePage() {
           )}
 
           {!loading && state?.state !== 'actionable' ? (
-            <Button asChild variant="outline" className="mt-2"><a href="/">Go to PixelSpace</a></Button>
+            <Button asChild variant="outline" className="mt-2"><a href="/">Go to MASTIC GPT</a></Button>
           ) : null}
         </div>
       </section>

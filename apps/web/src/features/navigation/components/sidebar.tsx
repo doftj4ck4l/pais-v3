@@ -54,8 +54,8 @@ export function Sidebar({
           <div className="flex min-w-0 items-center gap-2">
             <BrandMark className="h-8 shrink-0" />
             <div className="min-w-0">
-              <p className="truncate bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-[0.95rem] font-semibold leading-none tracking-[0.24em] text-transparent">
-                MASTIC
+              <p className="truncate bg-gradient-to-r from-brand-from to-brand-to bg-clip-text text-[0.8rem] font-semibold leading-none tracking-[0.18em] text-transparent">
+                MASTIC GPT
               </p>
               <span
                 className="mt-1.5 block h-0.5 w-8 rounded-full bg-gradient-to-r from-brand-from to-brand-to"
